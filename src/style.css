@@ -95,3 +95,5 @@ header { display: flex; align-items: center; justify-content: space-between; }
 .retranscribe-row { display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem; }
 .retranscribe-row p { flex-basis: 100%; margin: 0; }
 @media (max-width: 800px) { .meeting-body { grid-template-columns: 1fr; } }
+
+.import-overlay { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; background: rgba(14, 22, 34, 0.84); color: white; font-size: 1.4rem; pointer-events: none; }

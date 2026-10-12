@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { dismissImportErrors, importStatus, onImportHover, onImportStatus, pickAudioFiles, type ImportStatus } from "./importing";
 import wordmark from "./assets/wordmark-dark.png";
 import { rescanLibrary, type MalformedFolder, type MeetingSummary } from "./library";
 import MeetingView from "./MeetingView";
@@ -15,6 +16,8 @@ export default function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [jobs, setJobs] = useState<ProcessingJob[]>([]);
+  const [imports, setImports] = useState<ImportStatus>({ current: null, queued: 0, errors: [] });
+  const [importHover, setImportHover] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -25,6 +28,25 @@ export default function App() {
     });
     return () => { active = false; void listener.then((stop) => stop(), () => {}); };
   }, []);
+
+  useEffect(() => {
+    let active = true;
+    let eventArrived = false;
+    importStatus().then((status) => { if (active && !eventArrived) setImports(status); }, () => {});
+    const statusListener = onImportStatus((status) => { if (active) { eventArrived = true; setImports(status); } });
+    const hoverListener = onImportHover((hover) => { if (active) setImportHover(hover); });
+    return () => { active = false; void statusListener.then((stop) => stop(), () => {}); void hoverListener.then((stop) => stop(), () => {}); };
+  }, []);
+
+  async function pickFiles() {
+    try { await pickAudioFiles(); }
+    catch (reason) { setImports((current) => ({ ...current, errors: [...current.errors, String(reason)] })); }
+  }
+
+  async function dismissErrors() {
+    try { await dismissImportErrors(); }
+    catch (reason) { setImports((current) => ({ ...current, errors: [...current.errors, String(reason)] })); }
+  }
 
   async function cancelJob(meetingId: string) {
     const status = await cancelProcessing(meetingId);
@@ -70,7 +92,10 @@ export default function App() {
       ) : (
         <>
           <h1>Library</h1>
+          <button type="button" onClick={() => void pickFiles()}>Import audio</button>
           <button type="button" onClick={() => setScan((value) => value + 1)}>Rescan</button>
+          {imports.current && <p role="status">Importing {imports.current}…{imports.queued > 0 ? ` (+${imports.queued} queued)` : ""}</p>}
+          {imports.errors.length > 0 && <div role="alert"><ul>{imports.errors.map((error, index) => <li key={`${index}:${error}`}>{error}</li>)}</ul><button type="button" onClick={() => void dismissErrors()}>Dismiss import errors</button></div>}
           {failed && <p role="alert">Could not load the Library</p>}
           {malformed.length > 0 && (
             <section role="status">
@@ -95,6 +120,7 @@ export default function App() {
           )}
         </>
       )}
+      {importHover && <div className="import-overlay">Drop audio to import (mp3, m4a, wav, flac)</div>}
     </main>
   );
 }

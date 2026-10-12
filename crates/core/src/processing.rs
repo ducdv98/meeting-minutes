@@ -1,5 +1,5 @@
 use crate::{
-    audio_prep::prepare_recording,
+    audio_prep::{prepare_import, prepare_recording, PreparedRecording},
     meeting_file::{MeetingFile, RecordingEntry},
     transcript::{
         assign_ids, place_segments, render_markdown, Language, PlacedSegment, RawSegment,
@@ -36,6 +36,7 @@ pub enum ProcessingError {
     Io(io::Error),
     Json(serde_json::Error),
     Audio(String),
+    Unsupported(String),
     Engine(String),
     Download(String),
     Checksum,
@@ -48,6 +49,7 @@ impl fmt::Display for ProcessingError {
             Self::Io(e) => write!(f, "Processing I/O error: {e}"),
             Self::Json(e) => write!(f, "Meeting metadata error: {e}"),
             Self::Audio(e) => write!(f, "Audio error: {e}"),
+            Self::Unsupported(e) => write!(f, "Unsupported audio file: {e}"),
             Self::Engine(e) => write!(f, "Transcription error: {e}"),
             Self::Download(e) => write!(f, "Model download error: {e}"),
             Self::Checksum => write!(f, "Model checksum mismatch"),
@@ -97,10 +99,14 @@ pub fn transcribe_meeting(
             _ => None,
         })
         .collect();
-    if recordings.is_empty() {
+    if recordings.is_empty() && metadata.import.is_none() {
         return Err(ProcessingError::NoAudio);
     }
-    let total: u64 = recordings.iter().map(|r| r.duration_ms).sum();
+    let total: u64 = if metadata.import.is_some() {
+        metadata.duration_ms
+    } else {
+        recordings.iter().map(|r| r.duration_ms).sum()
+    };
     let prompt = request
         .vocabulary
         .iter()
@@ -122,11 +128,10 @@ pub fn transcribe_meeting(
     let detected = language.is_none();
     let mut placed = Vec::<PlacedSegment>::new();
     let mut elapsed = 0u64;
-    for recording in recordings {
-        if cancel.load(Ordering::SeqCst) {
-            return Err(ProcessingError::Cancelled);
-        }
-        let prepared = prepare_recording(request.meeting_dir, recording, cancel)?;
+    let mut process = |prepared: PreparedRecording,
+                       duration_ms: u64,
+                       elapsed: u64|
+     -> Result<(), ProcessingError> {
         if language.is_none() {
             language = Some(
                 engine
@@ -137,7 +142,7 @@ pub fn transcribe_meeting(
         let weight = if total == 0 {
             1.0
         } else {
-            recording.duration_ms as f32 / total as f32
+            duration_ms as f32 / total as f32
         };
         let offset = if total == 0 {
             0.0
@@ -157,7 +162,20 @@ pub fn transcribe_meeting(
             prepared.timeline_start_ms,
             &prepared.activity,
         ));
-        elapsed += recording.duration_ms;
+        Ok(())
+    };
+    if let Some(import) = &metadata.import {
+        let prepared = prepare_import(request.meeting_dir, &import.file, cancel)?;
+        process(prepared, metadata.duration_ms, 0)?;
+    } else {
+        for recording in recordings {
+            if cancel.load(Ordering::SeqCst) {
+                return Err(ProcessingError::Cancelled);
+            }
+            let prepared = prepare_recording(request.meeting_dir, recording, cancel)?;
+            process(prepared, recording.duration_ms, elapsed)?;
+            elapsed += recording.duration_ms;
+        }
     }
     if cancel.load(Ordering::SeqCst) {
         return Err(ProcessingError::Cancelled);

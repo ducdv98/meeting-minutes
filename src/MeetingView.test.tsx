@@ -17,6 +17,7 @@ vi.mock("@tauri-apps/api/core", () => ({ convertFileSrc: vi.fn((path: string) =>
 const detail: MeetingDetail = {
   id: "old", title: "Planning", started_at: "2026-10-12T09:30:00Z",
   duration_ms: 125_000, language: "vi", audio_path: "C:\\Meetings\\meeting.mp3",
+  imported: false,
   markers: [
     { kind: "pause", at_ms: 10_000, paused_ms: 125_000 },
     { kind: "gap", at_ms: 20_000 },
@@ -211,4 +212,10 @@ it("follows the new id even when reloading the renamed Meeting fails", async () 
   expect((await screen.findByRole("alert")).textContent).toContain("Could not read meeting.json");
   expect(onRenamed).toHaveBeenCalledWith("new");
   expect(screen.queryByRole("textbox", { name: "Title" })).toBeNull();
+});
+
+it("labels an imported Meeting below its date", async () => {
+  vi.mocked(meetingDetail).mockResolvedValue({ ...detail, imported: true });
+  render(<MeetingView id="old" onBack={() => {}} onRenamed={() => {}} />);
+  expect(await screen.findByText("Imported audio")).toBeTruthy();
 });

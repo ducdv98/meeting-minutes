@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::{
+    collections::VecDeque,
     path::PathBuf,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -12,6 +13,7 @@ use std::{
 
 use meeting_minutes_core::{
     capture::{QpcClock, WasapiOpener},
+    import::import_extension,
     models::{self, DEFAULT_MODEL, MODELS},
     processing::{self, JobStage, ProcessingStatus, Processor, TranscribeRequest},
     recorder::{Phase, Recorder, RecorderError, RecorderStatus, SaveJob, SaveState},
@@ -24,8 +26,9 @@ use tauri::{
     image::Image,
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{TrayIcon, TrayIconBuilder},
-    AppHandle, Emitter, Manager, State, WindowEvent,
+    AppHandle, DragDropEvent, Emitter, Manager, State, WindowEvent,
 };
+use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_global_shortcut::{Shortcut, ShortcutState};
 
 type LibraryState = Mutex<Result<Library, String>>;
@@ -38,6 +41,174 @@ const PAUSE_SHORTCUT: &str = "ctrl+alt+shift+p";
 struct SettingsPath(PathBuf);
 struct ModelsDir(PathBuf);
 struct Quitting(AtomicBool);
+
+#[derive(Default)]
+struct ImportState {
+    queue: VecDeque<PathBuf>,
+    current: Option<String>,
+    errors: Vec<String>,
+    running: bool,
+}
+
+type ImportQueue = Mutex<ImportState>;
+struct ImportCancel(AtomicBool);
+
+#[derive(Clone, serde::Serialize)]
+struct ImportStatus {
+    current: Option<String>,
+    queued: usize,
+    errors: Vec<String>,
+}
+
+fn import_snapshot(state: &ImportState) -> ImportStatus {
+    ImportStatus {
+        current: state.current.clone(),
+        queued: state.queue.len(),
+        errors: state.errors.clone(),
+    }
+}
+
+fn publish_import(app: &AppHandle) -> Result<ImportStatus, String> {
+    let state = app.state::<ImportQueue>();
+    let state = state.lock().map_err(|e| e.to_string())?;
+    let status = import_snapshot(&state);
+    drop(state);
+    let _ = app.emit("import-status", &status);
+    Ok(status)
+}
+
+fn queue_imports(app: &AppHandle, paths: Vec<PathBuf>) -> Result<ImportStatus, String> {
+    let queue = app.state::<ImportQueue>();
+    let mut state = queue.lock().map_err(|e| e.to_string())?;
+    for path in paths {
+        if import_extension(&path).is_some() {
+            state.queue.push_back(path);
+        } else {
+            let name = path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| path.display().to_string());
+            state
+                .errors
+                .push(format!("{name}: not an mp3, m4a, wav or flac file"));
+        }
+    }
+    let start = !state.running
+        && !state.queue.is_empty()
+        && !app.state::<Quitting>().0.load(Ordering::SeqCst);
+    if start {
+        state.running = true;
+    }
+    drop(state);
+    let status = publish_import(app)?;
+    if start {
+        import_worker(app.clone());
+    }
+    Ok(status)
+}
+
+fn import_worker(app: AppHandle) {
+    thread::spawn(move || loop {
+        let path = {
+            let state = app.state::<ImportQueue>();
+            let Ok(mut state) = state.lock() else {
+                return;
+            };
+            if app.state::<Quitting>().0.load(Ordering::SeqCst) {
+                state.queue.clear();
+            }
+            let next = state.queue.pop_front();
+            state.current = next
+                .as_ref()
+                .and_then(|path| path.file_name())
+                .map(|name| name.to_string_lossy().into_owned());
+            if next.is_none() {
+                state.running = false;
+            }
+            next
+        };
+        let _ = publish_import(&app);
+        let Some(path) = path else {
+            return;
+        };
+        let result = (|| -> Result<MeetingSummary, String> {
+            let root = {
+                let library = app.state::<LibraryState>();
+                let library = library.lock().map_err(|e| e.to_string())?;
+                library.as_ref().map_err(Clone::clone)?.root().to_path_buf()
+            };
+            let now = chrono::Local::now().fixed_offset();
+            let prepared =
+                Library::prepare_import_meeting(&root, &path, now, &app.state::<ImportCancel>().0)
+                    .map_err(|e| e.to_string())?;
+            let library = app.state::<LibraryState>();
+            let mut library = library.lock().map_err(|e| e.to_string())?;
+            library
+                .as_mut()
+                .map_err(|e| e.clone())?
+                .publish_import_meeting(prepared, &app.state::<ImportCancel>().0)
+                .map_err(|e| e.to_string())
+        })();
+        match result {
+            Ok(meeting) => {
+                // Queued before the Library shows the Meeting, so a rename is refused until it is processed.
+                if !app.state::<Quitting>().0.load(Ordering::SeqCst)
+                    && Settings::load(&app.state::<SettingsPath>().0).auto_process
+                {
+                    if let Ok(mut processor) = lock_processor(&app) {
+                        processor.enqueue(&meeting.id);
+                    }
+                    let _ = publish_processing(&app);
+                }
+                let _ = app.emit("library-changed", ());
+            }
+            Err(error) => {
+                if !app.state::<Quitting>().0.load(Ordering::SeqCst) {
+                    if let Ok(mut state) = app.state::<ImportQueue>().lock() {
+                        let name = path
+                            .file_name()
+                            .map(|name| name.to_string_lossy().into_owned())
+                            .unwrap_or_default();
+                        state.errors.push(format!("{name}: {error}"));
+                    }
+                }
+            }
+        }
+        if let Ok(mut state) = app.state::<ImportQueue>().lock() {
+            state.current = None;
+        }
+        let _ = publish_import(&app);
+    });
+}
+
+#[tauri::command]
+async fn pick_audio_files(app: AppHandle) -> Result<ImportStatus, String> {
+    let paths = app
+        .dialog()
+        .file()
+        .add_filter("Audio", &["mp3", "m4a", "wav", "flac"])
+        .blocking_pick_files()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|file| file.into_path().map_err(|e| e.to_string()))
+        .collect::<Result<Vec<_>, _>>()?;
+    queue_imports(&app, paths)
+}
+
+#[tauri::command]
+fn import_status(app: AppHandle) -> Result<ImportStatus, String> {
+    publish_import(&app)
+}
+
+#[tauri::command]
+fn dismiss_import_errors(app: AppHandle) -> Result<ImportStatus, String> {
+    app.state::<ImportQueue>()
+        .lock()
+        .map_err(|e| e.to_string())?
+        .errors
+        .clear();
+    publish_import(&app)
+}
 
 fn lock_processor(app: &AppHandle) -> Result<std::sync::MutexGuard<'_, Processor>, String> {
     app.state::<ProcessorState>()
@@ -600,6 +771,7 @@ fn toggle_pause(app: &AppHandle) {
 /// half-written. Waits off the main thread: tray updates from the save thread need it.
 fn quit(app: &AppHandle) {
     app.state::<Quitting>().0.store(true, Ordering::SeqCst);
+    app.state::<ImportCancel>().0.store(true, Ordering::SeqCst);
     if let Ok(status) = publish_processing(app) {
         for job in status.jobs {
             if let Ok(mut processor) = lock_processor(app) {
@@ -615,6 +787,10 @@ fn quit(app: &AppHandle) {
         while matches!(status(&app), Ok(status)
             if status.saves.iter().any(|save| save.state == SaveState::Saving))
             || lock_processor(&app).is_ok_and(|processor| processor.is_running())
+            || app
+                .state::<ImportQueue>()
+                .lock()
+                .is_ok_and(|state| state.running)
         {
             thread::sleep(Duration::from_millis(100));
         }
@@ -686,6 +862,7 @@ fn recording_icon(icon: &Image<'_>) -> Image<'static> {
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_shortcuts([RECORD_SHORTCUT, PAUSE_SHORTCUT])
@@ -726,6 +903,8 @@ fn main() {
             app.manage(ModelsDir(app.path().app_data_dir()?.join("models")));
             app.manage(Quitting(AtomicBool::new(false)));
             app.manage(Mutex::new(Processor::new()));
+            app.manage(Mutex::new(ImportState::default()));
+            app.manage(ImportCancel(AtomicBool::new(false)));
             app.manage(Mutex::new(Recorder::new(
                 WasapiOpener,
                 QpcClock::new()?,
@@ -804,12 +983,28 @@ fn main() {
         })
         .on_window_event(|window, event| {
             // Closing the window keeps the app in the tray; Quit exits.
-            if let WindowEvent::CloseRequested { api, .. } = event {
-                api.prevent_close();
-                let _ = window.hide();
+            match event {
+                WindowEvent::CloseRequested { api, .. } => {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+                WindowEvent::DragDrop(DragDropEvent::Enter { .. }) => {
+                    let _ = window.emit("import-hover", true);
+                }
+                WindowEvent::DragDrop(DragDropEvent::Leave) => {
+                    let _ = window.emit("import-hover", false);
+                }
+                WindowEvent::DragDrop(DragDropEvent::Drop { paths, .. }) => {
+                    let _ = window.emit("import-hover", false);
+                    let _ = queue_imports(window.app_handle(), paths.clone());
+                }
+                _ => {}
             }
         })
         .invoke_handler(tauri::generate_handler![
+            pick_audio_files,
+            import_status,
+            dismiss_import_errors,
             list_meetings,
             rescan_library,
             meeting_detail,

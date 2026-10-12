@@ -10,6 +10,8 @@ meeting_minutes_whisper = { path = "../crates/whisper" }
 tauri = { version = "=2.12.3", features = ["tray-icon", "protocol-asset"] }
 tauri-plugin-global-shortcut = "=2.4.1"
 chrono = "0.4"
+tauri-plugin-dialog = "=2.8.2"
+serde = { version = "1", features = ["derive"] }
 
 [build-dependencies]
 tauri-build = "=2.7.2"

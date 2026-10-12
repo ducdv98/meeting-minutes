@@ -21,6 +21,7 @@ pub struct MeetingDetail {
     pub language: Option<String>,
     pub audio_path: Option<PathBuf>,
     pub markers: Vec<Marker>,
+    pub imported: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -46,6 +47,13 @@ pub(crate) enum RecordingEntry {
     Unknown(Value),
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImportFile {
+    pub file: String,
+    pub original_name: String,
+    pub imported_at: String,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct MeetingFile {
     pub schema_version: u32,
@@ -56,6 +64,8 @@ pub(crate) struct MeetingFile {
     pub duration_ms: u64,
     #[serde(default)]
     pub audio: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub import: Option<ImportFile>,
     #[serde(default)]
     pub recordings: Vec<RecordingEntry>,
     #[serde(default)]
@@ -71,6 +81,7 @@ impl MeetingFile {
             language: None,
             duration_ms: 0,
             audio: None,
+            import: None,
             recordings: Vec::new(),
             markers: Vec::new(),
         }

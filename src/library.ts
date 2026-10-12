@@ -16,6 +16,7 @@ export interface MeetingDetail extends MeetingSummary {
   language: string | null;
   audio_path: string | null;
   markers: Marker[];
+  imported: boolean;
 }
 
 export interface MalformedFolder {

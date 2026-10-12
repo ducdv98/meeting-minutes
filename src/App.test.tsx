@@ -1,9 +1,11 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import App from "./App";
+import { pickAudioFiles, importStatus, dismissImportErrors, onImportStatus, onImportHover } from "./importing";
 import { rescanLibrary } from "./library";
 import { cancelProcessing, onProcessingStatus, processingStatus, type ProcessingStatus } from "./processing";
 
+vi.mock("./importing", () => ({ pickAudioFiles: vi.fn(), importStatus: vi.fn(), dismissImportErrors: vi.fn(), onImportStatus: vi.fn(), onImportHover: vi.fn() }));
 vi.mock("./library", () => ({ rescanLibrary: vi.fn() }));
 vi.mock("./RecordingBar", () => ({ default: () => null }));
 vi.mock("./processing", async (importOriginal) => ({ ...(await importOriginal<typeof import("./processing")>()), processingStatus: vi.fn(), onProcessingStatus: vi.fn(), cancelProcessing: vi.fn() }));
@@ -16,6 +18,11 @@ vi.mock("./recording", async (importOriginal) => ({
 }));
 
 beforeEach(() => {
+  vi.mocked(importStatus).mockResolvedValue({ current: null, queued: 0, errors: [] });
+  vi.mocked(onImportStatus).mockResolvedValue(() => {});
+  vi.mocked(onImportHover).mockResolvedValue(() => {});
+  vi.mocked(dismissImportErrors).mockResolvedValue({ current: null, queued: 0, errors: [] });
+  vi.mocked(pickAudioFiles).mockResolvedValue({ current: null, queued: 0, errors: [] });
   vi.mocked(processingStatus).mockResolvedValue({ jobs: [] });
   vi.mocked(onProcessingStatus).mockResolvedValue(() => {});
   vi.mocked(cancelProcessing).mockResolvedValue({ jobs: [] });
@@ -121,4 +128,18 @@ it("opens a Meeting from its title and returns to the Library", async () => {
   expect(screen.getByRole("heading", { name: "Meeting one" })).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Back to Library" }));
   expect(screen.getByRole("heading", { name: "Library" })).toBeTruthy();
+});
+
+it("picks audio and shows import queue, errors, and drop hint", async () => {
+  vi.mocked(rescanLibrary).mockResolvedValue({ meetings: [], malformed: [] });
+  render(<App />);
+  fireEvent.click(screen.getByRole("button", { name: "Import audio" }));
+  await waitFor(() => expect(pickAudioFiles).toHaveBeenCalled());
+  await act(async () => vi.mocked(onImportStatus).mock.calls[0][0]({ current: "Team.wav", queued: 2, errors: ["bad.txt: not an mp3, m4a, wav or flac file"] }));
+  expect(screen.getByRole("status").textContent).toContain("Importing Team.wav… (+2 queued)");
+  expect(screen.getByRole("alert").textContent).toContain("bad.txt");
+  fireEvent.click(screen.getByRole("button", { name: "Dismiss import errors" }));
+  await waitFor(() => expect(dismissImportErrors).toHaveBeenCalled());
+  await act(async () => vi.mocked(onImportHover).mock.calls[0][0](true));
+  expect(screen.getByText("Drop audio to import (mp3, m4a, wav, flac)")).toBeTruthy();
 });

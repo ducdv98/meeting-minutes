@@ -138,6 +138,7 @@ export default function MeetingView({ id, onBack, onRenamed }: Props) {
               </>
             )}
             <p><time dateTime={detail.started_at}>{detail.started_at.slice(0, 16).replace("T", " ")}</time></p>
+            {detail.imported && <p>Imported audio</p>}
             <p>Duration: {formatElapsed(detail.duration_ms)}</p>
             <label htmlFor="meeting-language">Language</label>
             <select id="meeting-language" value={detail.language ?? ""} disabled={!!job && job.stage !== "failed"} onChange={(event) => void changeLanguage(event.target.value)}>

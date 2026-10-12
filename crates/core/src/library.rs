@@ -3,6 +3,8 @@ use std::{
     fs::OpenOptions,
     io::{self, Write},
     path::{Path, PathBuf},
+    sync::atomic::{AtomicBool, Ordering},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use chrono::{DateTime, FixedOffset};
@@ -10,8 +12,9 @@ use serde::{Serialize, Serializer};
 
 use crate::{
     folder_name,
+    import::{audio_duration_ms, import_extension},
     index::Index,
-    meeting_file::{MeetingDetail, MeetingFile, RecordingEntry},
+    meeting_file::{ImportFile, MeetingDetail, MeetingFile, RecordingEntry},
     recording::{write_manifest, RecordingManifest},
     transcript::{render_markdown, Language, Transcript},
     MeetingSummary,
@@ -25,6 +28,7 @@ pub enum LibraryError {
     Encode(String),
     CollisionLimit,
     UnsavedRecording,
+    ImportedMeeting,
     EmptyTitle,
     MeetingNotFound,
     StaleRevision,
@@ -40,6 +44,7 @@ impl fmt::Display for LibraryError {
             Self::Json(error) => write!(f, "Meeting metadata error: {error}"),
             Self::Encode(error) => write!(f, "Audio encoding error: {error}"),
             Self::CollisionLimit => write!(f, "Could not find an unused Meeting folder name"),
+            Self::ImportedMeeting => write!(f, "An imported Meeting cannot get new Recordings"),
             Self::UnsavedRecording => {
                 write!(f, "This Meeting has a Recording that is not saved yet")
             }
@@ -97,6 +102,27 @@ pub struct ScanReport {
 pub struct OrphanRecording {
     pub meeting_id: String,
     pub number: u32,
+}
+
+pub struct PreparedImport {
+    staging: PathBuf,
+    file: MeetingFile,
+    imported_at: DateTime<FixedOffset>,
+}
+
+impl Drop for PreparedImport {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.staging);
+    }
+}
+
+fn import_error(error: crate::processing::ProcessingError) -> LibraryError {
+    match error {
+        crate::processing::ProcessingError::Cancelled => {
+            LibraryError::Encode("Import cancelled".into())
+        }
+        other => LibraryError::Encode(other.to_string()),
+    }
 }
 
 pub struct Library {
@@ -158,8 +184,161 @@ impl Library {
         Err(LibraryError::CollisionLimit)
     }
 
+    pub fn prepare_import_meeting(
+        root: &Path,
+        source: &Path,
+        imported_at: DateTime<FixedOffset>,
+        cancel: &AtomicBool,
+    ) -> Result<PreparedImport, LibraryError> {
+        let extension = import_extension(source).ok_or_else(|| {
+            LibraryError::Encode("Unsupported audio file: not an mp3, m4a, wav or flac file".into())
+        })?;
+        if cancel.load(Ordering::SeqCst) {
+            return Err(LibraryError::Encode("Import cancelled".into()));
+        }
+        let original_name = source
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("Imported audio")
+            .to_owned();
+        let title = source
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .unwrap_or("")
+            .trim();
+        let title = if title.is_empty() {
+            "Imported audio"
+        } else {
+            title
+        };
+        let audio = format!("imported.{extension}");
+        let started_at = imported_at.to_rfc3339();
+        let staging = root.join(format!(
+            ".import-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        fs::create_dir(&staging)?;
+        let result = (|| -> Result<MeetingFile, LibraryError> {
+            let mut input = fs::File::open(source)?;
+            let mut output = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(staging.join(format!("{audio}.tmp")))?;
+            let mut buffer = [0u8; 64 * 1024];
+            loop {
+                if cancel.load(Ordering::SeqCst) {
+                    return Err(LibraryError::Encode("Import cancelled".into()));
+                }
+                let read = std::io::Read::read(&mut input, &mut buffer)?;
+                if read == 0 {
+                    break;
+                }
+                output.write_all(&buffer[..read])?;
+            }
+            output.sync_all()?;
+            fs::rename(staging.join(format!("{audio}.tmp")), staging.join(&audio))?;
+            // The staged copy is what the Meeting keeps, so it is the file that gets validated and measured.
+            let duration_ms =
+                audio_duration_ms(&staging.join(&audio), cancel).map_err(import_error)?;
+            if duration_ms == 0 {
+                return Err(LibraryError::Encode(
+                    "This audio file has no sound to import".into(),
+                ));
+            }
+            let mut file = MeetingFile::new(title, started_at.clone());
+            file.duration_ms = duration_ms;
+            file.audio = Some(audio.clone());
+            file.import = Some(ImportFile {
+                file: audio,
+                original_name,
+                imported_at: started_at,
+            });
+            write_meeting_file(&staging, &file)?;
+            Ok(file)
+        })();
+        match result {
+            Ok(file) => Ok(PreparedImport {
+                staging,
+                file,
+                imported_at,
+            }),
+            Err(error) => {
+                let _ = fs::remove_dir_all(&staging);
+                Err(error)
+            }
+        }
+    }
+
+    pub fn publish_import_meeting(
+        &mut self,
+        prepared: PreparedImport,
+        cancel: &AtomicBool,
+    ) -> Result<MeetingSummary, LibraryError> {
+        let staging = &prepared.staging;
+        let file = &prepared.file;
+        let imported_at = prepared.imported_at;
+        (|| -> Result<MeetingSummary, LibraryError> {
+            if cancel.load(Ordering::SeqCst) {
+                return Err(LibraryError::Encode("Import cancelled".into()));
+            }
+            let base = folder_name(imported_at, &file.title);
+            for number in 1..=1000 {
+                let id = if number == 1 {
+                    base.clone()
+                } else {
+                    format!("{base} ({number})")
+                };
+                let path = self.root.join(&id);
+                if fs::symlink_metadata(&path).is_ok() {
+                    continue;
+                }
+                match fs::rename(staging, &path) {
+                    Ok(()) => {
+                        let summary = MeetingSummary {
+                            id,
+                            title: file.title.clone(),
+                            started_at: file.started_at.clone(),
+                            duration_ms: file.duration_ms,
+                        };
+                        self.index
+                            .insert(&summary, imported_at.timestamp_millis())?;
+                        return Ok(summary);
+                    }
+                    Err(error)
+                        if matches!(
+                            error.kind(),
+                            io::ErrorKind::AlreadyExists | io::ErrorKind::DirectoryNotEmpty
+                        ) =>
+                    {
+                        continue
+                    }
+                    Err(error) => return Err(error.into()),
+                }
+            }
+            Err(LibraryError::CollisionLimit)
+        })()
+    }
+
+    pub fn import_audio(
+        &mut self,
+        source: &Path,
+        imported_at: DateTime<FixedOffset>,
+        cancel: &AtomicBool,
+    ) -> Result<MeetingSummary, LibraryError> {
+        let prepared = Self::prepare_import_meeting(&self.root, source, imported_at, cancel)?;
+        self.publish_import_meeting(prepared, cancel)
+    }
+
     pub fn list_meetings(&self) -> Result<Vec<MeetingSummary>, LibraryError> {
         self.index.list()
+    }
+
+    pub fn root(&self) -> &Path {
+        &self.root
     }
 
     pub fn meeting_dir(&self, id: &str) -> PathBuf {
@@ -184,6 +363,7 @@ impl Library {
             language: file.language,
             audio_path,
             markers: file.markers,
+            imported: file.import.is_some(),
         })
     }
 
@@ -407,6 +587,9 @@ impl Library {
         let meeting_dir = self.meeting_dir(meeting_id);
         let meeting: MeetingFile =
             serde_json::from_slice(&fs::read(meeting_dir.join("meeting.json"))?)?;
+        if meeting.import.is_some() {
+            return Err(LibraryError::ImportedMeeting);
+        }
         if !unsaved_recordings(&meeting_dir)?.is_empty() {
             return Err(LibraryError::UnsavedRecording);
         }
