@@ -15,3 +15,5 @@ Create the Tauri v2 app (Rust core + React/TypeScript UI) and a GitHub Actions w
 - [ ] README explains how to build and how to install the CI artifact.
 
 ## Comments
+
+- 2026-10-12 (Claude): Implemented. Cargo workspace splits a pure-Rust `crates/core` (tested on Linux) from `src-tauri` (needs WebView, built only on Windows CI). Linux checks pass: core test, fmt, typecheck, 3 UI tests, `pnpm build`. Still to verify on Windows: the first CI run on `windows-latest` (Tauri crate compile, NSIS artifact) and launching the installed app on Windows 11 (empty Library, tray Open/Quit, closing the window hides it to the tray).
