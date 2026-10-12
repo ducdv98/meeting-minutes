@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use crate::ai::ProviderKind;
 use crate::{capture::Source, recording::Marker};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -54,6 +55,12 @@ pub struct ImportFile {
     pub imported_at: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct CloudConsent {
+    pub provider: ProviderKind,
+    pub consented_at: String,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct MeetingFile {
     pub schema_version: u32,
@@ -70,6 +77,8 @@ pub(crate) struct MeetingFile {
     pub recordings: Vec<RecordingEntry>,
     #[serde(default)]
     pub markers: Vec<Marker>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cloud_consent: Vec<CloudConsent>,
 }
 
 impl MeetingFile {
@@ -84,6 +93,7 @@ impl MeetingFile {
             import: None,
             recordings: Vec::new(),
             markers: Vec::new(),
+            cloud_consent: Vec::new(),
         }
     }
 }

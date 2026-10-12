@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import type { AiSettings } from "./ai";
 
 export type Language = "en" | "vi";
 export type Speaker = "me" | "remote" | "unknown";
@@ -21,7 +22,7 @@ export const MODELS = [
   { name: "medium", size_mb: 1534 },
   { name: "large-v3-turbo", size_mb: 1625 },
 ] as const;
-export interface Settings { recording_notice_acknowledged: boolean; auto_process: boolean; model: string; vocabulary: string[] }
+export interface Settings { recording_notice_acknowledged: boolean; auto_process: boolean; model: string; vocabulary: string[]; ai: AiSettings }
 
 export const processingStatus = () => invoke<ProcessingStatus>("processing_status");
 export const enqueueTranscription = (meetingId: string, model?: string) => invoke<ProcessingStatus>("transcribe_meeting", { meetingId, model: model ?? null });

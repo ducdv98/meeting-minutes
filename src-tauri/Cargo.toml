@@ -15,3 +15,6 @@ serde = { version = "1", features = ["derive"] }
 
 [build-dependencies]
 tauri-build = "=2.7.2"
+
+[target.'cfg(windows)'.dependencies]
+keyring = { version = "=3.6.3", features = ["windows-native"] }

@@ -7,6 +7,7 @@ pub use library::{Library, LibraryError, MalformedFolder, OrphanRecording, ScanR
 pub use meeting_file::{MeetingDetail, MeetingSummary};
 pub use naming::folder_name;
 pub use recording::{finalize_recording, FinalizedRecording};
+pub mod ai;
 pub mod audio_prep;
 pub mod capture;
 pub mod import;

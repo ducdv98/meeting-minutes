@@ -1,3 +1,4 @@
+use crate::ai::ProviderKind;
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
@@ -12,6 +13,7 @@ pub struct Settings {
     pub auto_process: bool,
     pub model: String,
     pub vocabulary: Vec<String>,
+    pub ai: AiSettings,
 }
 
 impl Default for Settings {
@@ -21,7 +23,37 @@ impl Default for Settings {
             auto_process: true,
             model: "small".into(),
             vocabulary: Vec::new(),
+            ai: AiSettings::default(),
         }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AiSettings {
+    pub provider: Option<ProviderKind>,
+    pub ollama_model: Option<String>,
+    pub openai_model: Option<String>,
+    pub anthropic_model: Option<String>,
+}
+
+impl AiSettings {
+    pub fn model_for(&self, kind: ProviderKind) -> Option<&str> {
+        match kind {
+            ProviderKind::Ollama => self.ollama_model.as_deref(),
+            ProviderKind::Openai => self.openai_model.as_deref(),
+            ProviderKind::Anthropic => {
+                Some(self.anthropic_model.as_deref().unwrap_or("claude-opus-5-5"))
+            }
+        }
+    }
+    pub fn set_model(&mut self, kind: ProviderKind, model: String) {
+        let field = match kind {
+            ProviderKind::Ollama => &mut self.ollama_model,
+            ProviderKind::Openai => &mut self.openai_model,
+            ProviderKind::Anthropic => &mut self.anthropic_model,
+        };
+        *field = Some(model);
     }
 }
 

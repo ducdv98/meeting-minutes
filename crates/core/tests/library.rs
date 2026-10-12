@@ -1,9 +1,77 @@
 use chrono::{DateTime, FixedOffset};
+use meeting_minutes_core::ai::ProviderKind;
 use meeting_minutes_core::{Library, LibraryError, OrphanRecording};
 use tempfile::TempDir;
 
 fn at(value: &str) -> DateTime<FixedOffset> {
     DateTime::parse_from_rfc3339(value).unwrap()
+}
+
+#[test]
+fn cloud_consent_is_per_meeting_and_provider_and_keeps_first_timestamp() {
+    let temp = TempDir::new().unwrap();
+    let mut library = Library::open(
+        temp.path().join("Library"),
+        temp.path().join("index.sqlite3"),
+    )
+    .unwrap();
+    let meeting = library
+        .create_meeting("Planning", at("2026-10-12T09:30:00Z"))
+        .unwrap();
+    assert!(!library
+        .cloud_consent(&meeting.id, ProviderKind::Openai)
+        .unwrap());
+    library
+        .record_cloud_consent(
+            &meeting.id,
+            ProviderKind::Openai,
+            at("2026-10-12T10:00:00Z"),
+        )
+        .unwrap();
+    library
+        .record_cloud_consent(
+            &meeting.id,
+            ProviderKind::Openai,
+            at("2026-10-13T10:00:00Z"),
+        )
+        .unwrap();
+    assert!(library
+        .cloud_consent(&meeting.id, ProviderKind::Openai)
+        .unwrap());
+    assert!(!library
+        .cloud_consent(&meeting.id, ProviderKind::Anthropic)
+        .unwrap());
+    let metadata: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(library.meeting_dir(&meeting.id).join("meeting.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        metadata["cloud_consent"][0]["consented_at"],
+        "2026-10-12T10:00:00+00:00"
+    );
+    assert!(library
+        .record_cloud_consent(
+            &meeting.id,
+            ProviderKind::Ollama,
+            at("2026-10-12T10:00:00Z")
+        )
+        .is_err());
+    assert!(matches!(
+        library.cloud_consent("missing", ProviderKind::Openai),
+        Err(LibraryError::MeetingNotFound)
+    ));
+    assert!(matches!(
+        library.record_cloud_consent("missing", ProviderKind::Openai, at("2026-10-12T10:00:00Z")),
+        Err(LibraryError::MeetingNotFound)
+    ));
+    let renamed = library.rename_meeting(&meeting.id, "Review").unwrap();
+    assert!(library
+        .cloud_consent(&renamed.id, ProviderKind::Openai)
+        .unwrap());
+    library.rescan().unwrap();
+    assert!(library
+        .cloud_consent(&renamed.id, ProviderKind::Openai)
+        .unwrap());
 }
 
 #[test]

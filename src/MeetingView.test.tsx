@@ -7,7 +7,9 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { onLibraryChanged } from "./recording";
 import { processingStatus, meetingTranscript, enqueueTranscription, cancelProcessing, onProcessingStatus, setMeetingLanguage, type ProcessingStatus } from "./processing";
 import { editSegment } from "./transcript";
+import { aiStatus } from "./ai";
 
+vi.mock("./ai", () => ({ aiStatus: vi.fn() }));
 vi.mock("./library", () => ({ meetingDetail: vi.fn(), renameMeeting: vi.fn() }));
 vi.mock("./processing", async (importOriginal) => ({ ...(await importOriginal<typeof import("./processing")>()), processingStatus: vi.fn(), meetingTranscript: vi.fn(), enqueueTranscription: vi.fn(), cancelProcessing: vi.fn(), dismissProcessing: vi.fn(), setMeetingLanguage: vi.fn(), onProcessingStatus: vi.fn(() => Promise.resolve(() => {})) }));
 vi.mock("./recording", async (importOriginal) => ({ ...(await importOriginal<typeof import("./recording")>()), onLibraryChanged: vi.fn(() => Promise.resolve(() => {})) }));
@@ -26,6 +28,7 @@ const detail: MeetingDetail = {
 };
 
 beforeEach(() => {
+  vi.mocked(aiStatus).mockResolvedValue({ provider: null, model: null, configured: false, has_openai_key: false, has_anthropic_key: false });
   vi.mocked(meetingDetail).mockResolvedValue(detail);
   vi.mocked(processingStatus).mockResolvedValue({ jobs: [] });
   vi.mocked(meetingTranscript).mockResolvedValue(null);
@@ -38,7 +41,7 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.resetAllMocks(); });
 
 it("shows the Meeting fields and Timeline markers", async () => {
-  const { container } = render(<MeetingView id="old" onBack={() => {}} onRenamed={() => {}} />);
+  const { container } = render(<MeetingView id="old" onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
   expect(await screen.findByRole("heading", { name: "Planning" })).toBeTruthy();
   expect(screen.getByText("2026-10-12 09:30").getAttribute("datetime")).toBe(detail.started_at);
   expect(screen.getByText("Duration: 00:02:05")).toBeTruthy();
@@ -63,7 +66,7 @@ it("renames the Meeting after releasing audio and follows the new id", async () 
   });
   function Host() {
     const [id, setId] = useState("old");
-    return <MeetingView id={id} onBack={() => {}} onRenamed={(next) => { onRenamed(next); setId(next); }} />;
+    return <MeetingView id={id} onBack={() => {}} onOpenSettings={() => {}} onRenamed={(next) => { onRenamed(next); setId(next); }} />;
   }
   render(<Host />);
   await screen.findByRole("heading", { name: "Planning" });
@@ -79,7 +82,7 @@ it("renames the Meeting after releasing audio and follows the new id", async () 
 
 it("keeps the rename input open and shows an error on failure", async () => {
   vi.mocked(renameMeeting).mockRejectedValue("Folder is busy");
-  render(<MeetingView id="old" onBack={() => {}} onRenamed={() => {}} />);
+  render(<MeetingView id="old" onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
   await screen.findByRole("heading", { name: "Planning" });
   fireEvent.click(screen.getByRole("button", { name: "Rename" }));
   fireEvent.change(screen.getByRole("textbox", { name: "Title" }), { target: { value: "Review" } });
@@ -91,7 +94,7 @@ it("keeps the rename input open and shows an error on failure", async () => {
 
 it("shows no audio, disables empty saves, and handles Escape", async () => {
   vi.mocked(meetingDetail).mockResolvedValue({ ...detail, language: null, audio_path: null });
-  render(<MeetingView id="old" onBack={() => {}} onRenamed={() => {}} />);
+  render(<MeetingView id="old" onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
   expect(await screen.findByText("No audio yet")).toBeTruthy();
   expect((screen.getByRole("combobox", { name: "Language" }) as HTMLSelectElement).value).toBe("");
   fireEvent.click(screen.getByRole("button", { name: "Rename" }));
@@ -103,7 +106,7 @@ it("shows no audio, disables empty saves, and handles Escape", async () => {
 });
 
 it("enqueues transcription and can cancel a queued job", async () => {
-  render(<MeetingView id="old" onBack={() => {}} onRenamed={() => {}} />);
+  render(<MeetingView id="old" onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
   fireEvent.click(await screen.findByRole("button", { name: "Transcribe" }));
   expect(enqueueTranscription).toHaveBeenCalledWith("old");
   expect(await screen.findByText("Waiting to transcribe")).toBeTruthy();
@@ -114,11 +117,11 @@ it("enqueues transcription and can cancel a queued job", async () => {
 it("shows download progress, failure actions, and a ready revision", async () => {
   const downloading: ProcessingStatus = { jobs: [{ meeting_id: "old", model: null, stage: "downloading", progress: 0.34, error: null }] };
   vi.mocked(processingStatus).mockResolvedValue(downloading);
-  const { rerender } = render(<MeetingView id="old" onBack={() => {}} onRenamed={() => {}} />);
+  const { rerender } = render(<MeetingView id="old" onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
   expect(await screen.findByText("Downloading model 34%")).toBeTruthy();
   vi.mocked(processingStatus).mockResolvedValue({ jobs: [{ meeting_id: "old", model: null, stage: "failed", progress: 0.34, error: "Model unavailable" }] });
-  rerender(<MeetingView id="new" onBack={() => {}} onRenamed={() => {}} />);
-  rerender(<MeetingView id="old" onBack={() => {}} onRenamed={() => {}} />);
+  rerender(<MeetingView id="new" onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
+  rerender(<MeetingView id="old" onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
   expect((await screen.findByRole("alert")).textContent).toContain("Model unavailable");
   expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "Dismiss" })).toBeTruthy();
@@ -126,7 +129,7 @@ it("shows download progress, failure actions, and a ready revision", async () =>
 
 it("shows transcript metadata and changes the Meeting language", async () => {
   vi.mocked(meetingTranscript).mockResolvedValue({ schema_version: 1, revision: 2, created_at: "2026-10-12T10:00:00Z", model: "small", language: "vi", language_detected: true, duration_ms: 125000, segments: [{ id: "s00001", start_ms: 0, end_ms: 1000, text: "Hello", speaker: "me" }] });
-  render(<MeetingView id="old" onBack={() => {}} onRenamed={() => {}} />);
+  render(<MeetingView id="old" onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
   expect(await screen.findByText("Transcript revision 2 · model small · 1 segments · Vietnamese")).toBeTruthy();
   expect(screen.getByRole("button", { name: "Re-transcribe" })).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Re-transcribe" }));
@@ -139,7 +142,7 @@ it("re-transcribes with the chosen model and edits the current Revision", async 
   const original = { schema_version: 1, revision: 2, created_at: "2026-10-12T10:00:00Z", model: "small", language: "en" as const, language_detected: false, duration_ms: 125000, segments: [{ id: "s00001", start_ms: 0, end_ms: 1000, text: "Hello", speaker: "me" as const }] };
   vi.mocked(meetingTranscript).mockResolvedValue(original);
   vi.mocked(editSegment).mockResolvedValue({ ...original, segments: [{ ...original.segments[0], text: "Updated" }] });
-  render(<MeetingView id="old" onBack={() => {}} onRenamed={() => {}} />);
+  render(<MeetingView id="old" onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
   await screen.findByText("Hello");
   fireEvent.click(screen.getByRole("button", { name: "Edit" }));
   fireEvent.change(screen.getByRole("textbox", { name: "Segment text" }), { target: { value: "Updated" } });
@@ -157,7 +160,7 @@ it("closes an open Segment editor and keeps the newer Revision when one arrives"
   vi.mocked(meetingTranscript).mockResolvedValue(r1);
   let resolveEdit!: (transcript: typeof r1) => void;
   vi.mocked(editSegment).mockReturnValue(new Promise((resolve) => { resolveEdit = resolve; }));
-  render(<MeetingView id="old" onBack={() => {}} onRenamed={() => {}} />);
+  render(<MeetingView id="old" onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
   await screen.findByText("Hello");
   fireEvent.click(screen.getByRole("button", { name: "Edit" }));
   fireEvent.change(screen.getByRole("textbox", { name: "Segment text" }), { target: { value: "Edited" } });
@@ -173,7 +176,7 @@ it("closes an open Segment editor and keeps the newer Revision when one arrives"
 
 it("shows transcription progress and reloads a completed transcript", async () => {
   vi.mocked(processingStatus).mockResolvedValue({ jobs: [{ meeting_id: "old", model: null, stage: "transcribing", progress: 0.61, error: null }] });
-  render(<MeetingView id="old" onBack={() => {}} onRenamed={() => {}} />);
+  render(<MeetingView id="old" onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
   expect(await screen.findByText("Transcribing 61%")).toBeTruthy();
   vi.mocked(meetingTranscript).mockResolvedValue({ schema_version: 1, revision: 1, created_at: "2026-10-12T10:00:00Z", model: "small", language: "en", language_detected: false, duration_ms: 125000, segments: [] });
   await act(async () => { vi.mocked(onLibraryChanged).mock.calls[0][0](); });
@@ -183,7 +186,7 @@ it("shows transcription progress and reloads a completed transcript", async () =
 it("keeps a newer processing event when the initial snapshot arrives late", async () => {
   let resolveSnapshot!: (status: ProcessingStatus) => void;
   vi.mocked(processingStatus).mockReturnValue(new Promise((resolve) => { resolveSnapshot = resolve; }));
-  render(<MeetingView id="old" onBack={() => {}} onRenamed={() => {}} />);
+  render(<MeetingView id="old" onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
   await screen.findByRole("heading", { name: "Planning" });
   const event = vi.mocked(onProcessingStatus).mock.calls[0][0];
   await act(async () => event({ jobs: [{ meeting_id: "old", model: null, stage: "transcribing", progress: 0.61, error: null }] }));
@@ -202,7 +205,7 @@ it("follows the new id even when reloading the renamed Meeting fails", async () 
   const onRenamed = vi.fn();
   function Host() {
     const [id, setId] = useState("old");
-    return <MeetingView id={id} onBack={() => {}} onRenamed={(next) => { onRenamed(next); setId(next); }} />;
+    return <MeetingView id={id} onBack={() => {}} onOpenSettings={() => {}} onRenamed={(next) => { onRenamed(next); setId(next); }} />;
   }
   render(<Host />);
   await screen.findByRole("heading", { name: "Planning" });
@@ -216,6 +219,22 @@ it("follows the new id even when reloading the renamed Meeting fails", async () 
 
 it("labels an imported Meeting below its date", async () => {
   vi.mocked(meetingDetail).mockResolvedValue({ ...detail, imported: true });
-  render(<MeetingView id="old" onBack={() => {}} onRenamed={() => {}} />);
+  render(<MeetingView id="old" onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
   expect(await screen.findByText("Imported audio")).toBeTruthy();
+});
+
+it("guides setup when no AI provider is configured", async () => {
+  const onOpenSettings = vi.fn();
+  render(<MeetingView id="old" onBack={() => {}} onRenamed={() => {}} onOpenSettings={onOpenSettings} />);
+  expect(await screen.findByRole("heading", { name: "Summary and Ask" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Open AI settings" }));
+  expect(onOpenSettings).toHaveBeenCalledOnce();
+});
+
+it("hides setup guidance when a provider is configured", async () => {
+  vi.mocked(aiStatus).mockResolvedValue({ provider: "ollama", model: "llama3.2", configured: true, has_openai_key: false, has_anthropic_key: false });
+  render(<MeetingView id="old" onBack={() => {}} onRenamed={() => {}} onOpenSettings={() => {}} />);
+  await screen.findByRole("heading", { name: "Planning" });
+  await waitFor(() => expect(aiStatus).toHaveBeenCalled());
+  expect(screen.queryByRole("button", { name: "Open AI settings" })).toBeNull();
 });

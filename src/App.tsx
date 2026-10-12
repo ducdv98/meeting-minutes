@@ -85,7 +85,7 @@ export default function App() {
       </header>
       <RecordingBar />
       {showSettings ? <SettingsView onBack={() => setShowSettings(false)} /> : selectedId ? (
-        <MeetingView id={selectedId} onRenamed={setSelectedId} onBack={() => {
+        <MeetingView id={selectedId} onRenamed={setSelectedId} onOpenSettings={() => setShowSettings(true)} onBack={() => {
           setSelectedId(null);
           setScan((value) => value + 1);
         }} />

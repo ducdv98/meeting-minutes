@@ -5,13 +5,17 @@ use std::{
     path::PathBuf,
     sync::{
         atomic::{AtomicBool, Ordering},
-        Mutex,
+        Arc, Mutex,
     },
     thread,
     time::Duration,
 };
 
 use meeting_minutes_core::{
+    ai::{
+        self, AiStatus, ApiKey, GenerateRequest, HttpClient, Message, ProviderKind, Role,
+        SecretStore, TextProvider, UreqClient,
+    },
     capture::{QpcClock, WasapiOpener},
     import::import_extension,
     models::{self, DEFAULT_MODEL, MODELS},
@@ -41,6 +45,46 @@ const PAUSE_SHORTCUT: &str = "ctrl+alt+shift+p";
 struct SettingsPath(PathBuf);
 struct ModelsDir(PathBuf);
 struct Quitting(AtomicBool);
+struct Secrets(Box<dyn SecretStore>);
+struct Http(Arc<dyn HttpClient>);
+
+#[cfg(windows)]
+struct KeyringStore;
+#[cfg(windows)]
+impl KeyringStore {
+    fn entry(kind: ProviderKind) -> Result<keyring::Entry, String> {
+        let user = match kind {
+            ProviderKind::Openai => "openai-api-key",
+            ProviderKind::Anthropic => "anthropic-api-key",
+            ProviderKind::Ollama => return Err("Ollama needs no API key".into()),
+        };
+        keyring::Entry::new("Meeting Minutes", user).map_err(|error| error.to_string())
+    }
+}
+#[cfg(windows)]
+impl SecretStore for KeyringStore {
+    fn get(&self, kind: ProviderKind) -> Result<Option<ApiKey>, String> {
+        if kind == ProviderKind::Ollama {
+            return Ok(None);
+        }
+        match Self::entry(kind)?.get_password() {
+            Ok(key) => Ok(ApiKey::new(&key)),
+            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(error) => Err(error.to_string()),
+        }
+    }
+    fn set(&self, kind: ProviderKind, key: &ApiKey) -> Result<(), String> {
+        Self::entry(kind)?
+            .set_password(key.expose())
+            .map_err(|error| error.to_string())
+    }
+    fn delete(&self, kind: ProviderKind) -> Result<(), String> {
+        match Self::entry(kind)?.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Err(error) => Err(error.to_string()),
+        }
+    }
+}
 
 #[derive(Default)]
 struct ImportState {
@@ -370,6 +414,101 @@ fn update_settings(
     settings.vocabulary = vocabulary;
     settings.save(&path.0).map_err(|e| e.to_string())?;
     Ok(settings)
+}
+
+fn current_ai_status(path: &SettingsPath, secrets: &Secrets) -> AiStatus {
+    ai::ai_status(&Settings::load(&path.0).ai, secrets.0.as_ref())
+}
+
+#[tauri::command]
+fn ai_status(
+    path: State<'_, SettingsPath>,
+    secrets: State<'_, Secrets>,
+) -> Result<AiStatus, String> {
+    Ok(current_ai_status(&path, &secrets))
+}
+
+#[tauri::command]
+async fn list_ai_models(app: AppHandle, provider: ProviderKind) -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let secrets = app.state::<Secrets>();
+        let key = secrets.0.get(provider)?;
+        let http = app.state::<Http>();
+        ai::list_models(http.0.as_ref(), provider, key.as_ref()).map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+fn save_api_key(
+    path: State<'_, SettingsPath>,
+    secrets: State<'_, Secrets>,
+    provider: ProviderKind,
+    key: String,
+) -> Result<AiStatus, String> {
+    if !provider.is_cloud() {
+        return Err("Ollama needs no API key".into());
+    }
+    let key = ApiKey::new(&key).ok_or("Enter an API key")?;
+    secrets.0.set(provider, &key)?;
+    Ok(current_ai_status(&path, &secrets))
+}
+
+#[tauri::command]
+fn delete_api_key(
+    path: State<'_, SettingsPath>,
+    secrets: State<'_, Secrets>,
+    provider: ProviderKind,
+) -> Result<AiStatus, String> {
+    if !provider.is_cloud() {
+        return Err("Ollama needs no API key".into());
+    }
+    secrets.0.delete(provider)?;
+    Ok(current_ai_status(&path, &secrets))
+}
+
+#[tauri::command]
+fn update_ai_settings(
+    path: State<'_, SettingsPath>,
+    secrets: State<'_, Secrets>,
+    provider: Option<ProviderKind>,
+    model: Option<String>,
+) -> Result<AiStatus, String> {
+    let mut settings = Settings::load(&path.0);
+    settings.ai.provider = provider;
+    if let (Some(provider), Some(model)) = (provider, model) {
+        settings.ai.set_model(provider, model);
+    }
+    settings.save(&path.0).map_err(|error| error.to_string())?;
+    Ok(ai::ai_status(&settings.ai, secrets.0.as_ref()))
+}
+
+#[tauri::command]
+async fn test_ai_provider(app: AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let settings = Settings::load(&app.state::<SettingsPath>().0);
+        let secrets = app.state::<Secrets>();
+        let http = app.state::<Http>();
+        let provider = ai::configured_provider(&settings.ai, secrets.0.as_ref(), http.0.clone())
+            .map_err(|error| error.to_string())?;
+        let request = GenerateRequest {
+            system: "You are a connection test.".into(),
+            messages: vec![Message {
+                role: Role::User,
+                content: "Reply with the single word: ready".into(),
+            }],
+            schema: None,
+            // Reasoning models spend output tokens on thinking before the reply.
+            max_tokens: 1024,
+        };
+        let answer = provider
+            .generate(&request, &mut |_| {}, &AtomicBool::new(false))
+            .map_err(|error| error.to_string())?;
+        Ok(answer.trim().to_owned())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 fn processing_worker(app: AppHandle) {
@@ -900,6 +1039,11 @@ fn main() {
             let settings_path = app.path().app_data_dir()?.join("settings.json");
             let settings = Settings::load(&settings_path);
             app.manage(SettingsPath(settings_path));
+            #[cfg(windows)]
+            app.manage(Secrets(Box::new(KeyringStore)));
+            #[cfg(not(windows))]
+            app.manage(Secrets(Box::new(ai::MemorySecretStore::default())));
+            app.manage(Http(Arc::new(UreqClient)));
             app.manage(ModelsDir(app.path().app_data_dir()?.join("models")));
             app.manage(Quitting(AtomicBool::new(false)));
             app.manage(Mutex::new(Processor::new()));
@@ -1026,7 +1170,13 @@ fn main() {
             edit_segment,
             set_meeting_language,
             get_settings,
-            update_settings
+            update_settings,
+            ai_status,
+            list_ai_models,
+            save_api_key,
+            delete_api_key,
+            update_ai_settings,
+            test_ai_provider
         ])
         .run(tauri::generate_context!())
         .expect("error while running Meeting Minutes");

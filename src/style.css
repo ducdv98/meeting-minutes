@@ -58,6 +58,8 @@ main {
 }
 
 .notice button + button { margin-left: 0.5rem; }
+.cloud-disclosure-text { max-height: 18rem; overflow: auto; }
+.cloud-disclosure pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 
 .scrubber { position: relative; margin-top: 0.75rem; }
 .scrubber input[type="range"] { display: block; width: 100%; margin: 0; }

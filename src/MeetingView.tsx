@@ -7,11 +7,14 @@ import { onLibraryChanged } from "./recording";
 import { cancelProcessing, dismissProcessing, enqueueTranscription, meetingTranscript, MODELS, onProcessingStatus, processingStageLabel, processingStatus, setMeetingLanguage, type Language, type ProcessingJob, type Transcript } from "./processing";
 import TranscriptView from "./TranscriptView";
 import { editSegment } from "./transcript";
+import { aiStatus, type AiStatus } from "./ai";
+import AiSetupGuidance from "./AiSetupGuidance";
 
 interface Props {
   id: string;
   onBack(): void;
   onRenamed(newId: string): void;
+  onOpenSettings(): void;
 }
 
 function languageName(code: string | null): string {
@@ -20,7 +23,8 @@ function languageName(code: string | null): string {
   return code ?? "Not set";
 }
 
-export default function MeetingView({ id, onBack, onRenamed }: Props) {
+export default function MeetingView({ id, onBack, onRenamed, onOpenSettings }: Props) {
+  const [providerStatus, setProviderStatus] = useState<AiStatus | null>(null);
   const [detail, setDetail] = useState<MeetingDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [renaming, setRenaming] = useState(false);
@@ -48,6 +52,7 @@ export default function MeetingView({ id, onBack, onRenamed }: Props) {
     );
     meetingTranscript(id).then((next) => { if (active) setTranscript(next); }, (reason) => { if (active) setError(String(reason)); });
     processingStatus().then((next) => { if (active && !processingEventSeen.current) setJob(next.jobs.find((item) => item.meeting_id === id) ?? null); }, (reason) => { if (active) setError(String(reason)); });
+    aiStatus().then((next) => { if (active) setProviderStatus(next); }, (reason) => { if (active) setError(String(reason)); });
     return () => { active = false; };
   }, [id]);
 
@@ -168,6 +173,7 @@ export default function MeetingView({ id, onBack, onRenamed }: Props) {
                 {transcript && <TranscriptView key={`${id}:${transcript.revision}`} transcript={transcript} positionMs={positionMs} player={player}
                   editable={!job || job.stage === "failed"} onEdit={saveSegment} />}
               </section>
+              {providerStatus?.configured === false && <AiSetupGuidance onOpenSettings={onOpenSettings} />}
             </div>
           </>
         )}

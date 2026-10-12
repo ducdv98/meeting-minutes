@@ -11,6 +11,7 @@ use chrono::{DateTime, FixedOffset};
 use serde::{Serialize, Serializer};
 
 use crate::{
+    ai::ProviderKind,
     folder_name,
     import::{audio_duration_ms, import_extension},
     index::Index,
@@ -437,6 +438,45 @@ impl Library {
         let mut metadata: serde_json::Value =
             serde_json::from_slice(&fs::read(folder.join("meeting.json"))?)?;
         metadata["language"] = serde_json::to_value(language)?;
+        write_metadata(&folder, &metadata)
+    }
+
+    pub fn cloud_consent(&self, id: &str, provider: ProviderKind) -> Result<bool, LibraryError> {
+        let folder = self.checked_meeting_dir(id)?;
+        let file: MeetingFile = serde_json::from_slice(&fs::read(folder.join("meeting.json"))?)?;
+        Ok(file
+            .cloud_consent
+            .iter()
+            .any(|consent| consent.provider == provider))
+    }
+
+    pub fn record_cloud_consent(
+        &self,
+        id: &str,
+        provider: ProviderKind,
+        at: DateTime<FixedOffset>,
+    ) -> Result<(), LibraryError> {
+        if !provider.is_cloud() {
+            return Err(LibraryError::Encode(
+                "Ollama runs on this PC and needs no consent".into(),
+            ));
+        }
+        let folder = self.checked_meeting_dir(id)?;
+        let mut metadata: serde_json::Value =
+            serde_json::from_slice(&fs::read(folder.join("meeting.json"))?)?;
+        let entries = metadata["cloud_consent"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        if entries
+            .iter()
+            .any(|entry| entry["provider"] == serde_json::json!(provider))
+        {
+            return Ok(());
+        }
+        let mut entries = entries;
+        entries.push(serde_json::json!({"provider": provider, "consented_at": at.to_rfc3339()}));
+        metadata["cloud_consent"] = serde_json::Value::Array(entries);
         write_metadata(&folder, &metadata)
     }
 
