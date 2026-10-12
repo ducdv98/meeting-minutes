@@ -5,6 +5,9 @@ import { rescanLibrary } from "./library";
 
 vi.mock("./library", () => ({ rescanLibrary: vi.fn() }));
 vi.mock("./RecordingBar", () => ({ default: () => null }));
+vi.mock("./MeetingView", () => ({ default: ({ id, onBack }: { id: string; onBack: () => void }) => (
+  <section><h1>Meeting {id}</h1><button type="button" onClick={onBack}>Back to Library</button></section>
+) }));
 vi.mock("./recording", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./recording")>()),
   onLibraryChanged: () => Promise.resolve(() => {}),
@@ -74,4 +77,16 @@ it("rescans the Library when the Rescan button is clicked", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Rescan" }));
   expect(await screen.findByText("Planning")).toBeTruthy();
   expect(rescanLibrary).toHaveBeenCalledTimes(2);
+});
+
+it("opens a Meeting from its title and returns to the Library", async () => {
+  vi.mocked(rescanLibrary).mockResolvedValue({
+    meetings: [{ id: "one", title: "Planning", started_at: "2026-10-12T09:00:00Z", duration_ms: 0 }],
+    malformed: [],
+  });
+  render(<App />);
+  fireEvent.click(await screen.findByRole("button", { name: "Planning" }));
+  expect(screen.getByRole("heading", { name: "Meeting one" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Back to Library" }));
+  expect(screen.getByRole("heading", { name: "Library" })).toBeTruthy();
 });

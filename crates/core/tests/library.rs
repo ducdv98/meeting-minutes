@@ -301,3 +301,156 @@ fn begin_next_recording_refuses_an_unsaved_recording() {
         Err(LibraryError::UnsavedRecording)
     ));
 }
+
+#[test]
+fn rename_moves_the_folder_preserves_files_and_metadata_and_updates_the_index() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().join("Library");
+    let mut library = Library::open(&root, temp.path().join("index.sqlite3")).unwrap();
+    let original = library
+        .create_meeting("Planning", at("2026-10-12T09:30:00Z"))
+        .unwrap();
+    let folder = root.join(&original.id);
+    std::fs::write(folder.join("notes.txt"), b"keep").unwrap();
+    let metadata_path = folder.join("meeting.json");
+    let mut metadata: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&metadata_path).unwrap()).unwrap();
+    metadata["future"] = serde_json::json!({"value": 42});
+    std::fs::write(&metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
+
+    let renamed = library
+        .rename_meeting(&original.id, "  Project review  ")
+        .unwrap();
+
+    assert_eq!(renamed.id, "2026-10-12 0930 Project review");
+    assert_eq!(renamed.title, "Project review");
+    assert!(!folder.exists());
+    let new_folder = root.join(&renamed.id);
+    assert_eq!(
+        std::fs::read(new_folder.join("notes.txt")).unwrap(),
+        b"keep"
+    );
+    let saved: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(new_folder.join("meeting.json")).unwrap()).unwrap();
+    assert_eq!(saved["future"], metadata["future"]);
+    assert_eq!(saved["title"], "Project review");
+    assert_eq!(library.list_meetings().unwrap(), vec![renamed]);
+}
+
+#[test]
+fn rename_to_taken_name_uses_suffix_without_touching_the_other_meeting() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().join("Library");
+    let mut library = Library::open(&root, temp.path().join("index.sqlite3")).unwrap();
+    let taken = library
+        .create_meeting("Review", at("2026-10-12T09:30:00Z"))
+        .unwrap();
+    let original = library
+        .create_meeting("Planning", at("2026-10-12T09:30:00Z"))
+        .unwrap();
+    let renamed = library.rename_meeting(&original.id, "Review").unwrap();
+    assert_eq!(renamed.id, "2026-10-12 0930 Review (2)");
+    assert_eq!(library.meeting(&taken.id).unwrap().title, "Review");
+    assert_eq!(library.list_meetings().unwrap().len(), 2);
+}
+
+#[test]
+fn rename_to_same_title_keeps_folder_and_empty_title_is_rejected() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().join("Library");
+    let mut library = Library::open(&root, temp.path().join("index.sqlite3")).unwrap();
+    let original = library
+        .create_meeting("Planning", at("2026-10-12T09:30:00Z"))
+        .unwrap();
+    assert_eq!(
+        library.rename_meeting(&original.id, " Planning ").unwrap(),
+        original
+    );
+    assert!(matches!(
+        library.rename_meeting(&original.id, "  "),
+        Err(LibraryError::EmptyTitle)
+    ));
+    assert!(root.join(&original.id).exists());
+    assert_eq!(library.list_meetings().unwrap(), vec![original]);
+}
+
+#[test]
+fn case_only_rename_changes_the_folder_name() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().join("Library");
+    let mut library = Library::open(&root, temp.path().join("index.sqlite3")).unwrap();
+    let original = library
+        .create_meeting("Planning", at("2026-10-12T09:30:00Z"))
+        .unwrap();
+
+    let renamed = library.rename_meeting(&original.id, "PLANNING").unwrap();
+
+    assert_eq!(renamed.id, "2026-10-12 0930 PLANNING");
+    assert_eq!(renamed.title, "PLANNING");
+    assert!(!root.join(&original.id).exists());
+    assert!(root.join(&renamed.id).join("meeting.json").exists());
+    assert_eq!(library.list_meetings().unwrap(), vec![renamed]);
+}
+
+#[test]
+fn rename_refuses_unsaved_recordings_and_missing_or_invalid_ids() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().join("Library");
+    let mut library = Library::open(&root, temp.path().join("index.sqlite3")).unwrap();
+    let original = library
+        .create_meeting("Planning", at("2026-10-12T09:30:00Z"))
+        .unwrap();
+    std::fs::create_dir_all(root.join(&original.id).join(".chunks/recording-1")).unwrap();
+    assert!(matches!(
+        library.rename_meeting(&original.id, "New title"),
+        Err(LibraryError::UnsavedRecording)
+    ));
+    assert!(matches!(
+        library.rename_meeting("missing", "New title"),
+        Err(LibraryError::MeetingNotFound)
+    ));
+    assert!(matches!(
+        library.rename_meeting("..", "New title"),
+        Err(LibraryError::MeetingNotFound)
+    ));
+    assert!(matches!(
+        library.meeting(".."),
+        Err(LibraryError::MeetingNotFound)
+    ));
+    assert!(root.join(&original.id).exists());
+    assert_eq!(library.list_meetings().unwrap(), vec![original]);
+}
+
+#[test]
+fn meeting_detail_reports_markers_language_and_only_existing_audio() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().join("Library");
+    let mut library = Library::open(&root, temp.path().join("index.sqlite3")).unwrap();
+    let summary = library
+        .create_meeting("Planning", at("2026-10-12T09:30:00Z"))
+        .unwrap();
+    let folder = root.join(&summary.id);
+    let metadata_path = folder.join("meeting.json");
+    let mut metadata: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&metadata_path).unwrap()).unwrap();
+    metadata["language"] = serde_json::json!("vi");
+    metadata["duration_ms"] = serde_json::json!(125_000);
+    metadata["audio"] = serde_json::json!("meeting.mp3");
+    metadata["markers"] = serde_json::json!([
+        {"kind": "pause", "at_ms": 1_000, "paused_ms": 5_000},
+        {"kind": "gap", "at_ms": 20_000},
+        {"kind": "device_switch", "at_ms": 40_000, "source": "microphone", "device": "Headset"}
+    ]);
+    std::fs::write(&metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
+    let without_audio = library.meeting(&summary.id).unwrap();
+    assert_eq!(without_audio.language.as_deref(), Some("vi"));
+    assert_eq!(without_audio.duration_ms, 125_000);
+    assert_eq!(without_audio.markers.len(), 3);
+    assert_eq!(without_audio.audio_path, None);
+    let audio = folder.join("meeting.mp3");
+    std::fs::write(&audio, b"mp3").unwrap();
+    assert_eq!(
+        library.meeting(&summary.id).unwrap().audio_path,
+        Some(audio)
+    );
+}

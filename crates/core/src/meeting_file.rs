@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use crate::{capture::Source, recording::Marker};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -8,6 +10,17 @@ pub struct MeetingSummary {
     pub title: String,
     pub started_at: String,
     pub duration_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct MeetingDetail {
+    pub id: String,
+    pub title: String,
+    pub started_at: String,
+    pub duration_ms: u64,
+    pub language: Option<String>,
+    pub audio_path: Option<PathBuf>,
+    pub markers: Vec<Marker>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

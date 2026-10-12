@@ -6,7 +6,7 @@ use meeting_minutes_core::{
     capture::{QpcClock, WasapiOpener},
     recorder::{Phase, Recorder, RecorderError, RecorderStatus, SaveJob, SaveState},
     settings::Settings,
-    Library, MeetingSummary, ScanReport,
+    Library, LibraryError, MeetingDetail, MeetingSummary, ScanReport,
 };
 use tauri::{
     image::Image,
@@ -52,6 +52,51 @@ fn rescan_library(state: State<'_, LibraryState>) -> Result<ScanReport, String> 
         .map_err(|error| error.clone())?
         .rescan()
         .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn meeting_detail(
+    state: State<'_, LibraryState>,
+    meeting_id: String,
+) -> Result<MeetingDetail, String> {
+    let guard = state.lock().map_err(|error| error.to_string())?;
+    guard
+        .as_ref()
+        .map_err(Clone::clone)?
+        .meeting(&meeting_id)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn rename_meeting(
+    app: AppHandle,
+    meeting_id: String,
+    title: String,
+) -> Result<MeetingSummary, String> {
+    let summary = {
+        let mut recorder = lock_recorder(&app)?;
+        // A save may have removed its Chunks but not finished yet; its files are written by path.
+        let status = recorder.status();
+        if status.meeting_id.as_deref() == Some(meeting_id.as_str())
+            || status
+                .saves
+                .iter()
+                .any(|save| save.meeting_id == meeting_id)
+        {
+            return Err(LibraryError::UnsavedRecording.to_string());
+        }
+        let library_state = app.state::<LibraryState>();
+        let mut library = library_state.lock().map_err(|error| error.to_string())?;
+        let library = library.as_mut().map_err(|error| error.clone())?;
+        let summary = library
+            .rename_meeting(&meeting_id, &title)
+            .map_err(|error| error.to_string())?;
+        recorder.meeting_renamed(&meeting_id, &summary.id);
+        summary
+    };
+    let _ = app.emit("library-changed", ());
+    let _ = publish(&app);
+    Ok(summary)
 }
 
 #[tauri::command]
@@ -465,6 +510,8 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             list_meetings,
             rescan_library,
+            meeting_detail,
+            rename_meeting,
             recording_status,
             start_recording,
             pause_recording,

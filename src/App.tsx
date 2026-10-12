@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import wordmark from "./assets/wordmark-dark.png";
 import { rescanLibrary, type MalformedFolder, type MeetingSummary } from "./library";
+import MeetingView from "./MeetingView";
 import RecordingBar from "./RecordingBar";
 import { formatElapsed, onLibraryChanged } from "./recording";
 
@@ -9,6 +10,7 @@ export default function App() {
   const [malformed, setMalformed] = useState<MalformedFolder[]>([]);
   const [failed, setFailed] = useState(false);
   const [scan, setScan] = useState(0);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -40,25 +42,35 @@ export default function App() {
         <img className="wordmark" src={wordmark} alt="Meeting Minutes" />
       </header>
       <RecordingBar />
-      <h1>Library</h1>
-      <button type="button" onClick={() => setScan((value) => value + 1)}>Rescan</button>
-      {failed && <p role="alert">Could not load the Library</p>}
-      {malformed.length > 0 && (
-        <section role="status">
-          <p>{malformed.length} {malformed.length === 1 ? "folder" : "folders"} could not be read</p>
-          <ul>{malformed.map((item) => <li key={item.folder}>{item.folder}: {item.reason}</li>)}</ul>
-        </section>
-      )}
-      {meetings?.length === 0 && <p>No meetings yet</p>}
-      {meetings && meetings.length > 0 && (
-        <ul>
-          {meetings.map((meeting) => (
-            <li key={meeting.id}>
-              <time dateTime={meeting.started_at}>{meeting.started_at.slice(0, 16).replace("T", " ")}</time> {meeting.title}
-              {meeting.duration_ms > 0 && <> · {formatElapsed(meeting.duration_ms)}</>}
-            </li>
-          ))}
-        </ul>
+      {selectedId ? (
+        <MeetingView id={selectedId} onRenamed={setSelectedId} onBack={() => {
+          setSelectedId(null);
+          setScan((value) => value + 1);
+        }} />
+      ) : (
+        <>
+          <h1>Library</h1>
+          <button type="button" onClick={() => setScan((value) => value + 1)}>Rescan</button>
+          {failed && <p role="alert">Could not load the Library</p>}
+          {malformed.length > 0 && (
+            <section role="status">
+              <p>{malformed.length} {malformed.length === 1 ? "folder" : "folders"} could not be read</p>
+              <ul>{malformed.map((item) => <li key={item.folder}>{item.folder}: {item.reason}</li>)}</ul>
+            </section>
+          )}
+          {meetings?.length === 0 && <p>No meetings yet</p>}
+          {meetings && meetings.length > 0 && (
+            <ul>
+              {meetings.map((meeting) => (
+                <li key={meeting.id}>
+                  <time dateTime={meeting.started_at}>{meeting.started_at.slice(0, 16).replace("T", " ")}</time>{" "}
+                  <button type="button" onClick={() => setSelectedId(meeting.id)}>{meeting.title}</button>
+                  {meeting.duration_ms > 0 && <> · {formatElapsed(meeting.duration_ms)}</>}
+                </li>
+              ))}
+            </ul>
+          )}
+        </>
       )}
     </main>
   );

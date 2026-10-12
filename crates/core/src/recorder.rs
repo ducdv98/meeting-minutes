@@ -344,4 +344,12 @@ impl<O: InputOpener, C: Clock> Recorder<O, C> {
     pub fn dismiss_continue(&mut self, meeting_id: &str) {
         self.continue_offers.retain(|id| id != meeting_id);
     }
+
+    pub fn meeting_renamed(&mut self, old_id: &str, new_id: &str) {
+        for id in &mut self.continue_offers {
+            if id == old_id {
+                *id = new_id.to_owned();
+            }
+        }
+    }
 }

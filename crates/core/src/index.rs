@@ -78,6 +78,22 @@ impl Index {
         Ok(())
     }
 
+    pub(crate) fn rename(
+        &mut self,
+        old_id: &str,
+        meeting: &MeetingSummary,
+        started_at_ms: i64,
+    ) -> Result<(), LibraryError> {
+        let transaction = self.connection.transaction()?;
+        transaction.execute("DELETE FROM meetings WHERE id = ?1", [old_id])?;
+        transaction.execute(
+            "INSERT INTO meetings (id, title, started_at, started_at_ms, duration_ms) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![meeting.id, meeting.title, meeting.started_at, started_at_ms, meeting.duration_ms as i64],
+        )?;
+        transaction.commit()?;
+        Ok(())
+    }
+
     pub(crate) fn list(&self) -> Result<Vec<MeetingSummary>, LibraryError> {
         let mut statement = self.connection.prepare(
             "SELECT id, title, started_at, duration_ms FROM meetings ORDER BY started_at_ms DESC, title ASC, id ASC",
