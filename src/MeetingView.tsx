@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { meetingDetail, renameMeeting, type MeetingDetail } from "./library";
 import Player, { PlayerContext, type PlayerHandle } from "./Player";
-import type { TimelinePlayer } from "./player";
+import type { TimelinePlayer } from "./timeline";
 import { formatElapsed } from "./recording";
 import { onLibraryChanged } from "./recording";
 import { cancelProcessing, dismissProcessing, enqueueTranscription, meetingTranscript, MODELS, onProcessingStatus, processingStageLabel, processingStatus, setMeetingLanguage, type Language, type ProcessingJob, type Transcript } from "./processing";

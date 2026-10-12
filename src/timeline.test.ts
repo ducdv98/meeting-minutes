@@ -1,5 +1,5 @@
 import { expect, it, vi } from "vitest";
-import { createTimelinePlayer, LEAD_IN_MS, markerLabel, markerPosition } from "./player";
+import { createTimelinePlayer, LEAD_IN_MS, markerLabel, markerPosition } from "./timeline";
 
 function media() {
   const element = document.createElement("audio");

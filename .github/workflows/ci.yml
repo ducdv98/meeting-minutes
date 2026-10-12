@@ -7,6 +7,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # Windows can't tell apart paths that differ only in case. Extensions are stripped because
+      # imports omit them: "./Player" resolved to player.ts instead of Player.tsx.
+      - name: Check for case-only path collisions
+        run: |
+          collisions=$(git ls-files | sed -E 's/\.(d\.ts|[cm]?[jt]sx?)$//' | sort -u | sort -f | uniq -di)
+          if [ -n "$collisions" ]; then echo "Paths differing only in case:"; echo "$collisions"; exit 1; fi
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - uses: pnpm/action-setup@v4

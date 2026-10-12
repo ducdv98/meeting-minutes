@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { TimelinePlayer } from "./player";
+import type { TimelinePlayer } from "./timeline";
 import type { Transcript } from "./processing";
 import { formatElapsed } from "./recording";
 import { currentSegmentId, speakerName } from "./transcript";

@@ -597,7 +597,12 @@ fn case_only_rename_changes_the_folder_name() {
 
     assert_eq!(renamed.id, "2026-10-12 0930 PLANNING");
     assert_eq!(renamed.title, "PLANNING");
-    assert!(!root.join(&original.id).exists());
+    // List real names: on Windows `root.join(&original.id)` still resolves to the renamed folder.
+    let folders: Vec<String> = std::fs::read_dir(&root)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .collect();
+    assert_eq!(folders, vec![renamed.id.clone()]);
     assert!(root.join(&renamed.id).join("meeting.json").exists());
     assert_eq!(library.list_meetings().unwrap(), vec![renamed]);
 }

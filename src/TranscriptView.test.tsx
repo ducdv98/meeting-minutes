@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, expect, it, vi } from "vitest";
 import TranscriptView from "./TranscriptView";
 import type { Transcript } from "./processing";
-import type { TimelinePlayer } from "./player";
+import type { TimelinePlayer } from "./timeline";
 
 const transcript: Transcript = {
   schema_version: 1, revision: 1, created_at: "2026-10-12T10:00:00Z", model: "small",

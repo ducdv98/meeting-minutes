@@ -1,7 +1,7 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { createContext, forwardRef, useContext, useEffect, useImperativeHandle, useRef, useState } from "react";
 import type { Marker } from "./library";
-import { createTimelinePlayer, markerLabel, markerPosition, type TimelinePlayer } from "./player";
+import { createTimelinePlayer, markerLabel, markerPosition, type TimelinePlayer } from "./timeline";
 import { formatElapsed } from "./recording";
 
 export const PlayerContext = createContext<TimelinePlayer | null>(null);
