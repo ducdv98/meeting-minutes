@@ -1,6 +1,6 @@
 # Record a Meeting end to end
 
-Status: ready-for-human
+Status: resolved
 Blocked by: 03, 04
 Spec: ../spec.md
 
@@ -15,7 +15,7 @@ Turn the spike into the real capture module: Record / Pause / Resume / Stop from
 - [x] After Stop: FLAC per Source, mixed MP3, and `meeting.json` with duration, Recordings and Markers.
 - [x] Failed finalisation keeps the Chunks and offers Retry save without re-recording.
 - [x] Tray icon and window both show elapsed time while recording.
-- [ ] Manual check on the laptop: a 30-minute call produces a playable Meeting.
+- [x] Manual check on the laptop: a 30-minute call produces a playable Meeting.
 
 ## Comments
 
@@ -47,3 +47,11 @@ Code is done and tested on Linux. The Windows build is checked with `cargo clipp
   - The ticket 03 request for QPC offsets on `idle_pad`/stop events is not done; there is no event log in the app yet.
 - Not verified here: the MSVC build of `mp3lame-sys` (Windows CI will show it) and real WASAPI capture.
 - Manual check still to do: a 30-minute call on the laptop produces a playable Meeting. Both FLACs and the MP3 should play, and pause/resume should show in `meeting.json`.
+
+### 2026-10-12 — laptop run reviewed; MP3 delay fixed
+
+The user's laptop run (2:26 with one pause) and a real meeting both worked. In the 2:26 run, System audio was silent because YouTube played on another device, which the user says is expected. Both FLACs have identical frame counts that match `duration_ms`, and all three files decode cleanly. The pause left no silent gap and no click.
+
+Fixed: `meeting.mp3` played 47 ms (2,257 samples) behind the Timeline. LAME's encoder delay was not trimmable because no Info/LAME tag was written, and `FlushNoGap` also dropped the final partial frame. The encoder now reserves and writes the LAME tag and flushes with `FlushGap`. ffmpeg decodes the MP3 sample-exact against the FLAC (a click test lands at offset 0 ms, with the same length).
+
+Resolved 2026-10-12: the user tested a real meeting on the laptop, it worked, and they resolved the ticket. No 30-minute run is recorded.

@@ -13,9 +13,9 @@ use flacenc::{
     config,
     source::{Fill, FrameBuf},
 };
-use mp3lame_encoder::{Bitrate, Builder, FlushGap, FlushNoGap, InterleavedPcm, VbrMode};
+use mp3lame_encoder::{Bitrate, Builder, FlushGap, InterleavedPcm, VbrMode};
 use serde::{Deserialize, Serialize};
-use std::io::{BufReader, Read};
+use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::{
     fs::{self, File, OpenOptions},
     io::{self, BufWriter, Write},
@@ -661,24 +661,23 @@ fn encode_mp3(
         .map_err(|e| LibraryError::Encode(e.to_string()))?
         .with_vbr_mode(VbrMode::Off)
         .map_err(|e| LibraryError::Encode(e.to_string()))?
+        // Reserves the first frame for the Info/LAME tag that tells players to trim the encoder
+        // delay; without it the Timeline audio starts about 47 ms late.
+        .with_to_write_vbr_tag(true)
+        .map_err(|e| LibraryError::Encode(e.to_string()))?
         .build()
         .map_err(|e| LibraryError::Encode(e.to_string()))?;
     let mut mic_reader = mic.reader();
     let mut system_reader = system.reader();
     let mut offset = 0;
     let mut output = Vec::with_capacity(mp3lame_encoder::max_required_buffer_size(BLOCK).max(7200));
-    let encoded_frames = frames.max(1152);
-    while offset < encoded_frames {
-        let count = (encoded_frames - offset).min(BLOCK as u64) as usize;
+    while offset < frames {
+        let count = (frames - offset).min(BLOCK as u64) as usize;
         let mut samples = Vec::with_capacity(count * 2);
-        for index in 0..count {
-            if offset + (index as u64) < frames {
-                let m = mic_reader.sample()?;
-                samples.push(pcm(m + system_reader.sample()?));
-                samples.push(pcm(m + system_reader.sample()?));
-            } else {
-                samples.extend_from_slice(&[0, 0]);
-            }
+        for _ in 0..count {
+            let m = mic_reader.sample()?;
+            samples.push(pcm(m + system_reader.sample()?));
+            samples.push(pcm(m + system_reader.sample()?));
         }
         output.clear();
         encoder
@@ -688,15 +687,17 @@ fn encode_mp3(
         offset += count as u64;
     }
     output.clear();
-    if frames < 1152 {
-        encoder
-            .flush_to_vec::<FlushGap>(&mut output)
-            .map_err(|e| LibraryError::Encode(e.to_string()))?;
-    } else {
-        encoder
-            .flush_to_vec::<FlushNoGap>(&mut output)
-            .map_err(|e| LibraryError::Encode(e.to_string()))?;
-    }
+    // FlushGap pads and writes the final partial frame; the LAME tag records that padding.
+    encoder
+        .flush_to_vec::<FlushGap>(&mut output)
+        .map_err(|e| LibraryError::Encode(e.to_string()))?;
+    file.write_all(&output)?;
+    output.clear();
+    output.reserve(encoder.lame_tag_size());
+    encoder
+        .lame_tag_encode_to_vec(&mut output)
+        .ok_or_else(|| LibraryError::Encode("Could not write the MP3 LAME tag".into()))?;
+    file.seek(SeekFrom::Start(0))?;
     file.write_all(&output)?;
     file.sync_all()?;
     Ok(())

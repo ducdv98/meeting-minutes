@@ -265,10 +265,8 @@ fn finalise_streams_playable_audio_and_refreshes_index() {
     while let Ok(frame) = decoder.next_frame() {
         decoded += frame.data.len() / frame.channels;
     }
-    assert!(
-        (4_500..7_000).contains(&decoded),
-        "decoded {decoded} MP3 frames"
-    );
+    // minimp3 ignores the gapless tag, so it also returns the encoder delay and padding.
+    assert!(decoded >= 4_800, "decoded {decoded} MP3 frames");
     assert_eq!(
         library.record_finalized(&meeting.id).unwrap().duration_ms,
         100
@@ -404,4 +402,40 @@ fn chunk_write_failure_is_reported_when_the_recording_stops() {
         std::fs::read(chunks.join("microphone-000000.f32")).unwrap(),
         b"foreign"
     );
+}
+
+#[test]
+fn mp3_carries_gapless_info_so_players_trim_the_encoder_delay() {
+    let temp = TempDir::new().unwrap();
+    let mut library = Library::open(
+        temp.path().join("Library"),
+        temp.path().join("index.sqlite3"),
+    )
+    .unwrap();
+    let (meeting, chunks, _) = library
+        .begin_recording(chrono::DateTime::parse_from_rfc3339("2026-10-12T09:30:00Z").unwrap())
+        .unwrap();
+    for source in [Source::Microphone, Source::SystemAudio] {
+        let mut writer = ChunkWriter::new(&chunks, source).unwrap();
+        writer.write(&vec![0.25; 4_800 * 2]).unwrap();
+        writer.finish().unwrap();
+    }
+    let dir = library.meeting_dir(&meeting.id);
+    finalize_recording(&dir, 1).unwrap();
+
+    let mp3 = std::fs::read(dir.join("meeting.mp3")).unwrap();
+    // 128 kbps at 48 kHz: every frame is 384 bytes; the first holds the Info/LAME tag.
+    const FRAME_BYTES: usize = 384;
+    let first = &mp3[..FRAME_BYTES];
+    assert!(first.windows(4).any(|w| w == b"Info"), "no Info tag");
+    let lame = first
+        .windows(4)
+        .position(|w| w == b"LAME")
+        .expect("no LAME tag");
+    let gapless = &first[lame + 21..lame + 24];
+    let delay = (usize::from(gapless[0]) << 4) | (usize::from(gapless[1]) >> 4);
+    let padding = (usize::from(gapless[1] & 0x0f) << 8) | usize::from(gapless[2]);
+    assert!(delay > 0);
+    let audio_frames = mp3.len() / FRAME_BYTES - 1;
+    assert_eq!(audio_frames * 1152 - delay - padding, 4_800);
 }
