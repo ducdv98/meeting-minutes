@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { getSettings, updateSettings, type Settings } from "./processing";
+import { getSettings, MODELS, updateSettings, type Settings } from "./processing";
 
 export default function SettingsView({ onBack }: { onBack(): void }) {
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -29,7 +29,7 @@ export default function SettingsView({ onBack }: { onBack(): void }) {
       <label><input type="checkbox" checked={settings.auto_process} onChange={(event) => setSettings({ ...settings, auto_process: event.target.checked })} /> Transcribe automatically after recording</label>
       <label htmlFor="transcription-model">Transcription model</label>
       <select id="transcription-model" value={settings.model} onChange={(event) => setSettings({ ...settings, model: event.target.value })}>
-        <option value="base">base (148 MB)</option><option value="small">small (488 MB, default)</option><option value="medium">medium (1534 MB)</option><option value="large-v3-turbo">large-v3-turbo (1625 MB)</option>
+        {MODELS.map((model) => <option key={model.name} value={model.name}>{model.name} ({model.size_mb} MB{model.name === "small" ? ", default" : ""})</option>)}
       </select>
       <label htmlFor="vocabulary">Vocabulary</label>
       <textarea id="vocabulary" value={vocabulary} onChange={(event) => setVocabulary(event.target.value)} rows={6} />

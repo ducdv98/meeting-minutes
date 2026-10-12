@@ -3,7 +3,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import SettingsView from "./SettingsView";
 import { getSettings, updateSettings } from "./processing";
 
-vi.mock("./processing", () => ({ getSettings: vi.fn(), updateSettings: vi.fn() }));
+vi.mock("./processing", async (importOriginal) => ({ ...(await importOriginal<typeof import("./processing")>()), getSettings: vi.fn(), updateSettings: vi.fn() }));
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
 
 it("loads and saves transcription settings", async () => {

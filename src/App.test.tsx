@@ -31,16 +31,16 @@ it("shows each Meeting's live processing state and cancels its job", async () =>
     { id: "two", title: "Review", started_at: "2026-10-12T10:00:00Z", duration_ms: 0 },
   ], malformed: [] });
   vi.mocked(processingStatus).mockResolvedValue({ jobs: [
-    { meeting_id: "one", stage: "queued", progress: 0, error: null },
-    { meeting_id: "two", stage: "downloading", progress: 0.34, error: null },
+    { meeting_id: "one", model: null, stage: "queued", progress: 0, error: null },
+    { meeting_id: "two", model: null, stage: "downloading", progress: 0.34, error: null },
   ] });
   render(<App />);
   expect(await screen.findByText("Waiting to transcribe")).toBeTruthy();
   expect(screen.getByText("Downloading model 34%")).toBeTruthy();
   const handler = vi.mocked(onProcessingStatus).mock.calls[0][0];
   const live: ProcessingStatus = { jobs: [
-    { meeting_id: "one", stage: "transcribing", progress: 0.61, error: null },
-    { meeting_id: "two", stage: "failed", progress: 0.34, error: "network" },
+    { meeting_id: "one", model: null, stage: "transcribing", progress: 0.61, error: null },
+    { meeting_id: "two", model: null, stage: "failed", progress: 0.34, error: "network" },
   ] };
   await act(async () => handler(live));
   expect(screen.getByText("Transcribing 61%")).toBeTruthy();

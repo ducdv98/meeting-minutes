@@ -14,9 +14,10 @@ interface Props {
   duration_ms: number;
   markers: Marker[];
   onPlayerChange(player: TimelinePlayer | null): void;
+  onPosition?(ms: number): void;
 }
 
-const Player = forwardRef<PlayerHandle, Props>(function Player({ audio_path, duration_ms, markers, onPlayerChange }, ref) {
+const Player = forwardRef<PlayerHandle, Props>(function Player({ audio_path, duration_ms, markers, onPlayerChange, onPosition }, ref) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const playerRef = useRef<(TimelinePlayer & { dispose(): void }) | null>(null);
   const [position, setPosition] = useState(0);
@@ -28,7 +29,7 @@ const Player = forwardRef<PlayerHandle, Props>(function Player({ audio_path, dur
     const player = createTimelinePlayer(media);
     playerRef.current = player;
     onPlayerChange(player);
-    const updatePosition = () => setPosition(Math.round(media.currentTime * 1000));
+    const updatePosition = () => { const ms = Math.round(media.currentTime * 1000); setPosition(ms); onPosition?.(ms); };
     const onPlay = () => setPlaying(true);
     const onPause = () => setPlaying(false);
     media.addEventListener("timeupdate", updatePosition);
@@ -44,7 +45,7 @@ const Player = forwardRef<PlayerHandle, Props>(function Player({ audio_path, dur
       media.removeEventListener("pause", onPause);
       media.removeEventListener("ended", onPause);
     };
-  }, [audio_path, onPlayerChange]);
+  }, [audio_path, onPlayerChange, onPosition]);
 
   useImperativeHandle(ref, () => ({
     release() {
@@ -60,6 +61,7 @@ const Player = forwardRef<PlayerHandle, Props>(function Player({ audio_path, dur
   function seek(ms: number) {
     playerRef.current?.seek(ms);
     setPosition(ms);
+    onPosition?.(ms);
   }
 
   return (

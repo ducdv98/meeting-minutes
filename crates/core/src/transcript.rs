@@ -36,6 +36,14 @@ pub struct Transcript {
     pub segments: Vec<Segment>,
 }
 
+impl Transcript {
+    pub fn segment(&self, segment_id: &str) -> Option<&Segment> {
+        self.segments
+            .iter()
+            .find(|segment| segment.id == segment_id)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RawSegment {
     pub start_ms: u64,

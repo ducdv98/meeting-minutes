@@ -406,6 +406,23 @@ fn running_job_can_be_queued_for_one_more_revision() {
 }
 
 #[test]
+fn queued_and_running_reruns_use_the_latest_model_choice() {
+    let mut queue = Processor::new();
+    assert!(queue.enqueue_with_model("a", Some("base")));
+    assert!(!queue.enqueue_with_model("a", Some("small")));
+    assert_eq!(queue.job_model("a").as_deref(), Some("small"));
+    assert_eq!(queue.next().as_deref(), Some("a"));
+    assert!(queue.enqueue_with_model("a", Some("medium")));
+    assert!(!queue.enqueue_with_model("a", Some("large-v3-turbo")));
+    queue.finished("a", Ok(()));
+    assert_eq!(queue.job_model("a").as_deref(), Some("large-v3-turbo"));
+    assert_eq!(queue.next().as_deref(), Some("a"));
+    queue.finished("a", Ok(()));
+    assert!(queue.enqueue("b"));
+    assert_eq!(queue.job_model("b"), None);
+}
+
+#[test]
 fn cancellation_and_failure_clear_a_running_rerun() {
     let mut queue = Processor::new();
     queue.enqueue("a");

@@ -259,6 +259,7 @@ pub enum JobStage {
 #[derive(Clone, Debug, Serialize)]
 pub struct ProcessingJob {
     pub meeting_id: String,
+    pub model: Option<String>,
     pub stage: JobStage,
     pub progress: f32,
     pub error: Option<String>,
@@ -288,26 +289,38 @@ impl Processor {
         }
     }
     pub fn enqueue(&mut self, meeting_id: &str) -> bool {
+        self.enqueue_with_model(meeting_id, None)
+    }
+    pub fn enqueue_with_model(&mut self, meeting_id: &str, model: Option<&str>) -> bool {
         if let Some(index) = self.jobs.iter().position(|j| j.meeting_id == meeting_id) {
             if self.running.as_deref() == Some(meeting_id) {
                 let job = &mut self.jobs[index];
                 let newly_queued = !job.rerun;
                 job.rerun = true;
+                job.model = model.map(str::to_owned);
                 return newly_queued;
             }
             if self.jobs[index].stage != JobStage::Failed {
+                self.jobs[index].model = model.map(str::to_owned);
                 return false;
             }
             self.jobs.remove(index);
         }
         self.jobs.push(ProcessingJob {
             meeting_id: meeting_id.into(),
+            model: model.map(str::to_owned),
             stage: JobStage::Queued,
             progress: 0.0,
             error: None,
             rerun: false,
         });
         true
+    }
+    pub fn job_model(&self, meeting_id: &str) -> Option<String> {
+        self.jobs
+            .iter()
+            .find(|job| job.meeting_id == meeting_id)
+            .and_then(|job| job.model.clone())
     }
     #[allow(clippy::should_implement_trait)] // The ticket names this queue operation `next`.
     pub fn next(&mut self) -> Option<String> {

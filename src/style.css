@@ -83,3 +83,15 @@ header { display: flex; align-items: center; justify-content: space-between; }
 .settings-view textarea, .settings-view select { width: 100%; box-sizing: border-box; }
 .settings-view button { justify-self: start; }
 .transcript-section { margin-top: 1.5rem; }
+.meeting-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 1.5rem; align-items: start; }
+.meeting-body .transcript-section { margin-top: 0; min-width: 0; }
+.segments { list-style: none; padding: 0; margin: 1rem 0; max-height: 28rem; overflow-y: auto; }
+.segments li { display: flex; align-items: start; gap: 0.5rem; padding: 0.45rem; border-bottom: 1px solid #d7dce3; }
+.segments li.current { background: #e9f2fb; }
+.segments li > button:first-child { flex: none; }
+.segments li > span { flex: 1; }
+.segment-editor { flex: 1; }
+.segment-editor label, .segment-editor textarea { display: block; width: 100%; box-sizing: border-box; }
+.retranscribe-row { display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem; }
+.retranscribe-row p { flex-basis: 100%; margin: 0; }
+@media (max-width: 800px) { .meeting-body { grid-template-columns: 1fr; } }

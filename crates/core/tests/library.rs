@@ -7,6 +7,114 @@ fn at(value: &str) -> DateTime<FixedOffset> {
 }
 
 #[test]
+fn editing_current_segment_persists_text_without_changing_its_citation() {
+    let temp = TempDir::new().unwrap();
+    let mut library = Library::open(
+        temp.path().join("Library"),
+        temp.path().join("index.sqlite3"),
+    )
+    .unwrap();
+    let meeting = library
+        .create_meeting("Planning", at("2026-10-12T09:30:00Z"))
+        .unwrap();
+    let folder = library.meeting_dir(&meeting.id);
+    let revision = serde_json::json!({
+        "schema_version": 1, "revision": 1, "created_at": "2026-10-12T10:00:00Z",
+        "model": "small", "language": "en", "language_detected": false,
+        "duration_ms": 2000, "segments": [{"id": "s00001", "start_ms": 100, "end_ms": 900, "text": "Hello", "speaker": "me"}]
+    });
+    std::fs::write(
+        folder.join("transcript.r1.json"),
+        serde_json::to_vec(&revision).unwrap(),
+    )
+    .unwrap();
+
+    let edited = library
+        .edit_segment(&meeting.id, 1, "s00001", "  New\n   words  ")
+        .unwrap();
+    assert_eq!(edited.revision, 1);
+    assert_eq!(edited.segment("s00001").unwrap().text, "New words");
+    assert_eq!(edited.segment("s00001").unwrap().start_ms, 100);
+    assert_eq!(edited.segment("s00001").unwrap().end_ms, 900);
+    assert_eq!(
+        edited.segment("s00001").unwrap().speaker,
+        meeting_minutes_core::transcript::Speaker::Me
+    );
+    assert_eq!(library.transcript(&meeting.id).unwrap(), Some(edited));
+    assert!(std::fs::read_to_string(folder.join("transcript.md"))
+        .unwrap()
+        .contains("**[00:00:00] Me:** New words"));
+    assert!(!folder.join("transcript.r1.json.edit.tmp").exists());
+    assert!(matches!(
+        library.edit_segment(&meeting.id, 1, "s00001", " \n "),
+        Err(LibraryError::EmptySegmentText)
+    ));
+    assert!(matches!(
+        library.edit_segment(&meeting.id, 1, "missing", "Text"),
+        Err(LibraryError::SegmentNotFound)
+    ));
+}
+
+#[test]
+fn older_revision_remains_readable_and_cannot_be_edited() {
+    let temp = TempDir::new().unwrap();
+    let mut library = Library::open(
+        temp.path().join("Library"),
+        temp.path().join("index.sqlite3"),
+    )
+    .unwrap();
+    let meeting = library
+        .create_meeting("Planning", at("2026-10-12T09:30:00Z"))
+        .unwrap();
+    let folder = library.meeting_dir(&meeting.id);
+    for (revision, text) in [(1, "Earlier"), (2, "Later")] {
+        let value = serde_json::json!({
+            "schema_version": 1, "revision": revision, "created_at": "2026-10-12T10:00:00Z",
+            "model": "small", "language": "en", "language_detected": false,
+            "duration_ms": 1000, "segments": [{"id": "s00001", "start_ms": 0, "end_ms": 1000, "text": text, "speaker": "me"}]
+        });
+        std::fs::write(
+            folder.join(format!("transcript.r{revision}.json")),
+            serde_json::to_vec(&value).unwrap(),
+        )
+        .unwrap();
+    }
+    let earlier = std::fs::read(folder.join("transcript.r1.json")).unwrap();
+    assert_eq!(
+        library
+            .transcript_revision(&meeting.id, 1)
+            .unwrap()
+            .unwrap()
+            .segment("s00001")
+            .unwrap()
+            .text,
+        "Earlier"
+    );
+    assert_eq!(
+        library
+            .transcript(&meeting.id)
+            .unwrap()
+            .unwrap()
+            .segment("s00001")
+            .unwrap()
+            .text,
+        "Later"
+    );
+    assert!(library
+        .transcript_revision(&meeting.id, 3)
+        .unwrap()
+        .is_none());
+    assert!(matches!(
+        library.edit_segment(&meeting.id, 1, "s00001", "Changed"),
+        Err(LibraryError::StaleRevision)
+    ));
+    assert_eq!(
+        std::fs::read(folder.join("transcript.r1.json")).unwrap(),
+        earlier
+    );
+}
+
+#[test]
 fn creating_a_meeting_makes_a_readable_folder_and_index_entry() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().join("Library");

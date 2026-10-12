@@ -27,6 +27,9 @@ pub enum LibraryError {
     UnsavedRecording,
     EmptyTitle,
     MeetingNotFound,
+    StaleRevision,
+    SegmentNotFound,
+    EmptySegmentText,
 }
 
 impl fmt::Display for LibraryError {
@@ -42,6 +45,12 @@ impl fmt::Display for LibraryError {
             }
             Self::EmptyTitle => write!(f, "A Meeting title cannot be empty"),
             Self::MeetingNotFound => write!(f, "This Meeting is no longer in the Library"),
+            Self::StaleRevision => write!(
+                f,
+                "The Transcript has a newer Revision; reload it before editing"
+            ),
+            Self::SegmentNotFound => write!(f, "This Segment is not in the Transcript"),
+            Self::EmptySegmentText => write!(f, "A Segment's text cannot be empty"),
         }
     }
 }
@@ -180,24 +189,67 @@ impl Library {
 
     pub fn transcript(&self, id: &str) -> Result<Option<Transcript>, LibraryError> {
         let folder = self.checked_meeting_dir(id)?;
-        let mut latest: Option<(u32, PathBuf)> = None;
-        for entry in fs::read_dir(folder)? {
-            let entry = entry?;
-            let name = entry.file_name();
-            let name = name.to_string_lossy();
-            if let Some(revision) = name
-                .strip_prefix("transcript.r")
-                .and_then(|s| s.strip_suffix(".json"))
-                .and_then(|s| s.parse::<u32>().ok())
-            {
-                if latest.as_ref().is_none_or(|(n, _)| revision > *n) {
-                    latest = Some((revision, entry.path()));
-                }
-            }
-        }
-        latest
-            .map(|(_, path)| serde_json::from_slice(&fs::read(path)?).map_err(LibraryError::from))
+        highest_transcript_revision(&folder)?
+            .map(|revision| read_transcript_revision(&folder, revision))
             .transpose()
+    }
+
+    pub fn transcript_revision(
+        &self,
+        id: &str,
+        revision: u32,
+    ) -> Result<Option<Transcript>, LibraryError> {
+        let folder = self.checked_meeting_dir(id)?;
+        match read_transcript_revision(&folder, revision) {
+            Ok(transcript) => Ok(Some(transcript)),
+            Err(LibraryError::Io(error)) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
+    pub fn edit_segment(
+        &self,
+        id: &str,
+        revision: u32,
+        segment_id: &str,
+        text: &str,
+    ) -> Result<Transcript, LibraryError> {
+        let folder = self.checked_meeting_dir(id)?;
+        if highest_transcript_revision(&folder)? != Some(revision) {
+            return Err(LibraryError::StaleRevision);
+        }
+        let mut transcript = read_transcript_revision(&folder, revision)?;
+        let segment = transcript
+            .segments
+            .iter_mut()
+            .find(|segment| segment.id == segment_id)
+            .ok_or(LibraryError::SegmentNotFound)?;
+        let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        if text.is_empty() {
+            return Err(LibraryError::EmptySegmentText);
+        }
+        segment.text = text;
+        let meeting: MeetingFile = serde_json::from_slice(&fs::read(folder.join("meeting.json"))?)?;
+        let path = folder.join(format!("transcript.r{revision}.json"));
+        let tmp = folder.join(format!("transcript.r{revision}.json.edit.tmp"));
+        let write = (|| -> Result<(), LibraryError> {
+            let mut file = OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(&tmp)?;
+            serde_json::to_writer_pretty(&mut file, &transcript)?;
+            file.write_all(b"\n")?;
+            file.sync_all()?;
+            fs::rename(&tmp, path)?;
+            Ok(())
+        })();
+        if let Err(error) = write {
+            let _ = fs::remove_file(&tmp);
+            return Err(error);
+        }
+        write_transcript_markdown(&folder, &render_markdown(&meeting.title, &transcript))?;
+        Ok(transcript)
     }
 
     pub fn set_language(&self, id: &str, language: Option<Language>) -> Result<(), LibraryError> {
@@ -440,6 +492,28 @@ fn write_transcript_markdown(folder: &Path, markdown: &str) -> io::Result<()> {
     file.write_all(markdown.as_bytes())?;
     file.sync_all()?;
     fs::rename(tmp, folder.join("transcript.md"))
+}
+
+fn highest_transcript_revision(folder: &Path) -> Result<Option<u32>, LibraryError> {
+    let mut latest = None;
+    for entry in fs::read_dir(folder)? {
+        let name = entry?.file_name();
+        let name = name.to_string_lossy();
+        let revision = name
+            .strip_prefix("transcript.r")
+            .and_then(|name| name.strip_suffix(".json"))
+            .and_then(|name| name.parse::<u32>().ok());
+        if let Some(revision) = revision {
+            latest = Some(latest.map_or(revision, |current: u32| current.max(revision)));
+        }
+    }
+    Ok(latest)
+}
+
+fn read_transcript_revision(folder: &Path, revision: u32) -> Result<Transcript, LibraryError> {
+    Ok(serde_json::from_slice(&fs::read(
+        folder.join(format!("transcript.r{revision}.json")),
+    )?)?)
 }
 
 /// Numbers of the Recordings whose Chunks are still in the Meeting folder, waiting to be saved.

@@ -48,6 +48,14 @@ fn lock_processor(app: &AppHandle) -> Result<std::sync::MutexGuard<'_, Processor
 
 fn meeting_busy(app: &AppHandle, meeting_id: &str) -> Result<(), String> {
     let processor = lock_processor(app)?;
+    meeting_busy_locked(app, &processor, meeting_id)
+}
+
+fn meeting_busy_locked(
+    app: &AppHandle,
+    processor: &Processor,
+    meeting_id: &str,
+) -> Result<(), String> {
     if processor.is_busy(meeting_id) {
         return Err("This Meeting is being processed".into());
     }
@@ -83,7 +91,16 @@ fn processing_status(app: AppHandle) -> Result<ProcessingStatus, String> {
 }
 
 #[tauri::command]
-fn transcribe_meeting(app: AppHandle, meeting_id: String) -> Result<ProcessingStatus, String> {
+fn transcribe_meeting(
+    app: AppHandle,
+    meeting_id: String,
+    model: Option<String>,
+) -> Result<ProcessingStatus, String> {
+    if let Some(name) = model.as_deref() {
+        if !MODELS.iter().any(|candidate| candidate.name == name) {
+            return Err(format!("Unknown transcription model: {name}"));
+        }
+    }
     let mut processor = lock_processor(&app)?;
     {
         let library_state = app.state::<LibraryState>();
@@ -94,7 +111,7 @@ fn transcribe_meeting(app: AppHandle, meeting_id: String) -> Result<ProcessingSt
             .meeting(&meeting_id)
             .map_err(|e| e.to_string())?;
     }
-    processor.enqueue(&meeting_id);
+    processor.enqueue_with_model(&meeting_id, model.as_deref());
     drop(processor);
     publish_processing(&app)
 }
@@ -122,6 +139,28 @@ fn meeting_transcript(
         .map_err(Clone::clone)?
         .transcript(&meeting_id)
         .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn edit_segment(
+    app: AppHandle,
+    meeting_id: String,
+    revision: u32,
+    segment_id: String,
+    text: String,
+) -> Result<Transcript, String> {
+    // Held through the edit: no transcription of this Meeting can start and publish a newer Revision meanwhile.
+    let processor = lock_processor(&app)?;
+    meeting_busy_locked(&app, &processor, &meeting_id)?;
+    let library_state = app.state::<LibraryState>();
+    let library = library_state.lock().map_err(|e| e.to_string())?;
+    let transcript = library
+        .as_ref()
+        .map_err(Clone::clone)?
+        .edit_segment(&meeting_id, revision, &segment_id, &text)
+        .map_err(|e| e.to_string())?;
+    let _ = app.emit("library-changed", ());
+    Ok(transcript)
 }
 
 #[tauri::command]
@@ -174,8 +213,13 @@ fn processing_worker(app: AppHandle) {
         {
             continue;
         }
-        let id = match lock_processor(&app).ok().and_then(|mut p| p.next()) {
-            Some(id) => id,
+        // The model is read with `next()`, so a rerun's choice cannot leak into this run.
+        let (id, job_model) = match lock_processor(&app).ok().and_then(|mut p| {
+            let id = p.next()?;
+            let model = p.job_model(&id);
+            Some((id, model))
+        }) {
+            Some(job) => job,
             None => continue,
         };
         if app.state::<Quitting>().0.load(Ordering::SeqCst) {
@@ -206,7 +250,8 @@ fn processing_worker(app: AppHandle) {
             let settings = Settings::load(&app.state::<SettingsPath>().0);
             let model = MODELS
                 .iter()
-                .find(|m| m.name == settings.model)
+                .find(|m| Some(m.name) == job_model.as_deref())
+                .or_else(|| MODELS.iter().find(|m| m.name == settings.model))
                 .unwrap_or_else(|| MODELS.iter().find(|m| m.name == DEFAULT_MODEL).unwrap());
             let models_state = app.state::<ModelsDir>();
             let models_dir = &models_state.0;
@@ -783,6 +828,7 @@ fn main() {
             cancel_processing,
             dismiss_processing,
             meeting_transcript,
+            edit_segment,
             set_meeting_language,
             get_settings,
             update_settings
