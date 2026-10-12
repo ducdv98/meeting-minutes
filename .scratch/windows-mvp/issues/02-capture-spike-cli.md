@@ -1,6 +1,6 @@
 # Capture spike: mic + system audio CLI
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: 01
 Spec: ../spec.md
 
@@ -10,9 +10,11 @@ Build a throwaway Rust CLI (in the repo, e.g. `spikes/capture`) using the `wasap
 
 ## Acceptance criteria
 
-- [ ] `capture-spike --minutes 60 --out <dir>` produces `mic.wav`, `system.wav`, `log.jsonl`.
-- [ ] Log has device format, per-packet QPC timestamps, discontinuity flags and device-switch events.
-- [ ] System-audio silence (nothing playing) still advances the timeline (no gaps in output).
-- [ ] Built by CI as a Windows artifact.
+- [x] `capture-spike --minutes 60 --out <dir>` produces `mic.wav`, `system.wav`, `log.jsonl`.
+- [x] Log has device format, per-packet QPC timestamps, discontinuity flags and device-switch events.
+- [x] System-audio silence (nothing playing) still advances the timeline (no gaps in output).
+- [x] Built by CI as a Windows artifact.
 
 ## Comments
+
+Implemented in `spikes/capture` (see its README). Built and unit-tested on Linux, plus a `cargo check`/clippy of the Windows code for `x86_64-pc-windows-gnu`. The WASAPI capture itself has not run on Windows yet; ticket 03 covers that. Options: `--role communications|console` (default `communications`, the endpoint Teams/Zoom normally use with a headset); `--minutes` is capped at 180 (WAV 4 GB limit). Both WAVs are 48 kHz stereo float (shared mode with autoconvert). Output timelines are kept aligned to QPC by gap/idle padding, so measure hardware drift from packet `device_position` vs `qpc_100ns`, or with the clap test.

@@ -17,6 +17,7 @@ jobs:
           node-version: lts/*
           cache: pnpm
       - run: cargo test -p meeting_minutes_core
+      - run: cargo test -p capture-spike
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm test
@@ -41,6 +42,12 @@ jobs:
       - run: pnpm build
       - run: cargo test --workspace
       - run: pnpm tauri build --bundles nsis
+      - run: cargo build --release -p capture-spike
+      - uses: actions/upload-artifact@v4
+        with:
+          name: capture-spike-windows
+          path: target/release/capture-spike.exe
+          if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
           name: meeting-minutes-windows-installer
