@@ -22,6 +22,11 @@ export default function RecordingBar() {
   // The action to run once the Recording notice is confirmed; null while the notice is hidden.
   const [noticeAction, setNoticeAction] = useState<(() => Promise<RecorderStatus>) | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [dismissedSwitches, setDismissedSwitches] = useState(0);
+
+  useEffect(() => {
+    if (status?.phase === "idle") setDismissedSwitches(0);
+  }, [status?.phase]);
 
   useEffect(() => {
     let active = true;
@@ -67,6 +72,8 @@ export default function RecordingBar() {
   }
 
   const capturing = status.phase !== "idle";
+  const latestSwitch = capturing && status.device_switches.length > dismissedSwitches
+    ? status.device_switches.at(-1) : undefined;
   return (
     <section className="recording-bar" aria-label="Recording">
       {capturing ? (
@@ -76,6 +83,12 @@ export default function RecordingBar() {
           <time>{formatElapsed(status.elapsed_ms)}</time>
         </p>
       ) : null}
+      {latestSwitch && (
+        <p role="status" className="device-switch">
+          {latestSwitch.source === "microphone" ? "Microphone" : "System audio"} switched to {latestSwitch.device}{" "}
+          <button type="button" onClick={() => setDismissedSwitches(status.device_switches.length)}>Dismiss</button>
+        </p>
+      )}
       <div className="recording-controls">
         {!capturing && (
           <button type="button" onClick={() => record(startRecording)} title={recordHotkey}>Record</button>

@@ -40,15 +40,23 @@ pub struct Packet {
     pub discontinuity: bool,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DeviceInfo {
+    pub id: String,
+    pub name: String,
+}
+
 pub trait Clock: Clone + Send + 'static {
     fn now_100ns(&self) -> u64;
 }
 pub trait InputDevice {
     fn read_packet(&mut self) -> Result<Option<Packet>, String>;
+    fn info(&self) -> &DeviceInfo;
 }
 pub trait InputOpener: Clone + Send + 'static {
     type Device: InputDevice;
     fn open(&self, source: Source) -> Result<Self::Device, String>;
+    fn default_device_id(&self, source: Source) -> Result<String, String>;
 }
 
 pub struct SourceClock {

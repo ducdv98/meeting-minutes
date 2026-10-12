@@ -23,6 +23,15 @@ pub fn place_recording(earlier: &[u64], duration_ms: u64, markers: &[Marker]) ->
         Marker::Gap { at_ms } => Marker::Gap {
             at_ms: timeline_start_ms + (*at_ms).min(duration_ms),
         },
+        Marker::DeviceSwitch {
+            at_ms,
+            source,
+            device,
+        } => Marker::DeviceSwitch {
+            at_ms: timeline_start_ms + (*at_ms).min(duration_ms),
+            source: *source,
+            device: device.clone(),
+        },
     }));
     Placement {
         timeline_start_ms,

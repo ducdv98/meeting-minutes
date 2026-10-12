@@ -41,8 +41,26 @@ const idle: RecorderStatus = {
   notice_acknowledged: true,
   saves: [],
   continue_offers: [],
+  device_switches: [],
 };
 const recording: RecorderStatus = { ...idle, phase: "recording", meeting_id: "m1", elapsed_ms: 65_000 };
+
+it("shows the latest device switch until dismissed and shows a newer one", async () => {
+  const first = { at_ms: 500, source: "microphone" as const, device: "Logi USB Headset" };
+  const second = { at_ms: 800, source: "system_audio" as const, device: "Speakers" };
+  vi.mocked(recordingStatus).mockResolvedValue({ ...recording, device_switches: [first] });
+  render(<RecordingBar />);
+
+  expect((await screen.findByText(/Microphone switched to Logi USB Headset/)).getAttribute("role")).toBe("status");
+  fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+  expect(screen.queryByText(/Microphone switched to/)).toBeNull();
+
+  act(() => pushStatus({ ...recording, device_switches: [first, second] }));
+  expect(screen.getByText(/System audio switched to Speakers/)).toBeTruthy();
+
+  act(() => pushStatus({ ...idle, device_switches: [first, second] }));
+  expect(screen.queryByText(/switched to/)).toBeNull();
+});
 
 let pushStatus: (status: RecorderStatus) => void = () => {};
 let requestNotice: () => void = () => {};

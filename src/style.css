@@ -38,6 +38,14 @@ main {
 
 .recording-indicator.paused .dot { background: #8a94a6; }
 
+.device-switch {
+  padding: 0.75rem;
+  background: #e9f2fb;
+  border-radius: 0.5rem;
+}
+
+.device-switch button { margin-left: 0.5rem; }
+
 .notice {
   position: fixed;
   inset: 20% auto auto 50%;

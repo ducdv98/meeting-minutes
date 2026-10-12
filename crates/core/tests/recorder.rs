@@ -1,11 +1,11 @@
 use meeting_minutes_core::{
-    capture::{Clock, InputDevice, InputOpener, Packet, Source},
+    capture::{Clock, DeviceInfo, InputDevice, InputOpener, Packet, Source},
     recorder::{Phase, Recorder, RecorderError, SaveState},
     Library,
 };
 use std::sync::{
     atomic::{AtomicU64, Ordering},
-    Arc,
+    Arc, Mutex,
 };
 use tempfile::TempDir;
 
@@ -25,11 +25,103 @@ impl InputOpener for SilentOpener {
     fn open(&self, _: Source) -> Result<Self::Device, String> {
         Ok(SilentDevice)
     }
+    fn default_device_id(&self, _: Source) -> Result<String, String> {
+        Ok("silent".into())
+    }
 }
 impl InputDevice for SilentDevice {
     fn read_packet(&mut self) -> Result<Option<Packet>, String> {
         Ok(None)
     }
+    fn info(&self) -> &DeviceInfo {
+        static INFO: std::sync::LazyLock<DeviceInfo> = std::sync::LazyLock::new(|| DeviceInfo {
+            id: "silent".into(),
+            name: "Silent".into(),
+        });
+        &INFO
+    }
+}
+
+#[derive(Clone)]
+struct ChangeOpener {
+    default: Arc<Mutex<String>>,
+    microphone_opens: Arc<AtomicU64>,
+}
+struct NamedDevice(DeviceInfo);
+impl InputDevice for NamedDevice {
+    fn read_packet(&mut self) -> Result<Option<Packet>, String> {
+        Ok(None)
+    }
+    fn info(&self) -> &DeviceInfo {
+        &self.0
+    }
+}
+impl InputOpener for ChangeOpener {
+    type Device = NamedDevice;
+    fn open(&self, source: Source) -> Result<Self::Device, String> {
+        let id = self.default_device_id(source)?;
+        if source == Source::Microphone {
+            self.microphone_opens.fetch_add(1, Ordering::SeqCst);
+        }
+        Ok(NamedDevice(DeviceInfo {
+            name: id.clone(),
+            id,
+        }))
+    }
+    fn default_device_id(&self, source: Source) -> Result<String, String> {
+        if source == Source::Microphone {
+            Ok(self.default.lock().unwrap().clone())
+        } else {
+            Ok("speaker".into())
+        }
+    }
+}
+
+#[test]
+fn status_reports_switch_and_saved_meeting_keeps_marker() {
+    let temp = TempDir::new().unwrap();
+    let mut library = Library::open(
+        temp.path().join("Library"),
+        temp.path().join("index.sqlite3"),
+    )
+    .unwrap();
+    let default = Arc::new(Mutex::new("laptop".to_owned()));
+    let microphone_opens = Arc::new(AtomicU64::new(0));
+    let time = Arc::new(AtomicU64::new(1_000_000));
+    let mut recorder = Recorder::new(
+        ChangeOpener {
+            default: default.clone(),
+            microphone_opens: microphone_opens.clone(),
+        },
+        FakeClock(time.clone()),
+        true,
+    );
+    recorder.start(&mut library, started_at()).unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    while microphone_opens.load(Ordering::SeqCst) == 0 {
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    time.store(6_000_000, Ordering::SeqCst);
+    *default.lock().unwrap() = "headset".into();
+    while recorder.status().device_switches.is_empty() {
+        recorder.collect_device_switches().unwrap();
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert_eq!(recorder.status().device_switches[0].at_ms, 500);
+    let job = recorder.stop().unwrap();
+    assert!(recorder.status().device_switches.is_empty());
+    job.run().unwrap();
+    let json: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(job.meeting_dir.join("meeting.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        json["markers"],
+        serde_json::json!([{
+            "kind": "device_switch", "at_ms": 500, "source": "microphone", "device": "headset"
+        }])
+    );
 }
 
 struct Setup {

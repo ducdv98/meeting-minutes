@@ -8,7 +8,7 @@ use serde::{Serialize, Serializer};
 use crate::{
     capture::{Clock, InputOpener},
     finalize_recording,
-    recording::CaptureSession,
+    recording::{CaptureSession, DeviceSwitch},
     Library, LibraryError,
 };
 
@@ -43,6 +43,7 @@ pub struct RecorderStatus {
     pub notice_acknowledged: bool,
     pub saves: Vec<PendingSave>,
     pub continue_offers: Vec<String>,
+    pub device_switches: Vec<DeviceSwitch>,
 }
 
 /// A stopped Recording whose Chunks still have to be written as FLAC, MP3 and `meeting.json`.
@@ -171,7 +172,18 @@ impl<O: InputOpener, C: Clock> Recorder<O, C> {
                 })
                 .collect(),
             continue_offers: self.continue_offers.clone(),
+            device_switches: self
+                .active
+                .as_ref()
+                .map_or_else(Vec::new, |active| active.session.device_switches()),
         }
+    }
+
+    pub fn collect_device_switches(&mut self) -> Result<(), RecorderError> {
+        if let Some(active) = self.active.as_mut() {
+            active.session.collect_device_switches()?;
+        }
+        Ok(())
     }
 
     /// Starts a new Meeting and its first Recording. Only a deliberate call starts capture.

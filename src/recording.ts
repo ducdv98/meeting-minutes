@@ -9,6 +9,12 @@ export interface PendingSave {
   recovered: boolean;
 }
 
+export interface DeviceSwitch {
+  at_ms: number;
+  source: "microphone" | "system_audio";
+  device: string;
+}
+
 export interface RecorderStatus {
   phase: "idle" | "recording" | "paused";
   meeting_id: string | null;
@@ -17,6 +23,7 @@ export interface RecorderStatus {
   saves: PendingSave[];
   /** Meetings recovered after a crash that can be continued with a new Recording. */
   continue_offers: string[];
+  device_switches: DeviceSwitch[];
 }
 
 export const recordHotkey = "Ctrl+Alt+Shift+R";

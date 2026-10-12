@@ -1,5 +1,5 @@
 use meeting_minutes_core::{
-    capture::{Clock, InputDevice, InputOpener, Packet, Source, SourceClock},
+    capture::{Clock, DeviceInfo, InputDevice, InputOpener, Packet, Source, SourceClock},
     finalize_recording,
     recording::{CaptureSession, ChunkWriter, Marker, RecordingClock, RecordingManifest},
     settings::Settings,
@@ -7,7 +7,7 @@ use meeting_minutes_core::{
 };
 use std::sync::{
     atomic::{AtomicU64, Ordering},
-    Arc,
+    Arc, Mutex,
 };
 use tempfile::TempDir;
 
@@ -26,11 +26,289 @@ impl InputOpener for SilentOpener {
     fn open(&self, _: Source) -> Result<Self::Device, String> {
         Ok(SilentDevice)
     }
+    fn default_device_id(&self, _: Source) -> Result<String, String> {
+        Ok("silent".into())
+    }
 }
 impl InputDevice for SilentDevice {
     fn read_packet(&mut self) -> Result<Option<Packet>, String> {
         Ok(None)
     }
+    fn info(&self) -> &DeviceInfo {
+        static INFO: std::sync::LazyLock<DeviceInfo> = std::sync::LazyLock::new(|| DeviceInfo {
+            id: "silent".into(),
+            name: "Silent".into(),
+        });
+        &INFO
+    }
+}
+
+#[derive(Clone)]
+struct SwitchingOpener {
+    default: Arc<Mutex<Option<String>>>,
+    opened: Arc<Mutex<Vec<String>>>,
+    dropped: Arc<Mutex<Vec<String>>>,
+    fail_read: Arc<std::sync::atomic::AtomicBool>,
+}
+
+struct SwitchingDevice {
+    info: DeviceInfo,
+    dropped: Arc<Mutex<Vec<String>>>,
+    fail_read: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl Drop for SwitchingDevice {
+    fn drop(&mut self) {
+        self.dropped.lock().unwrap().push(self.info.id.clone());
+    }
+}
+
+impl InputDevice for SwitchingDevice {
+    fn read_packet(&mut self) -> Result<Option<Packet>, String> {
+        if self.fail_read.swap(false, Ordering::SeqCst) {
+            Err("read failed".into())
+        } else {
+            Ok(None)
+        }
+    }
+    fn info(&self) -> &DeviceInfo {
+        &self.info
+    }
+}
+
+impl InputOpener for SwitchingOpener {
+    type Device = SwitchingDevice;
+    fn open(&self, source: Source) -> Result<Self::Device, String> {
+        let id = if source == Source::Microphone {
+            self.default_device_id(source)?
+        } else {
+            "speaker".into()
+        };
+        self.opened.lock().unwrap().push(id.clone());
+        Ok(SwitchingDevice {
+            info: DeviceInfo {
+                name: id.clone(),
+                id,
+            },
+            dropped: self.dropped.clone(),
+            fail_read: if source == Source::Microphone {
+                self.fail_read.clone()
+            } else {
+                Arc::new(std::sync::atomic::AtomicBool::new(false))
+            },
+        })
+    }
+    fn default_device_id(&self, source: Source) -> Result<String, String> {
+        if source == Source::SystemAudio {
+            return Ok("speaker".into());
+        }
+        self.default
+            .lock()
+            .unwrap()
+            .clone()
+            .ok_or("no default".into())
+    }
+}
+
+#[test]
+fn switching_microphone_default_keeps_recording_and_persists_marker() {
+    let temp = TempDir::new().unwrap();
+    let time = Arc::new(AtomicU64::new(1_000_000));
+    let opener = SwitchingOpener {
+        default: Arc::new(Mutex::new(Some("laptop".into()))),
+        opened: Arc::new(Mutex::new(Vec::new())),
+        dropped: Arc::new(Mutex::new(Vec::new())),
+        fail_read: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    };
+    let mut session = CaptureSession::start(
+        temp.path().to_path_buf(),
+        RecordingManifest {
+            number: 1,
+            started_at: "2026-10-12T09:30:00Z".into(),
+            duration_ms: None,
+            markers: vec![],
+        },
+        opener.clone(),
+        FakeClock(time.clone()),
+    )
+    .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    while !opener.opened.lock().unwrap().contains(&"laptop".into()) {
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    time.store(6_000_000, Ordering::SeqCst);
+    *opener.default.lock().unwrap() = Some("headset".into());
+    while session.device_switches().is_empty() {
+        session.collect_device_switches().unwrap();
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let switch = Marker::DeviceSwitch {
+        at_ms: 500,
+        source: Source::Microphone,
+        device: "headset".into(),
+    };
+    assert!(opener.dropped.lock().unwrap().contains(&"laptop".into()));
+    assert_eq!(session.device_switches().len(), 1);
+    let on_disk: RecordingManifest =
+        serde_json::from_slice(&std::fs::read(temp.path().join("recording.json")).unwrap())
+            .unwrap();
+    assert_eq!(on_disk.markers, vec![switch.clone()]);
+    time.store(11_000_000, Ordering::SeqCst);
+    assert_eq!(session.stop().unwrap().markers, vec![switch]);
+    assert_eq!(
+        std::fs::metadata(temp.path().join("microphone-000000.f32"))
+            .unwrap()
+            .len(),
+        48_000 * 4
+    );
+}
+
+#[test]
+fn reopening_same_device_after_read_error_has_no_switch_marker() {
+    let temp = TempDir::new().unwrap();
+    let time = Arc::new(AtomicU64::new(1_000_000));
+    let opener = SwitchingOpener {
+        default: Arc::new(Mutex::new(Some("laptop".into()))),
+        opened: Arc::new(Mutex::new(Vec::new())),
+        dropped: Arc::new(Mutex::new(Vec::new())),
+        fail_read: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    };
+    let mut session = CaptureSession::start(
+        temp.path().to_path_buf(),
+        RecordingManifest {
+            number: 1,
+            started_at: "2026-10-12T09:30:00Z".into(),
+            duration_ms: None,
+            markers: vec![],
+        },
+        opener.clone(),
+        FakeClock(time),
+    )
+    .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    while opener.opened.lock().unwrap().is_empty() {
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    opener.fail_read.store(true, Ordering::SeqCst);
+    while opener
+        .opened
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|id| *id == "laptop")
+        .count()
+        < 2
+    {
+        session.collect_device_switches().unwrap();
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    session.collect_device_switches().unwrap();
+    assert!(session.device_switches().is_empty());
+    assert!(session.stop().unwrap().markers.is_empty());
+}
+
+#[test]
+fn default_unavailable_then_new_device_adds_one_switch_marker() {
+    let temp = TempDir::new().unwrap();
+    let time = Arc::new(AtomicU64::new(1_000_000));
+    let opener = SwitchingOpener {
+        default: Arc::new(Mutex::new(Some("laptop".into()))),
+        opened: Arc::new(Mutex::new(Vec::new())),
+        dropped: Arc::new(Mutex::new(Vec::new())),
+        fail_read: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    };
+    let mut session = CaptureSession::start(
+        temp.path().to_path_buf(),
+        RecordingManifest {
+            number: 1,
+            started_at: "2026-10-12T09:30:00Z".into(),
+            duration_ms: None,
+            markers: vec![],
+        },
+        opener.clone(),
+        FakeClock(time.clone()),
+    )
+    .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(4);
+    while !opener.opened.lock().unwrap().contains(&"laptop".into()) {
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    *opener.default.lock().unwrap() = None;
+    while !opener.dropped.lock().unwrap().contains(&"laptop".into()) {
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    session.collect_device_switches().unwrap();
+    assert!(session.device_switches().is_empty());
+    time.store(6_000_000, Ordering::SeqCst);
+    *opener.default.lock().unwrap() = Some("headset".into());
+    while session.device_switches().is_empty() {
+        session.collect_device_switches().unwrap();
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert_eq!(
+        session.device_switches(),
+        vec![meeting_minutes_core::recording::DeviceSwitch {
+            at_ms: 500,
+            source: Source::Microphone,
+            device: "headset".into(),
+        }]
+    );
+    assert_eq!(session.stop().unwrap().markers.len(), 1);
+}
+
+#[test]
+fn failed_switch_manifest_write_is_retried_on_next_collection() {
+    let temp = TempDir::new().unwrap();
+    let time = Arc::new(AtomicU64::new(1_000_000));
+    let opener = SwitchingOpener {
+        default: Arc::new(Mutex::new(Some("laptop".into()))),
+        opened: Arc::new(Mutex::new(Vec::new())),
+        dropped: Arc::new(Mutex::new(Vec::new())),
+        fail_read: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    };
+    let mut session = CaptureSession::start(
+        temp.path().to_path_buf(),
+        RecordingManifest {
+            number: 1,
+            started_at: "2026-10-12T09:30:00Z".into(),
+            duration_ms: None,
+            markers: vec![],
+        },
+        opener.clone(),
+        FakeClock(time.clone()),
+    )
+    .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    while !opener.opened.lock().unwrap().contains(&"laptop".into()) {
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let blocker = temp.path().join("recording.json.tmp");
+    std::fs::create_dir(&blocker).unwrap();
+    time.store(6_000_000, Ordering::SeqCst);
+    *opener.default.lock().unwrap() = Some("headset".into());
+    let mut collected = Ok(());
+    while session.device_switches().is_empty() {
+        collected = session.collect_device_switches();
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(collected.is_err());
+    assert_eq!(session.device_switches()[0].device, "headset");
+    std::fs::remove_dir(blocker).unwrap();
+    session.collect_device_switches().unwrap();
+    let on_disk: RecordingManifest =
+        serde_json::from_slice(&std::fs::read(temp.path().join("recording.json")).unwrap())
+            .unwrap();
+    assert_eq!(on_disk.markers.len(), 1);
+    session.stop().unwrap();
 }
 
 #[test]
@@ -182,6 +460,17 @@ fn recording_clock_records_pause_duration() {
             paused_ms: 1000
         }]
     );
+}
+
+#[test]
+fn recording_clock_keeps_markers_in_timeline_order() {
+    let mut clock = RecordingClock::new(1_000_000);
+    clock.pause(6_000_000);
+    clock.resume(16_000_000);
+    clock.add_device_switch(26_000_000, Source::SystemAudio, "speakers".into());
+    clock.add_device_switch(21_000_000, Source::Microphone, "headset".into());
+    let at: Vec<u64> = clock.markers().iter().map(Marker::at_ms).collect();
+    assert_eq!(at, [500, 1000, 1500]);
 }
 
 #[test]

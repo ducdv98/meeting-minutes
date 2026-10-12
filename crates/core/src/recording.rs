@@ -1,6 +1,6 @@
 use crate::capture::{
-    Clock, InputDevice, InputOpener, Source, SourceClock, CAPTURE_CHANNELS, HNS_PER_SECOND,
-    SAMPLE_RATE,
+    Clock, DeviceInfo, InputDevice, InputOpener, Source, SourceClock, CAPTURE_CHANNELS,
+    HNS_PER_SECOND, SAMPLE_RATE,
 };
 use crate::{
     library::LibraryError,
@@ -27,13 +27,54 @@ use std::{
 };
 
 const REOPEN_INTERVAL: Duration = Duration::from_secs(1);
+const DEFAULT_CHECK_INTERVAL: Duration = Duration::from_millis(500);
 const MAX_PACKETS_PER_TICK: usize = 64;
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct DeviceSwitch {
+    pub at_ms: u64,
+    pub source: Source,
+    pub device: String,
+}
+
+struct SwitchReport {
+    at_100ns: u64,
+    source: Source,
+    device: String,
+}
+
+struct InputState<D> {
+    device: Option<D>,
+    last_open_attempt: Option<Instant>,
+    last_opened: Option<DeviceInfo>,
+    last_default_check: Option<Instant>,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Marker {
-    Pause { at_ms: u64, paused_ms: u64 },
-    Gap { at_ms: u64 },
+    Pause {
+        at_ms: u64,
+        paused_ms: u64,
+    },
+    Gap {
+        at_ms: u64,
+    },
+    DeviceSwitch {
+        at_ms: u64,
+        source: Source,
+        device: String,
+    },
+}
+
+impl Marker {
+    pub fn at_ms(&self) -> u64 {
+        match self {
+            Self::Pause { at_ms, .. } | Self::Gap { at_ms } | Self::DeviceSwitch { at_ms, .. } => {
+                *at_ms
+            }
+        }
+    }
 }
 
 pub struct RecordingClock {
@@ -76,6 +117,21 @@ impl RecordingClock {
     }
     pub fn markers(&self) -> &[Marker] {
         &self.markers
+    }
+    /// The two Source threads report switches independently, so a report can arrive after a later one.
+    pub fn add_device_switch(&mut self, at_100ns: u64, source: Source, device: String) {
+        let at_ms = self.elapsed_ms(at_100ns);
+        let index = self
+            .markers
+            .partition_point(|marker| marker.at_ms() <= at_ms);
+        self.markers.insert(
+            index,
+            Marker::DeviceSwitch {
+                at_ms,
+                source,
+                device,
+            },
+        );
     }
 }
 
@@ -201,6 +257,8 @@ pub struct CaptureSession<C: Clock> {
     manifest: RecordingManifest,
     chunk_dir: PathBuf,
     workers: Vec<Worker>,
+    switch_rx: mpsc::Receiver<SwitchReport>,
+    manifest_dirty: bool,
 }
 
 impl<C: Clock> CaptureSession<C> {
@@ -214,15 +272,25 @@ impl<C: Clock> CaptureSession<C> {
         write_manifest(&chunk_dir, &manifest)?;
         let start = clock.now_100ns();
         let mut workers = Vec::new();
+        let (switch_tx, switch_rx) = mpsc::channel();
         for source in [Source::Microphone, Source::SystemAudio] {
             let writer = ChunkWriter::new(&chunk_dir, source)?;
             let (tx, rx) = mpsc::channel();
             let opener = opener.clone();
             let worker_clock = clock.clone();
+            let worker_switch_tx = switch_tx.clone();
             let join = thread::Builder::new()
                 .name(format!("capture-{}", source.stem()))
                 .spawn(move || {
-                    run_worker(source, writer, opener, worker_clock, start, rx);
+                    run_worker(
+                        source,
+                        writer,
+                        opener,
+                        worker_clock,
+                        start,
+                        rx,
+                        worker_switch_tx,
+                    );
                 })?;
             workers.push(Worker { tx, join });
         }
@@ -232,6 +300,8 @@ impl<C: Clock> CaptureSession<C> {
             manifest,
             chunk_dir,
             workers,
+            switch_rx,
+            manifest_dirty: false,
         })
     }
     pub fn elapsed_ms(&self) -> u64 {
@@ -239,6 +309,41 @@ impl<C: Clock> CaptureSession<C> {
     }
     pub fn is_paused(&self) -> bool {
         self.timeline.is_paused()
+    }
+    pub fn collect_device_switches(&mut self) -> io::Result<()> {
+        let mut changed = false;
+        while let Ok(report) = self.switch_rx.try_recv() {
+            self.timeline
+                .add_device_switch(report.at_100ns, report.source, report.device);
+            changed = true;
+        }
+        if changed {
+            self.manifest.markers = self.timeline.markers().to_vec();
+            self.manifest_dirty = true;
+        }
+        if self.manifest_dirty {
+            write_manifest(&self.chunk_dir, &self.manifest)?;
+            self.manifest_dirty = false;
+        }
+        Ok(())
+    }
+    pub fn device_switches(&self) -> Vec<DeviceSwitch> {
+        self.timeline
+            .markers()
+            .iter()
+            .filter_map(|marker| match marker {
+                Marker::DeviceSwitch {
+                    at_ms,
+                    source,
+                    device,
+                } => Some(DeviceSwitch {
+                    at_ms: *at_ms,
+                    source: *source,
+                    device: device.clone(),
+                }),
+                _ => None,
+            })
+            .collect()
     }
     fn control(
         &self,
@@ -264,8 +369,12 @@ impl<C: Clock> CaptureSession<C> {
         }
         let at = self.clock.now_100ns();
         self.control(at, Command::Pause)?;
+        let _ = self.collect_device_switches();
         self.timeline.pause(at);
-        write_manifest(&self.chunk_dir, &self.manifest)
+        self.manifest.markers = self.timeline.markers().to_vec();
+        write_manifest(&self.chunk_dir, &self.manifest)?;
+        self.manifest_dirty = false;
+        Ok(())
     }
     pub fn resume(&mut self) -> io::Result<()> {
         if !self.timeline.is_paused() {
@@ -273,13 +382,18 @@ impl<C: Clock> CaptureSession<C> {
         }
         let at = self.clock.now_100ns();
         self.control(at, Command::Resume)?;
+        // A worker can report a switch right after it resumes, so its time must count from the resume.
         self.timeline.resume(at);
+        let _ = self.collect_device_switches();
         self.manifest.markers = self.timeline.markers().to_vec();
-        write_manifest(&self.chunk_dir, &self.manifest)
+        write_manifest(&self.chunk_dir, &self.manifest)?;
+        self.manifest_dirty = false;
+        Ok(())
     }
     pub fn stop(mut self) -> io::Result<RecordingManifest> {
         let at = self.clock.now_100ns();
         self.control(at, Command::Stop)?;
+        let _ = self.collect_device_switches();
         for worker in self.workers.drain(..) {
             worker
                 .join
@@ -303,10 +417,15 @@ fn run_worker<O: InputOpener, C: Clock>(
     clock: C,
     start: u64,
     rx: mpsc::Receiver<Command>,
+    switch_tx: mpsc::Sender<SwitchReport>,
 ) {
     let mut timeline = SourceClock::new(start);
-    let mut device: Option<O::Device> = None;
-    let mut last_open_attempt = None;
+    let mut input = InputState {
+        device: None,
+        last_open_attempt: None,
+        last_opened: None,
+        last_default_check: None,
+    };
     // After a write error the worker stops capturing but keeps answering, so the error reaches the caller.
     let mut failure: Option<String> = None;
     let fail = |failure: &Option<String>| Err(failure.clone().unwrap_or_default());
@@ -351,13 +470,13 @@ fn run_worker<O: InputOpener, C: Clock>(
                 source,
                 &mut writer,
                 &mut timeline,
-                &mut device,
-                &mut last_open_attempt,
+                &mut input,
                 &opener,
                 &clock,
+                &switch_tx,
             ) {
                 failure = Some(format!("{} capture stopped: {error}", source.stem()));
-                device = None;
+                input.device = None;
             }
         }
         thread::sleep(Duration::from_millis(10));
@@ -368,23 +487,58 @@ fn capture_pending<O: InputOpener, C: Clock>(
     source: Source,
     writer: &mut ChunkWriter,
     timeline: &mut SourceClock,
-    device: &mut Option<O::Device>,
-    last_open_attempt: &mut Option<Instant>,
+    input: &mut InputState<O::Device>,
     opener: &O,
     clock: &C,
+    switch_tx: &mpsc::Sender<SwitchReport>,
 ) -> io::Result<()> {
-    if device.is_none() && last_open_attempt.is_none_or(|at| at.elapsed() >= REOPEN_INTERVAL) {
-        *last_open_attempt = Some(Instant::now());
-        *device = opener.open(source).ok();
+    if input.device.is_some()
+        && input
+            .last_default_check
+            .is_none_or(|at| at.elapsed() >= DEFAULT_CHECK_INTERVAL)
+    {
+        input.last_default_check = Some(Instant::now());
+        if opener.default_device_id(source).ok().as_deref()
+            != input.device.as_ref().map(|d| d.info().id.as_str())
+        {
+            input.device = None;
+            input.last_open_attempt = None;
+        }
+    }
+    if input.device.is_none()
+        && input
+            .last_open_attempt
+            .is_none_or(|at| at.elapsed() >= REOPEN_INTERVAL)
+    {
+        input.last_open_attempt = Some(Instant::now());
+        if let Ok(opened) = opener.open(source) {
+            let info = opened.info().clone();
+            if input
+                .last_opened
+                .as_ref()
+                .is_some_and(|previous| previous.id != info.id)
+            {
+                let _ = switch_tx.send(SwitchReport {
+                    at_100ns: clock.now_100ns(),
+                    source,
+                    device: info.name.clone(),
+                });
+            }
+            input.last_opened = Some(info);
+            input.last_default_check = Some(Instant::now());
+            input.device = Some(opened);
+        }
     }
     // WASAPI delivers about one packet per 10 ms; drain what is pending, bounded so control
     // messages are still checked.
     for _ in 0..MAX_PACKETS_PER_TICK {
-        let Some(input) = device.as_mut() else { break };
-        match input.read_packet() {
+        let Some(device) = input.device.as_mut() else {
+            break;
+        };
+        match device.read_packet() {
             Ok(Some(packet)) => writer.write(&timeline.packet(&packet, clock.now_100ns()))?,
             Ok(None) => break,
-            Err(_) => *device = None,
+            Err(_) => input.device = None,
         }
     }
     writer.write(&timeline.pad_to(clock.now_100ns(), false))

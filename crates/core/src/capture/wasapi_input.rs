@@ -7,7 +7,8 @@ use wasapi::{
 use windows::Win32::System::Performance::{QueryPerformanceCounter, QueryPerformanceFrequency};
 
 use super::{
-    Clock, InputDevice, InputOpener, Packet, Source, CAPTURE_CHANNELS, HNS_PER_SECOND, SAMPLE_RATE,
+    Clock, DeviceInfo, InputDevice, InputOpener, Packet, Source, CAPTURE_CHANNELS, HNS_PER_SECOND,
+    SAMPLE_RATE,
 };
 
 /// QueryPerformanceCounter in 100 ns units; WASAPI packet timestamps use the same clock.
@@ -44,6 +45,7 @@ impl Clock for QpcClock {
 pub struct WasapiOpener;
 
 pub struct WasapiDevice {
+    info: DeviceInfo,
     audio: AudioClient,
     capture: AudioCaptureClient,
     buffer: Vec<u8>,
@@ -61,17 +63,31 @@ impl InputOpener for WasapiOpener {
     fn open(&self, source: Source) -> Result<WasapiDevice, String> {
         open(source).map_err(|error| error.to_string())
     }
+    fn default_device_id(&self, source: Source) -> Result<String, String> {
+        let device = default_device(source).map_err(|error| error.to_string())?;
+        device.get_id().map_err(|error| error.to_string())
+    }
+}
+
+fn direction(source: Source) -> Direction {
+    match source {
+        Source::Microphone => Direction::Capture,
+        Source::SystemAudio => Direction::Render,
+    }
+}
+
+fn default_device(source: Source) -> Result<wasapi::Device, Box<dyn std::error::Error>> {
+    let _ = wasapi::initialize_mta();
+    let enumerator = DeviceEnumerator::new()?;
+    Ok(enumerator.get_default_device_for_role(&direction(source), &Role::Communications)?)
 }
 
 fn open(source: Source) -> Result<WasapiDevice, Box<dyn std::error::Error>> {
-    // Already initialised on this thread is fine; each Source thread calls this before its first open.
-    let _ = wasapi::initialize_mta();
-    let enumerator = DeviceEnumerator::new()?;
-    let direction = match source {
-        Source::Microphone => Direction::Capture,
-        Source::SystemAudio => Direction::Render,
+    let device = default_device(source)?;
+    let info = DeviceInfo {
+        id: device.get_id()?,
+        name: device.get_friendlyname()?,
     };
-    let device = enumerator.get_default_device_for_role(&direction, &Role::Communications)?;
     let mut audio = device.get_iaudioclient()?;
     let format = WaveFormat::new(
         32,
@@ -91,6 +107,7 @@ fn open(source: Source) -> Result<WasapiDevice, Box<dyn std::error::Error>> {
     let capture = audio.get_audiocaptureclient()?;
     audio.start_stream()?;
     Ok(WasapiDevice {
+        info,
         audio,
         capture,
         buffer: vec![0; buffer_frames as usize * CAPTURE_CHANNELS * 4],
@@ -98,6 +115,9 @@ fn open(source: Source) -> Result<WasapiDevice, Box<dyn std::error::Error>> {
 }
 
 impl InputDevice for WasapiDevice {
+    fn info(&self) -> &DeviceInfo {
+        &self.info
+    }
     fn read_packet(&mut self) -> Result<Option<Packet>, String> {
         let frames = match self.capture.get_next_packet_size() {
             Ok(Some(frames)) if frames > 0 => frames,

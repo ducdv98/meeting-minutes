@@ -1,4 +1,32 @@
-use meeting_minutes_core::{recording::Marker, timeline::place_recording};
+use meeting_minutes_core::{capture::Source, recording::Marker, timeline::place_recording};
+
+#[test]
+fn device_switch_is_offset_clamped_and_keeps_its_details() {
+    let marker = Marker::DeviceSwitch {
+        at_ms: 500,
+        source: Source::Microphone,
+        device: "Logi USB Headset".into(),
+    };
+    let placement = place_recording(&[1_000], 200, &[marker]);
+    assert_eq!(
+        placement.markers,
+        vec![
+            Marker::Gap { at_ms: 1_000 },
+            Marker::DeviceSwitch {
+                at_ms: 1_200,
+                source: Source::Microphone,
+                device: "Logi USB Headset".into(),
+            },
+        ]
+    );
+    assert_eq!(
+        serde_json::to_value(&placement.markers[1]).unwrap(),
+        serde_json::json!({
+            "kind": "device_switch", "at_ms": 1_200,
+            "source": "microphone", "device": "Logi USB Headset"
+        })
+    );
+}
 
 #[test]
 fn first_recording_keeps_relative_pauses_without_a_gap() {

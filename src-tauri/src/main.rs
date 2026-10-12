@@ -447,6 +447,9 @@ fn main() {
             thread::spawn(move || loop {
                 thread::sleep(Duration::from_millis(500));
                 if matches!(status(&handle), Ok(status) if status.phase == Phase::Recording) {
+                    if let Ok(mut recorder) = lock_recorder(&handle) {
+                        let _ = recorder.collect_device_switches();
+                    }
                     let _ = publish(&handle);
                 }
             });
