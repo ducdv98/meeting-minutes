@@ -2,15 +2,19 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { useState } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import MeetingView from "./MeetingView";
-import { meetingDetail, renameMeeting, type MeetingDetail } from "./library";
+import { deleteMeeting, meetingDetail, renameMeeting, type MeetingDetail } from "./library";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { onLibraryChanged } from "./recording";
 import { processingStatus, meetingTranscript, enqueueTranscription, cancelProcessing, onProcessingStatus, setMeetingLanguage, type ProcessingStatus } from "./processing";
 import { editSegment } from "./transcript";
 import { aiStatus } from "./ai";
+import { meetingSummary, summaryStatus } from "./summary";
+import { meetingAsks } from "./ask";
 
-vi.mock("./ai", () => ({ aiStatus: vi.fn() }));
-vi.mock("./library", () => ({ meetingDetail: vi.fn(), renameMeeting: vi.fn() }));
+vi.mock("./ai", async (original) => ({ ...(await original<typeof import("./ai")>()), aiStatus: vi.fn() }));
+vi.mock("./summary", () => ({ meetingSummary: vi.fn(), summaryStatus: vi.fn(), onSummaryStatus: vi.fn(() => Promise.resolve(() => {})) }));
+vi.mock("./ask", () => ({ meetingAsks: vi.fn(), onAskDelta: vi.fn(() => Promise.resolve(() => {})), onAsksChanged: vi.fn(() => Promise.resolve(() => {})), answerLabel: () => "" }));
+vi.mock("./library", () => ({ meetingDetail: vi.fn(), renameMeeting: vi.fn(), deleteMeeting: vi.fn() }));
 vi.mock("./processing", async (importOriginal) => ({ ...(await importOriginal<typeof import("./processing")>()), processingStatus: vi.fn(), meetingTranscript: vi.fn(), enqueueTranscription: vi.fn(), cancelProcessing: vi.fn(), dismissProcessing: vi.fn(), setMeetingLanguage: vi.fn(), onProcessingStatus: vi.fn(() => Promise.resolve(() => {})) }));
 vi.mock("./recording", async (importOriginal) => ({ ...(await importOriginal<typeof import("./recording")>()), onLibraryChanged: vi.fn(() => Promise.resolve(() => {})) }));
 vi.mock("./transcript", async (importOriginal) => ({ ...(await importOriginal<typeof import("./transcript")>()), editSegment: vi.fn() }));
@@ -28,6 +32,9 @@ const detail: MeetingDetail = {
 };
 
 beforeEach(() => {
+  vi.mocked(meetingSummary).mockResolvedValue(null);
+  vi.mocked(summaryStatus).mockResolvedValue({ jobs: [] });
+  vi.mocked(meetingAsks).mockResolvedValue({ asks: [], active: null, retryable_id: null });
   vi.mocked(aiStatus).mockResolvedValue({ provider: null, model: null, configured: false, has_openai_key: false, has_anthropic_key: false });
   vi.mocked(meetingDetail).mockResolvedValue(detail);
   vi.mocked(processingStatus).mockResolvedValue({ jobs: [] });
@@ -35,10 +42,52 @@ beforeEach(() => {
   vi.mocked(enqueueTranscription).mockResolvedValue({ jobs: [{ meeting_id: "old", model: null, stage: "queued", progress: 0, error: null }] });
   vi.mocked(cancelProcessing).mockResolvedValue({ jobs: [] });
   vi.mocked(setMeetingLanguage).mockResolvedValue();
+  vi.mocked(deleteMeeting).mockResolvedValue();
+  vi.spyOn(HTMLMediaElement.prototype, "play").mockImplementation(async () => {});
   vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
   vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => {});
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.resetAllMocks(); });
+
+it("plays and highlights a search result once the Transcript and player load", async () => {
+  vi.mocked(meetingTranscript).mockResolvedValue({ schema_version: 1, revision: 1, created_at: "2026-10-12T10:00:00Z", model: "small", language: "en", language_detected: false, duration_ms: 125000, segments: [{ id: "s00001", start_ms: 1000, end_ms: 2000, text: "Budget", speaker: "me" }] });
+  const onOpened = vi.fn();
+  const { container } = render(<MeetingView id="old" openAt={{ segment_id: "s00001", revision: 1, start_ms: 1000, end_ms: 2000 }} onOpened={onOpened} onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
+  await waitFor(() => expect(onOpened).toHaveBeenCalledTimes(1));
+  expect(container.querySelector("audio")?.currentTime).toBe(0.5);
+  expect(container.querySelector("li[aria-current='true']")?.textContent).toContain("Budget");
+  expect(HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(1);
+});
+
+it("does not play a search hit from an older Revision", async () => {
+  vi.mocked(meetingTranscript).mockResolvedValue({ schema_version: 1, revision: 2, created_at: "2026-10-12T10:00:00Z", model: "small", language: "en", language_detected: false, duration_ms: 125000, segments: [{ id: "s00001", start_ms: 8000, end_ms: 9000, text: "Different span", speaker: "me" }] });
+  const onOpened = vi.fn();
+  render(<MeetingView id="old" openAt={{ segment_id: "s00001", revision: 1, start_ms: 1000, end_ms: 2000 }} onOpened={onOpened} onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
+  await waitFor(() => expect(onOpened).toHaveBeenCalledTimes(1));
+  expect(screen.getByText("This search result is from an older transcript revision.")).toBeTruthy();
+  expect(HTMLMediaElement.prototype.play).not.toHaveBeenCalled();
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
+it("does not play a search hit whose Segment is absent", async () => {
+  vi.mocked(meetingTranscript).mockResolvedValue({ schema_version: 1, revision: 1, created_at: "2026-10-12T10:00:00Z", model: "small", language: "en", language_detected: false, duration_ms: 125000, segments: [{ id: "s00002", start_ms: 8000, end_ms: 9000, text: "Another span", speaker: "me" }] });
+  const onOpened = vi.fn();
+  render(<MeetingView id="old" openAt={{ segment_id: "s00001", revision: 1, start_ms: 1000, end_ms: 2000 }} onOpened={onOpened} onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
+  await waitFor(() => expect(onOpened).toHaveBeenCalledTimes(1));
+  expect(screen.getByText("This search result is from an older transcript revision.")).toBeTruthy();
+  expect(HTMLMediaElement.prototype.play).not.toHaveBeenCalled();
+});
+
+it("confirms Meeting deletion after releasing the player and reports success", async () => {
+  const onDeleted = vi.fn();
+  vi.mocked(deleteMeeting).mockImplementation(async () => { expect(document.querySelector("audio")).toBeNull(); });
+  render(<MeetingView id="old" onDeleted={onDeleted} onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
+  await screen.findByRole("heading", { name: "Planning" });
+  fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+  fireEvent.click(screen.getByRole("dialog").querySelector("button")!);
+  await waitFor(() => expect(onDeleted).toHaveBeenCalledTimes(1));
+  expect(deleteMeeting).toHaveBeenCalledWith("old");
+});
 
 it("shows the Meeting fields and Timeline markers", async () => {
   const { container } = render(<MeetingView id="old" onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
@@ -229,6 +278,15 @@ it("guides setup when no AI provider is configured", async () => {
   expect(await screen.findByRole("heading", { name: "Summary and Ask" })).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Open AI settings" }));
   expect(onOpenSettings).toHaveBeenCalledOnce();
+});
+it("keeps saved Summary and Ask history visible without a configured provider", async () => {
+  vi.mocked(meetingSummary).mockResolvedValue({ schema_version: 1, revision: 1, created_at: "now", provider: "ollama", model: "llama", overview: [{ text: "Budget approved", citations: [{ segment_id: "s00001", start_ms: 1000, end_ms: 2000 }] }], key_points: [], decisions: [], action_items: [], dropped_items: 0 });
+  vi.mocked(meetingAsks).mockResolvedValue({ asks: [{ id: "a0001", question: "What happened?", asked_at: "now", revision: 1, provider: "ollama", model: "llama", state: "answered", answer: "Budget approved", citations: [], invalid_citations: [], error: null }], active: null, retryable_id: null });
+  render(<MeetingView id="old" onBack={() => {}} onRenamed={() => {}} onOpenSettings={() => {}} />);
+  expect(await screen.findByRole("heading", { name: "Summary and Ask" })).toBeTruthy();
+  expect(await screen.findAllByText("Budget approved")).toHaveLength(2);
+  expect(screen.queryByRole("button", { name: "Generate Summary" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Ask" })).toBeNull();
 });
 
 it("hides setup guidance when a provider is configured", async () => {

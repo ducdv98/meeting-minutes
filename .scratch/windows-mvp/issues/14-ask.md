@@ -1,6 +1,6 @@
 # Ask a Meeting with cited Answers
 
-Status: ready-for-agent
+Status: ready-for-human
 Blocked by: 10, 12
 Spec: ../spec.md
 
@@ -17,3 +17,11 @@ Ask panel on the Meeting view following the spec's Ask rules: scoped to the curr
 - [ ] Unit tests: citation validation (unknown, cross-Meeting, other-Revision IDs rejected), context building, state transitions.
 
 ## Comments
+
+### 2026-10-12: implemented; laptop check pending
+
+Code is done and tested on Linux. The design is in `../14-core-design.md`.
+
+- Core `ask`: `asks.json` history, one Pending Ask at a time, in-place retry of the latest failed question, and crash recovery (Pending → Failed). Context uses only same-Revision Answered or Insufficient-evidence turns. Long Transcripts use lexical retrieval, which folds Vietnamese diacritics and adds neighbours. The Answer text streams from partial JSON. Validation gives Answered, Unverified (invalid or missing Citations), Insufficient evidence (shown as fixed app text, so a model claim can't appear under that label), Off-topic nudge, Incomplete (Stop, or failure after text), or Failed.
+- App: the Ask panel streams the Answer and has Stop, Retry (latest failed only), playable Citations, and labels for each state. The cloud consent/disclosure flow matches the Summary's.
+- Manual check on the laptop: ask something discussed (you get cited Answers that play), something never mentioned (Insufficient evidence), Stop mid-answer (Incomplete), restart the app (history is kept), and say "hello" (you get a nudge).

@@ -20,6 +20,17 @@ fn provider_status_requires_model_and_cloud_key() {
     assert!(ai_status(&settings, &secrets).configured);
 }
 
+#[test]
+fn provider_context_sizes_match_generation_budgets() {
+    use meeting_minutes_core::ai::{context_tokens, OLLAMA_CONTEXT_TOKENS};
+    assert_eq!(
+        context_tokens(ProviderKind::Ollama),
+        OLLAMA_CONTEXT_TOKENS as usize
+    );
+    assert_eq!(context_tokens(ProviderKind::Openai), 128_000);
+    assert_eq!(context_tokens(ProviderKind::Anthropic), 200_000);
+}
+
 use meeting_minutes_core::ai::{
     configured_provider, disclosure, generate_json, list_models, AiError, GenerateRequest,
     HttpClient, HttpProvider, HttpRequest, HttpResponse, Message, Method, OutputSchema, Role,
@@ -113,6 +124,7 @@ fn ollama_lists_models_and_streams_chat() {
     );
     assert_eq!(body["messages"][1], json!({"role":"user","content":"Hi"}));
     assert_eq!(body["options"]["num_predict"], 16);
+    assert_eq!(body["options"]["num_ctx"], 8192);
     assert!(body.get("format").is_none());
     http.reply(200, "{\"done\":true}\n");
     let mut structured = prompt();

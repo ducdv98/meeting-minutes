@@ -17,8 +17,9 @@ use crate::{
     index::Index,
     meeting_file::{ImportFile, MeetingDetail, MeetingFile, RecordingEntry},
     recording::{write_manifest, RecordingManifest},
+    summary::{read_summary, render_summary_markdown},
     transcript::{render_markdown, Language, Transcript},
-    MeetingSummary,
+    MeetingSummary, SearchHit,
 };
 
 #[derive(Debug)]
@@ -389,7 +390,7 @@ impl Library {
     }
 
     pub fn edit_segment(
-        &self,
+        &mut self,
         id: &str,
         revision: u32,
         segment_id: &str,
@@ -430,6 +431,7 @@ impl Library {
             return Err(error);
         }
         write_transcript_markdown(&folder, &render_markdown(&meeting.title, &transcript))?;
+        self.index.set_transcript(id, Some(&transcript))?;
         Ok(transcript)
     }
 
@@ -557,6 +559,12 @@ impl Library {
         if let Ok(Some(transcript)) = self.transcript(&new_id) {
             let _ = write_transcript_markdown(&new_folder, &render_markdown(title, &transcript));
         }
+        if let Ok(Some(saved_summary)) = read_summary(&new_folder) {
+            let _ = write_summary_markdown(
+                &new_folder,
+                &render_summary_markdown(title, &saved_summary),
+            );
+        }
         Ok(summary)
     }
 
@@ -666,6 +674,29 @@ impl Library {
         Ok(summary)
     }
 
+    pub fn refresh_transcript(&mut self, id: &str) -> Result<(), LibraryError> {
+        let transcript = self.transcript(id)?;
+        self.index.set_transcript(id, transcript.as_ref())
+    }
+
+    pub fn search(&self, query: &str) -> Result<Vec<SearchHit>, LibraryError> {
+        self.index.search(query, 100)
+    }
+
+    pub fn delete_meeting(
+        &mut self,
+        id: &str,
+        trash: &dyn Fn(&Path) -> io::Result<()>,
+    ) -> Result<(), LibraryError> {
+        let folder = self.checked_meeting_dir(id)?;
+        if !unsaved_recordings(&folder)?.is_empty() {
+            return Err(LibraryError::UnsavedRecording);
+        }
+        trash(&folder)?;
+        let _ = self.index.remove_meeting(id);
+        Ok(())
+    }
+
     pub fn rescan(&mut self) -> Result<ScanReport, LibraryError> {
         let mut valid = Vec::new();
         let mut malformed = Vec::new();
@@ -679,7 +710,15 @@ impl Library {
                 continue;
             }
             match read_meeting(&entry.path(), &folder) {
-                Ok(meeting) => valid.push(meeting),
+                Ok((meeting, started_at_ms)) => {
+                    let transcript = highest_transcript_revision(&entry.path())
+                        .ok()
+                        .flatten()
+                        .and_then(|revision| {
+                            read_transcript_revision(&entry.path(), revision).ok()
+                        });
+                    valid.push((meeting, started_at_ms, transcript));
+                }
                 Err(reason) => malformed.push(MalformedFolder { folder, reason }),
             }
         }
@@ -715,6 +754,18 @@ fn write_transcript_markdown(folder: &Path, markdown: &str) -> io::Result<()> {
     file.write_all(markdown.as_bytes())?;
     file.sync_all()?;
     fs::rename(tmp, folder.join("transcript.md"))
+}
+
+fn write_summary_markdown(folder: &Path, markdown: &str) -> io::Result<()> {
+    let tmp = folder.join("summary.md.tmp");
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(&tmp)?;
+    file.write_all(markdown.as_bytes())?;
+    file.sync_all()?;
+    fs::rename(tmp, folder.join("summary.md"))
 }
 
 fn highest_transcript_revision(folder: &Path) -> Result<Option<u32>, LibraryError> {

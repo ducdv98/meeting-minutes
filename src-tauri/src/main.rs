@@ -1,7 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::{
-    collections::VecDeque,
+    collections::{HashMap, VecDeque},
     path::PathBuf,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -16,14 +16,16 @@ use meeting_minutes_core::{
         self, AiStatus, ApiKey, GenerateRequest, HttpClient, Message, ProviderKind, Role,
         SecretStore, TextProvider, UreqClient,
     },
+    ask::{self, AskOptions},
     capture::{QpcClock, WasapiOpener},
     import::import_extension,
     models::{self, DEFAULT_MODEL, MODELS},
     processing::{self, JobStage, ProcessingStatus, Processor, TranscribeRequest},
     recorder::{Phase, Recorder, RecorderError, RecorderStatus, SaveJob, SaveState},
     settings::Settings,
+    summary::{self, Summary, SummaryOptions},
     transcript::{Language, Transcript},
-    Library, LibraryError, MeetingDetail, MeetingSummary, ScanReport,
+    Library, LibraryError, MeetingDetail, MeetingSummary, ScanReport, SearchHit,
 };
 use meeting_minutes_whisper::WhisperEngine;
 use tauri::{
@@ -47,6 +49,66 @@ struct ModelsDir(PathBuf);
 struct Quitting(AtomicBool);
 struct Secrets(Box<dyn SecretStore>);
 struct Http(Arc<dyn HttpClient>);
+
+#[derive(Clone, Copy, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+enum SummaryJobState {
+    Running,
+    Failed,
+}
+#[derive(Clone, serde::Serialize)]
+struct SummaryJob {
+    meeting_id: String,
+    state: SummaryJobState,
+    done: usize,
+    total: usize,
+    error: Option<String>,
+    #[serde(skip)]
+    cancel: Arc<AtomicBool>,
+}
+#[derive(serde::Serialize)]
+struct SummaryStatus {
+    jobs: Vec<SummaryJob>,
+}
+#[derive(serde::Serialize)]
+struct SendPlan {
+    provider: ProviderKind,
+    cloud: bool,
+    consented: bool,
+    disclosure: Option<ai::Disclosure>,
+}
+struct ActiveAsk {
+    ask_id: String,
+    partial: String,
+    cancel: Arc<AtomicBool>,
+}
+#[derive(serde::Serialize)]
+struct ActiveAskView {
+    ask_id: String,
+    partial: String,
+}
+#[derive(serde::Serialize)]
+struct AskView {
+    asks: Vec<ask::AskEntry>,
+    active: Option<ActiveAskView>,
+    retryable_id: Option<String>,
+}
+#[derive(Clone, serde::Serialize)]
+struct AskDelta {
+    meeting_id: String,
+    ask_id: String,
+    text: String,
+}
+#[derive(Clone, serde::Serialize)]
+struct AsksChanged {
+    meeting_id: String,
+}
+#[derive(Default)]
+struct AiJobsInner {
+    summaries: HashMap<String, SummaryJob>,
+    asks: HashMap<String, ActiveAsk>,
+}
+type AiJobs = Mutex<AiJobsInner>;
 
 #[cfg(windows)]
 struct KeyringStore;
@@ -274,6 +336,7 @@ fn meeting_busy_locked(
     if processor.is_busy(meeting_id) {
         return Err("This Meeting is being processed".into());
     }
+    ai_busy(app, meeting_id)?;
     let recorder = lock_recorder(app)?;
     let status = recorder.status();
     if status.meeting_id.as_deref() == Some(meeting_id)
@@ -283,6 +346,22 @@ fn meeting_busy_locked(
             .any(|save| save.meeting_id == meeting_id)
     {
         return Err(LibraryError::UnsavedRecording.to_string());
+    }
+    Ok(())
+}
+
+fn ai_busy(app: &AppHandle, meeting_id: &str) -> Result<(), String> {
+    let state = app.state::<AiJobs>();
+    let jobs = state.lock().map_err(|error| error.to_string())?;
+    if jobs
+        .summaries
+        .get(meeting_id)
+        .is_some_and(|job| matches!(job.state, SummaryJobState::Running))
+    {
+        return Err("A Summary is being made for this Meeting".into());
+    }
+    if jobs.asks.contains_key(meeting_id) {
+        return Err("An Ask is running for this Meeting".into());
     }
     Ok(())
 }
@@ -317,6 +396,7 @@ fn transcribe_meeting(
         }
     }
     let mut processor = lock_processor(&app)?;
+    ai_busy(&app, &meeting_id)?;
     {
         let library_state = app.state::<LibraryState>();
         let library = library_state.lock().map_err(|e| e.to_string())?;
@@ -368,10 +448,10 @@ fn edit_segment(
     let processor = lock_processor(&app)?;
     meeting_busy_locked(&app, &processor, &meeting_id)?;
     let library_state = app.state::<LibraryState>();
-    let library = library_state.lock().map_err(|e| e.to_string())?;
+    let mut library = library_state.lock().map_err(|e| e.to_string())?;
     let transcript = library
-        .as_ref()
-        .map_err(Clone::clone)?
+        .as_mut()
+        .map_err(|e| e.clone())?
         .edit_segment(&meeting_id, revision, &segment_id, &text)
         .map_err(|e| e.to_string())?;
     let _ = app.emit("library-changed", ());
@@ -511,6 +591,428 @@ async fn test_ai_provider(app: AppHandle) -> Result<String, String> {
     .map_err(|error| error.to_string())?
 }
 
+fn configured_ai(app: &AppHandle) -> Result<ai::HttpProvider, String> {
+    let settings = Settings::load(&app.state::<SettingsPath>().0);
+    let secrets = app.state::<Secrets>();
+    let http = app.state::<Http>();
+    ai::configured_provider(&settings.ai, secrets.0.as_ref(), http.0.clone())
+        .map_err(|error| error.to_string())
+}
+
+fn meeting_context(
+    app: &AppHandle,
+    id: &str,
+) -> Result<(MeetingDetail, Transcript, PathBuf), String> {
+    let state = app.state::<LibraryState>();
+    let guard = state.lock().map_err(|error| error.to_string())?;
+    let library = guard.as_ref().map_err(Clone::clone)?;
+    let detail = library.meeting(id).map_err(|error| error.to_string())?;
+    let transcript = library
+        .transcript(id)
+        .map_err(|error| error.to_string())?
+        .ok_or("Transcribe this Meeting first")?;
+    Ok((detail, transcript, library.meeting_dir(id)))
+}
+
+fn cloud_consented(app: &AppHandle, id: &str, kind: ProviderKind) -> Result<bool, String> {
+    let state = app.state::<LibraryState>();
+    let guard = state.lock().map_err(|error| error.to_string())?;
+    guard
+        .as_ref()
+        .map_err(Clone::clone)?
+        .cloud_consent(id, kind)
+        .map_err(|error| error.to_string())
+}
+
+fn require_cloud_consent(
+    app: &AppHandle,
+    id: &str,
+    kind: ProviderKind,
+    consent: bool,
+) -> Result<(), String> {
+    if !kind.is_cloud() || cloud_consented(app, id, kind)? {
+        return Ok(());
+    }
+    if !consent {
+        return Err("Review what will be sent first".into());
+    }
+    let state = app.state::<LibraryState>();
+    let guard = state.lock().map_err(|error| error.to_string())?;
+    guard
+        .as_ref()
+        .map_err(Clone::clone)?
+        .record_cloud_consent(id, kind, chrono::Local::now().fixed_offset())
+        .map_err(|error| error.to_string())
+}
+
+fn summary_snapshot(app: &AppHandle) -> Result<SummaryStatus, String> {
+    let jobs = app.state::<AiJobs>();
+    let jobs = jobs.lock().map_err(|error| error.to_string())?;
+    Ok(SummaryStatus {
+        jobs: jobs.summaries.values().cloned().collect(),
+    })
+}
+fn publish_summary(app: &AppHandle) -> Result<SummaryStatus, String> {
+    let status = summary_snapshot(app)?;
+    let _ = app.emit("summary-status", &status);
+    Ok(status)
+}
+
+#[tauri::command]
+fn meeting_summary(app: AppHandle, meeting_id: String) -> Result<Option<Summary>, String> {
+    let state = app.state::<LibraryState>();
+    let guard = state.lock().map_err(|error| error.to_string())?;
+    let library = guard.as_ref().map_err(Clone::clone)?;
+    library
+        .meeting(&meeting_id)
+        .map_err(|error| error.to_string())?;
+    summary::read_summary(&library.meeting_dir(&meeting_id)).map_err(|error| error.to_string())
+}
+#[tauri::command]
+fn summary_status(app: AppHandle) -> Result<SummaryStatus, String> {
+    summary_snapshot(&app)
+}
+#[tauri::command]
+fn summary_send_plan(app: AppHandle, meeting_id: String) -> Result<SendPlan, String> {
+    let provider = configured_ai(&app)?;
+    let (_, transcript, _) = meeting_context(&app, &meeting_id)?;
+    let kind = provider.kind();
+    let consented = !kind.is_cloud() || cloud_consented(&app, &meeting_id, kind)?;
+    let disclosure = if kind.is_cloud() && !consented {
+        let requests = summary::summary_requests(&transcript, &SummaryOptions::for_provider(kind));
+        let first = requests.first().ok_or("The Transcript has no Segments")?;
+        let mut disclosure = ai::disclosure(&provider, first);
+        disclosure.messages = requests
+            .iter()
+            .flat_map(|request| request.messages.clone())
+            .collect();
+        disclosure.characters = disclosure.system.chars().count()
+            + disclosure
+                .messages
+                .iter()
+                .map(|message| message.content.chars().count())
+                .sum::<usize>();
+        Some(disclosure)
+    } else {
+        None
+    };
+    Ok(SendPlan {
+        provider: kind,
+        cloud: kind.is_cloud(),
+        consented,
+        disclosure,
+    })
+}
+
+fn start_summary(app: &AppHandle, id: String, provider: ai::HttpProvider) -> Result<(), String> {
+    let kind = provider.kind();
+    {
+        let state = app.state::<AiJobs>();
+        let mut jobs = state.lock().map_err(|error| error.to_string())?;
+        if jobs
+            .summaries
+            .get(&id)
+            .is_some_and(|job| matches!(job.state, SummaryJobState::Running))
+        {
+            return Err("A Summary is already being made for this Meeting".into());
+        }
+        jobs.summaries.insert(
+            id.clone(),
+            SummaryJob {
+                meeting_id: id.clone(),
+                state: SummaryJobState::Running,
+                done: 0,
+                total: 0,
+                error: None,
+                cancel: Arc::new(AtomicBool::new(false)),
+            },
+        );
+    }
+    let _ = publish_summary(app);
+    let app = app.clone();
+    thread::spawn(move || {
+        let cancel = match app.state::<AiJobs>().lock() {
+            Ok(jobs) => jobs.summaries.get(&id).map(|job| job.cancel.clone()),
+            Err(_) => None,
+        };
+        let Some(cancel) = cancel else {
+            return;
+        };
+        let result = (|| -> Result<(), String> {
+            let (detail, transcript, dir) = meeting_context(&app, &id)?;
+            let summary = summary::summarize(
+                &provider,
+                &transcript,
+                &SummaryOptions::for_provider(kind),
+                &mut |done, total| {
+                    if let Ok(mut jobs) = app.state::<AiJobs>().lock() {
+                        if let Some(job) = jobs.summaries.get_mut(&id) {
+                            job.done = done;
+                            job.total = total;
+                        }
+                    }
+                    let _ = publish_summary(&app);
+                },
+                &cancel,
+            )
+            .map_err(|error| error.to_string())?;
+            if cancel.load(Ordering::SeqCst) {
+                return Err("Cancelled".into());
+            }
+            summary::write_summary(&dir, &detail.title, &summary).map_err(|error| error.to_string())
+        })();
+        if let Ok(mut jobs) = app.state::<AiJobs>().lock() {
+            match result {
+                Ok(()) => {
+                    jobs.summaries.remove(&id);
+                }
+                Err(ref error) if error == "Cancelled" => {
+                    jobs.summaries.remove(&id);
+                }
+                Err(error) => {
+                    if let Some(job) = jobs.summaries.get_mut(&id) {
+                        job.state = SummaryJobState::Failed;
+                        job.error = Some(error);
+                    }
+                }
+            }
+        }
+        let _ = publish_summary(&app);
+        let _ = app.emit("library-changed", ());
+    });
+    Ok(())
+}
+
+#[tauri::command]
+fn generate_summary(
+    app: AppHandle,
+    meeting_id: String,
+    consent: bool,
+) -> Result<SummaryStatus, String> {
+    meeting_busy(&app, &meeting_id)?;
+    let (_, transcript, _) = meeting_context(&app, &meeting_id)?;
+    if transcript.segments.is_empty() {
+        return Err("The Transcript has no Segments".into());
+    }
+    let provider = configured_ai(&app)?;
+    require_cloud_consent(&app, &meeting_id, provider.kind(), consent)?;
+    start_summary(&app, meeting_id, provider)?;
+    summary_snapshot(&app)
+}
+#[tauri::command]
+fn cancel_summary(app: AppHandle, meeting_id: String) -> Result<SummaryStatus, String> {
+    if let Ok(jobs) = app.state::<AiJobs>().lock() {
+        if let Some(job) = jobs.summaries.get(&meeting_id) {
+            job.cancel.store(true, Ordering::SeqCst);
+        }
+    }
+    publish_summary(&app)
+}
+#[tauri::command]
+fn dismiss_summary(app: AppHandle, meeting_id: String) -> Result<SummaryStatus, String> {
+    {
+        let state = app.state::<AiJobs>();
+        let mut jobs = state.lock().map_err(|error| error.to_string())?;
+        if jobs
+            .summaries
+            .get(&meeting_id)
+            .is_some_and(|job| matches!(job.state, SummaryJobState::Failed))
+        {
+            jobs.summaries.remove(&meeting_id);
+        }
+    }
+    publish_summary(&app)
+}
+
+fn asks_view(app: &AppHandle, id: &str) -> Result<AskView, String> {
+    let dir = {
+        let state = app.state::<LibraryState>();
+        let guard = state.lock().map_err(|error| error.to_string())?;
+        let library = guard.as_ref().map_err(Clone::clone)?;
+        library.meeting(id).map_err(|error| error.to_string())?;
+        library.meeting_dir(id)
+    };
+    let state = app.state::<AiJobs>();
+    let jobs = state.lock().map_err(|error| error.to_string())?;
+    let active = jobs.asks.get(id).map(|ask| ActiveAskView {
+        ask_id: ask.ask_id.clone(),
+        partial: ask.partial.clone(),
+    });
+    let mut history = ask::read_asks(&dir).map_err(|error| error.to_string())?;
+    if active.is_none() && history.interrupted() {
+        ask::write_asks(&dir, &history).map_err(|error| error.to_string())?;
+    }
+    let retryable_id = history.retryable().map(|entry| entry.id.clone());
+    Ok(AskView {
+        asks: history.asks,
+        active,
+        retryable_id,
+    })
+}
+#[tauri::command]
+fn meeting_asks(app: AppHandle, meeting_id: String) -> Result<AskView, String> {
+    asks_view(&app, &meeting_id)
+}
+
+#[tauri::command]
+fn ask_send_plan(app: AppHandle, meeting_id: String, question: String) -> Result<SendPlan, String> {
+    let provider = configured_ai(&app)?;
+    let (_, transcript, dir) = meeting_context(&app, &meeting_id)?;
+    let kind = provider.kind();
+    let consented = !kind.is_cloud() || cloud_consented(&app, &meeting_id, kind)?;
+    let disclosure = if kind.is_cloud() && !consented {
+        let history = ask::read_asks(&dir).map_err(|error| error.to_string())?;
+        let request = ask::build_ask(
+            &transcript,
+            &history,
+            &question,
+            &AskOptions::for_provider(kind),
+        );
+        Some(ai::disclosure(&provider, &request.request))
+    } else {
+        None
+    };
+    Ok(SendPlan {
+        provider: kind,
+        cloud: kind.is_cloud(),
+        consented,
+        disclosure,
+    })
+}
+
+fn begin_ask(
+    app: &AppHandle,
+    id: String,
+    question: Option<String>,
+    consent: bool,
+) -> Result<AskView, String> {
+    meeting_busy(app, &id)?;
+    let (_, transcript, dir) = meeting_context(app, &id)?;
+    let provider = configured_ai(app)?;
+    let kind = provider.kind();
+    // A retry uses the saved question. A new Ask uses the text supplied by the click.
+    let cancel = Arc::new(AtomicBool::new(false));
+    let (ask_id, ask_question, view) = {
+        let state = app.state::<AiJobs>();
+        let mut jobs = state.lock().map_err(|error| error.to_string())?;
+        if jobs.asks.contains_key(&id) {
+            return Err(ask::AskError::Busy.to_string());
+        }
+        let mut history = ask::read_asks(&dir).map_err(|error| error.to_string())?;
+        history.interrupted();
+        let at = chrono::Local::now().to_rfc3339();
+        let ask_id = match question.as_deref() {
+            Some(text) => history.begin(text, transcript.revision, kind, provider.model(), &at),
+            None => history.begin_retry(transcript.revision, kind, provider.model(), &at),
+        }
+        .map_err(|error| error.to_string())?;
+        let ask_question = history
+            .asks
+            .last()
+            .map(|entry| entry.question.clone())
+            .ok_or("Could not save the Ask")?;
+        require_cloud_consent(app, &id, kind, consent)?;
+        ask::write_asks(&dir, &history).map_err(|error| error.to_string())?;
+        jobs.asks.insert(
+            id.clone(),
+            ActiveAsk {
+                ask_id: ask_id.clone(),
+                partial: String::new(),
+                cancel: cancel.clone(),
+            },
+        );
+        let view = AskView {
+            asks: history.asks,
+            active: Some(ActiveAskView {
+                ask_id: ask_id.clone(),
+                partial: String::new(),
+            }),
+            retryable_id: None,
+        };
+        (ask_id, ask_question, view)
+    };
+    let _ = app.emit(
+        "asks-changed",
+        AsksChanged {
+            meeting_id: id.clone(),
+        },
+    );
+    let app = app.clone();
+    thread::spawn(move || {
+        let outcome = (|| -> Result<ask::AskOutcome, String> {
+            let mut history = ask::read_asks(&dir).map_err(|error| error.to_string())?;
+            history.asks.retain(|entry| entry.id != ask_id);
+            let request = ask::build_ask(
+                &transcript,
+                &history,
+                &ask_question,
+                &AskOptions::for_provider(kind),
+            );
+            Ok(ask::run_ask(
+                &provider,
+                &request,
+                &transcript,
+                &mut |text| {
+                    if let Ok(mut jobs) = app.state::<AiJobs>().lock() {
+                        if let Some(active) = jobs.asks.get_mut(&id) {
+                            active.partial = text.to_owned();
+                        }
+                    }
+                    let _ = app.emit(
+                        "ask-delta",
+                        AskDelta {
+                            meeting_id: id.clone(),
+                            ask_id: ask_id.clone(),
+                            text: text.to_owned(),
+                        },
+                    );
+                },
+                &cancel,
+            ))
+        })();
+        if let Ok(mut history) = ask::read_asks(&dir) {
+            history.finish(
+                &ask_id,
+                outcome.unwrap_or_else(|error| ask::AskOutcome {
+                    state: ask::AnswerState::Failed,
+                    answer: String::new(),
+                    citations: Vec::new(),
+                    invalid_citations: Vec::new(),
+                    error: Some(error),
+                }),
+            );
+            let _ = ask::write_asks(&dir, &history);
+        }
+        if let Ok(mut jobs) = app.state::<AiJobs>().lock() {
+            jobs.asks.remove(&id);
+        }
+        let _ = app.emit("asks-changed", AsksChanged { meeting_id: id });
+    });
+    Ok(view)
+}
+#[tauri::command]
+fn ask_meeting(
+    app: AppHandle,
+    meeting_id: String,
+    question: String,
+    consent: bool,
+) -> Result<AskView, String> {
+    begin_ask(&app, meeting_id, Some(question), consent)
+}
+#[tauri::command]
+fn retry_ask(app: AppHandle, meeting_id: String, consent: bool) -> Result<AskView, String> {
+    begin_ask(&app, meeting_id, None, consent)
+}
+#[tauri::command]
+fn stop_ask(app: AppHandle, meeting_id: String) -> Result<(), String> {
+    let state = app.state::<AiJobs>();
+    let jobs = state.lock().map_err(|error| error.to_string())?;
+    if let Some(active) = jobs.asks.get(&meeting_id) {
+        active.cancel.store(true, Ordering::SeqCst);
+    }
+    Ok(())
+}
+
 fn processing_worker(app: AppHandle) {
     thread::spawn(move || loop {
         thread::sleep(Duration::from_millis(100));
@@ -619,7 +1121,23 @@ fn processing_worker(app: AppHandle) {
         }
         let _ = publish_processing(&app);
         if success {
+            let library_state = app.state::<LibraryState>();
+            if let Ok(mut library) = library_state.lock() {
+                if let Ok(library) = library.as_mut() {
+                    let _ = library.refresh_transcript(&id);
+                }
+            }
             let _ = app.emit("library-changed", ());
+            let settings = Settings::load(&app.state::<SettingsPath>().0);
+            if !app.state::<Quitting>().0.load(Ordering::SeqCst)
+                && settings.ai.provider == Some(ProviderKind::Ollama)
+            {
+                if let Ok(provider) = configured_ai(&app) {
+                    if provider.kind() == ProviderKind::Ollama {
+                        let _ = start_summary(&app, id.clone(), provider);
+                    }
+                }
+            }
         }
     });
 }
@@ -652,6 +1170,45 @@ fn rescan_library(state: State<'_, LibraryState>) -> Result<ScanReport, String> 
         .map_err(|error| error.clone())?
         .rescan()
         .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn search_library(state: State<'_, LibraryState>, query: String) -> Result<Vec<SearchHit>, String> {
+    let guard = state.lock().map_err(|error| error.to_string())?;
+    guard
+        .as_ref()
+        .map_err(Clone::clone)?
+        .search(&query)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn delete_meeting(app: AppHandle, meeting_id: String) -> Result<(), String> {
+    if let Err(error) = meeting_busy(&app, &meeting_id) {
+        let recorder = lock_recorder(&app)?;
+        if recorder.status().meeting_id.as_deref() == Some(meeting_id.as_str()) {
+            return Err("Stop the Recording before deleting this Meeting".into());
+        }
+        return Err(error);
+    }
+    {
+        let library_state = app.state::<LibraryState>();
+        let mut library = library_state.lock().map_err(|error| error.to_string())?;
+        library
+            .as_mut()
+            .map_err(|error| error.clone())?
+            .delete_meeting(
+                &meeting_id,
+                &meeting_minutes_core::recycle_bin::move_to_recycle_bin,
+            )
+            .map_err(|error| error.to_string())?;
+    }
+    lock_recorder(&app)?.dismiss_continue(&meeting_id);
+    lock_processor(&app)?.dismiss(&meeting_id);
+    let _ = app.emit("library-changed", ());
+    let _ = publish(&app);
+    let _ = publish_processing(&app);
+    Ok(())
 }
 
 #[tauri::command]
@@ -911,6 +1468,14 @@ fn toggle_pause(app: &AppHandle) {
 fn quit(app: &AppHandle) {
     app.state::<Quitting>().0.store(true, Ordering::SeqCst);
     app.state::<ImportCancel>().0.store(true, Ordering::SeqCst);
+    if let Ok(jobs) = app.state::<AiJobs>().lock() {
+        for job in jobs.summaries.values() {
+            job.cancel.store(true, Ordering::SeqCst);
+        }
+        for ask in jobs.asks.values() {
+            ask.cancel.store(true, Ordering::SeqCst);
+        }
+    }
     if let Ok(status) = publish_processing(app) {
         for job in status.jobs {
             if let Ok(mut processor) = lock_processor(app) {
@@ -930,6 +1495,12 @@ fn quit(app: &AppHandle) {
                 .state::<ImportQueue>()
                 .lock()
                 .is_ok_and(|state| state.running)
+            || app.state::<AiJobs>().lock().is_ok_and(|jobs| {
+                jobs.summaries
+                    .values()
+                    .any(|job| matches!(job.state, SummaryJobState::Running))
+                    || !jobs.asks.is_empty()
+            })
         {
             thread::sleep(Duration::from_millis(100));
         }
@@ -1044,6 +1615,7 @@ fn main() {
             #[cfg(not(windows))]
             app.manage(Secrets(Box::new(ai::MemorySecretStore::default())));
             app.manage(Http(Arc::new(UreqClient)));
+            app.manage(Mutex::new(AiJobsInner::default()));
             app.manage(ModelsDir(app.path().app_data_dir()?.join("models")));
             app.manage(Quitting(AtomicBool::new(false)));
             app.manage(Mutex::new(Processor::new()));
@@ -1151,8 +1723,10 @@ fn main() {
             dismiss_import_errors,
             list_meetings,
             rescan_library,
+            search_library,
             meeting_detail,
             rename_meeting,
+            delete_meeting,
             recording_status,
             start_recording,
             pause_recording,
@@ -1176,7 +1750,18 @@ fn main() {
             save_api_key,
             delete_api_key,
             update_ai_settings,
-            test_ai_provider
+            test_ai_provider,
+            meeting_summary,
+            summary_status,
+            summary_send_plan,
+            generate_summary,
+            cancel_summary,
+            dismiss_summary,
+            meeting_asks,
+            ask_send_plan,
+            ask_meeting,
+            retry_ask,
+            stop_ask
         ])
         .run(tauri::generate_context!())
         .expect("error while running Meeting Minutes");

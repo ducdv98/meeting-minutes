@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { meetingDetail, renameMeeting, type MeetingDetail } from "./library";
+import { deleteMeeting, meetingDetail, renameMeeting, type MeetingDetail, type SearchHit } from "./library";
 import Player, { PlayerContext, type PlayerHandle } from "./Player";
 import type { TimelinePlayer } from "./timeline";
 import { formatElapsed } from "./recording";
@@ -9,12 +9,19 @@ import TranscriptView from "./TranscriptView";
 import { editSegment } from "./transcript";
 import { aiStatus, type AiStatus } from "./ai";
 import AiSetupGuidance from "./AiSetupGuidance";
+import ConfirmDelete from "./ConfirmDelete";
+import SummaryPanel from "./SummaryPanel";
+import AskPanel from "./AskPanel";
 
 interface Props {
   id: string;
   onBack(): void;
   onRenamed(newId: string): void;
   onOpenSettings(): void;
+  openAt?: Pick<SearchHit, "segment_id" | "revision" | "start_ms" | "end_ms"> | null;
+  onOpened?(): void;
+  onDeleted?(): void;
+  recordingMeetingId?: string | null;
 }
 
 function languageName(code: string | null): string {
@@ -23,13 +30,16 @@ function languageName(code: string | null): string {
   return code ?? "Not set";
 }
 
-export default function MeetingView({ id, onBack, onRenamed, onOpenSettings }: Props) {
+export default function MeetingView({ id, onBack, onRenamed, onOpenSettings, openAt, onOpened, onDeleted, recordingMeetingId }: Props) {
   const [providerStatus, setProviderStatus] = useState<AiStatus | null>(null);
   const [detail, setDetail] = useState<MeetingDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [staleSearchResult, setStaleSearchResult] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [title, setTitle] = useState("");
   const [saving, setSaving] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleteBusy, setDeleteBusy] = useState(false);
   const [audioOpen, setAudioOpen] = useState(true);
   const [player, setPlayer] = useState<TimelinePlayer | null>(null);
   const [positionMs, setPositionMs] = useState(0);
@@ -38,13 +48,16 @@ export default function MeetingView({ id, onBack, onRenamed, onOpenSettings }: P
   const [job, setJob] = useState<ProcessingJob | null>(null);
   const processingEventSeen = useRef(false);
   const playerHandle = useRef<PlayerHandle>(null);
+  const opened = useRef<string | null>(null);
   const onPlayerChange = useCallback((next: TimelinePlayer | null) => setPlayer(next), []);
   const onPosition = useCallback((ms: number) => setPositionMs(ms), []);
 
   useEffect(() => {
     let active = true;
     processingEventSeen.current = false;
+    opened.current = null;
     setError(null);
+    setStaleSearchResult(false);
     setPositionMs(0);
     meetingDetail(id).then(
       (next) => { if (active) { setDetail(next); setAudioOpen(true); } },
@@ -55,6 +68,24 @@ export default function MeetingView({ id, onBack, onRenamed, onOpenSettings }: P
     aiStatus().then((next) => { if (active) setProviderStatus(next); }, (reason) => { if (active) setError(String(reason)); });
     return () => { active = false; };
   }, [id]);
+
+  useEffect(() => {
+    if (!openAt || !transcript) return;
+    const key = `${id}:${openAt.revision}:${openAt.segment_id}:${openAt.start_ms}:${openAt.end_ms}`;
+    if (opened.current === key) return;
+    if (transcript.revision !== openAt.revision || !transcript.segments.some((segment) => segment.id === openAt.segment_id)) {
+      opened.current = key;
+      setStaleSearchResult(true);
+      onOpened?.();
+      return;
+    }
+    if (!player) return;
+    opened.current = key;
+    setStaleSearchResult(false);
+    setPositionMs(openAt.start_ms);
+    player.playSpan(openAt.start_ms, openAt.end_ms);
+    onOpened?.();
+  }, [id, openAt, player, transcript, onOpened]);
 
   useEffect(() => {
     let active = true;
@@ -118,11 +149,29 @@ export default function MeetingView({ id, onBack, onRenamed, onOpenSettings }: P
     }
   }
 
+  async function confirmDelete() {
+    if (!detail || deleteBusy) return;
+    setDeleteBusy(true);
+    setError(null);
+    playerHandle.current?.release();
+    setAudioOpen(false);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    try {
+      await deleteMeeting(detail.id);
+      setConfirmingDelete(false);
+      onDeleted?.();
+    } catch (reason) {
+      setError(String(reason));
+      setAudioOpen(true);
+    } finally { setDeleteBusy(false); }
+  }
+
   return (
     <PlayerContext.Provider value={player}>
       <section className="meeting-view">
         <button type="button" disabled={saving} onClick={onBack}>Back to Library</button>
         {error && <p role="alert">{error}</p>}
+        {staleSearchResult && <p>This search result is from an older transcript revision.</p>}
         {detail && (
           <>
             {renaming ? (
@@ -140,8 +189,10 @@ export default function MeetingView({ id, onBack, onRenamed, onOpenSettings }: P
               <>
                 <h1>{detail.title}</h1>
                 <button type="button" onClick={() => { setTitle(detail.title); setError(null); setRenaming(true); }}>Rename</button>
+                <button type="button" disabled={recordingMeetingId === id || (!!job && job.stage !== "failed")} onClick={() => { setError(null); setConfirmingDelete(true); }}>Delete</button>
               </>
             )}
+            {confirmingDelete && <ConfirmDelete title={detail.title} busy={deleteBusy} onConfirm={() => void confirmDelete()} onCancel={() => setConfirmingDelete(false)} />}
             <p><time dateTime={detail.started_at}>{detail.started_at.slice(0, 16).replace("T", " ")}</time></p>
             {detail.imported && <p>Imported audio</p>}
             <p>Duration: {formatElapsed(detail.duration_ms)}</p>
@@ -173,7 +224,11 @@ export default function MeetingView({ id, onBack, onRenamed, onOpenSettings }: P
                 {transcript && <TranscriptView key={`${id}:${transcript.revision}`} transcript={transcript} positionMs={positionMs} player={player}
                   editable={!job || job.stage === "failed"} onEdit={saveSegment} />}
               </section>
-              {providerStatus?.configured === false && <AiSetupGuidance onOpenSettings={onOpenSettings} />}
+              {providerStatus && <>
+                <SummaryPanel meetingId={id} transcript={transcript} player={player} aiStatus={providerStatus} />
+                <AskPanel meetingId={id} transcript={transcript} player={player} aiStatus={providerStatus} />
+                {!providerStatus.configured && <AiSetupGuidance onOpenSettings={onOpenSettings} />}
+              </>}
             </div>
           </>
         )}

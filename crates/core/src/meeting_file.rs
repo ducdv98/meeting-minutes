@@ -14,6 +14,18 @@ pub struct MeetingSummary {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SearchHit {
+    pub meeting_id: String,
+    pub revision: u32,
+    pub title: String,
+    pub started_at: String,
+    pub segment_id: String,
+    pub start_ms: u64,
+    pub end_ms: u64,
+    pub snippet: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct MeetingDetail {
     pub id: String,
     pub title: String,

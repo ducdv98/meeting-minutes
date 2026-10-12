@@ -7,6 +7,17 @@ export interface MeetingSummary {
   duration_ms: number;
 }
 
+export interface SearchHit {
+  meeting_id: string;
+  revision: number;
+  title: string;
+  started_at: string;
+  segment_id: string;
+  start_ms: number;
+  end_ms: number;
+  snippet: string;
+}
+
 export type Marker =
   | { kind: "pause"; at_ms: number; paused_ms: number }
   | { kind: "gap"; at_ms: number }
@@ -43,4 +54,23 @@ export function meetingDetail(id: string): Promise<MeetingDetail> {
 
 export function renameMeeting(id: string, title: string): Promise<MeetingSummary> {
   return invoke<MeetingSummary>("rename_meeting", { meetingId: id, title });
+}
+
+export function searchLibrary(query: string): Promise<SearchHit[]> {
+  return invoke<SearchHit[]>("search_library", { query });
+}
+
+export function deleteMeeting(id: string): Promise<void> {
+  return invoke<void>("delete_meeting", { meetingId: id });
+}
+
+export function snippetParts(snippet: string): { text: string; match: boolean }[] {
+  const parts: { text: string; match: boolean }[] = [];
+  let matching = false;
+  for (const text of snippet.split(/(\u0002|\u0003)/)) {
+    if (text === "\u0002") matching = true;
+    else if (text === "\u0003") matching = false;
+    else if (text) parts.push({ text, match: matching });
+  }
+  return parts;
 }

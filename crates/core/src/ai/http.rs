@@ -1,5 +1,7 @@
 use super::{AiError, ApiKey, GenerateRequest, ProviderKind, TextProvider};
 use serde_json::{json, Value};
+pub const OLLAMA_CONTEXT_TOKENS: u32 = 8192;
+
 use std::{
     io::{BufRead, BufReader, Read},
     sync::{
@@ -252,7 +254,7 @@ impl TextProvider for HttpProvider {
             ProviderKind::Ollama => {
                 let mut messages = vec![json!({"role":"system", "content":request.system})];
                 messages.extend(request.messages.iter().map(|message| json!(message)));
-                let mut body = json!({"model":self.model,"messages":messages,"stream":true,"options":{"num_predict":request.max_tokens}});
+                let mut body = json!({"model":self.model,"messages":messages,"stream":true,"options":{"num_predict":request.max_tokens,"num_ctx":OLLAMA_CONTEXT_TOKENS}});
                 if let Some(schema) = &request.schema {
                     body["format"] = schema.schema.clone();
                 }

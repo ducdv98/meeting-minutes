@@ -2,19 +2,21 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import App from "./App";
 import { pickAudioFiles, importStatus, dismissImportErrors, onImportStatus, onImportHover } from "./importing";
-import { rescanLibrary } from "./library";
+import { deleteMeeting, rescanLibrary, searchLibrary } from "./library";
 import { cancelProcessing, onProcessingStatus, processingStatus, type ProcessingStatus } from "./processing";
+import { onRecordingStatus, recordingStatus } from "./recording";
 
 vi.mock("./importing", () => ({ pickAudioFiles: vi.fn(), importStatus: vi.fn(), dismissImportErrors: vi.fn(), onImportStatus: vi.fn(), onImportHover: vi.fn() }));
-vi.mock("./library", () => ({ rescanLibrary: vi.fn() }));
+vi.mock("./library", async (original) => ({ ...(await original<typeof import("./library")>()), rescanLibrary: vi.fn(), searchLibrary: vi.fn(), deleteMeeting: vi.fn() }));
 vi.mock("./RecordingBar", () => ({ default: () => null }));
 vi.mock("./processing", async (importOriginal) => ({ ...(await importOriginal<typeof import("./processing")>()), processingStatus: vi.fn(), onProcessingStatus: vi.fn(), cancelProcessing: vi.fn() }));
-vi.mock("./MeetingView", () => ({ default: ({ id, onBack }: { id: string; onBack: () => void }) => (
-  <section><h1>Meeting {id}</h1><button type="button" onClick={onBack}>Back to Library</button></section>
+vi.mock("./MeetingView", () => ({ default: ({ id, openAt, onBack }: { id: string; openAt?: { segment_id: string }; onBack: () => void }) => (
+  <section><h1>Meeting {id}</h1>{openAt && <p>Segment {openAt.segment_id}</p>}<button type="button" onClick={onBack}>Back to Library</button></section>
 ) }));
 vi.mock("./recording", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./recording")>()),
   onLibraryChanged: () => Promise.resolve(() => {}),
+  onRecordingStatus: vi.fn(), recordingStatus: vi.fn(),
 }));
 
 beforeEach(() => {
@@ -26,6 +28,46 @@ beforeEach(() => {
   vi.mocked(processingStatus).mockResolvedValue({ jobs: [] });
   vi.mocked(onProcessingStatus).mockResolvedValue(() => {});
   vi.mocked(cancelProcessing).mockResolvedValue({ jobs: [] });
+  vi.mocked(recordingStatus).mockResolvedValue({ phase: "idle", meeting_id: null, elapsed_ms: 0, notice_acknowledged: true, saves: [], continue_offers: [], device_switches: [] });
+  vi.mocked(onRecordingStatus).mockResolvedValue(() => {});
+  vi.mocked(searchLibrary).mockResolvedValue([]);
+  vi.mocked(deleteMeeting).mockResolvedValue();
+});
+
+it("opens a Meeting from a search result at its Segment", async () => {
+  vi.mocked(rescanLibrary).mockResolvedValue({ meetings: [], malformed: [] });
+  vi.mocked(searchLibrary).mockResolvedValue([{ meeting_id: "one", title: "Planning", started_at: "2026-10-12T09:00:00Z", segment_id: "s00001", revision: 1, start_ms: 1000, end_ms: 2000, snippet: "budget" }]);
+  render(<App />);
+  const input = screen.getByRole("searchbox", { name: "Search transcripts" });
+  fireEvent.change(input, { target: { value: "budget" } });
+  fireEvent.keyDown(input, { key: "Enter" });
+  fireEvent.click(await screen.findByRole("button", { name: /Planning/ }));
+  expect(screen.getByRole("heading", { name: "Meeting one" })).toBeTruthy();
+  expect(screen.getByText("Segment s00001")).toBeTruthy();
+});
+
+it("confirms list deletion, allows Cancel, and shows backend errors", async () => {
+  vi.mocked(rescanLibrary).mockResolvedValue({ meetings: [{ id: "one", title: "Planning", started_at: "2026-10-12T09:00:00Z", duration_ms: 0 }], malformed: [] });
+  render(<App />);
+  fireEvent.click(await screen.findByRole("button", { name: "Delete Planning" }));
+  expect(screen.getByRole("dialog", { name: "Delete Planning?" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(deleteMeeting).not.toHaveBeenCalled();
+  vi.mocked(deleteMeeting).mockRejectedValueOnce("Folder is busy").mockResolvedValueOnce();
+  fireEvent.click(screen.getByRole("button", { name: "Delete Planning" }));
+  fireEvent.click(screen.getByRole("dialog").querySelector("button")!);
+  expect((await screen.findByRole("alert")).textContent).toContain("Folder is busy");
+  fireEvent.click(screen.getByRole("dialog").querySelector("button")!);
+  await waitFor(() => expect(deleteMeeting).toHaveBeenCalledTimes(2));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+});
+
+it("disables Delete for the Meeting being recorded", async () => {
+  vi.mocked(rescanLibrary).mockResolvedValue({ meetings: [{ id: "one", title: "Planning", started_at: "2026-10-12T09:00:00Z", duration_ms: 0 }], malformed: [] });
+  vi.mocked(recordingStatus).mockResolvedValue({ phase: "recording", meeting_id: "one", elapsed_ms: 1000, notice_acknowledged: true, saves: [], continue_offers: [], device_switches: [] });
+  render(<App />);
+  const button = await screen.findByRole("button", { name: "Delete Planning" });
+  await waitFor(() => expect((button as HTMLButtonElement).disabled).toBe(true));
 });
 afterEach(() => {
   cleanup();

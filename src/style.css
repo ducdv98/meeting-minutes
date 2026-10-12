@@ -87,6 +87,11 @@ header { display: flex; align-items: center; justify-content: space-between; }
 .transcript-section { margin-top: 1.5rem; }
 .meeting-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 1.5rem; align-items: start; }
 .meeting-body .transcript-section { margin-top: 0; min-width: 0; }
+.meeting-body > section { min-width: 0; }
+.summary-panel li, .ask-panel li { margin-bottom: 0.6rem; overflow-wrap: anywhere; }
+.summary-panel li button, .ask-panel li button { margin-left: 0.25rem; }
+.ask-panel textarea { display: block; width: 100%; min-height: 5rem; box-sizing: border-box; margin-bottom: 0.5rem; }
+.ask-panel ol { max-height: 28rem; overflow-y: auto; padding-left: 1.5rem; }
 .segments { list-style: none; padding: 0; margin: 1rem 0; max-height: 28rem; overflow-y: auto; }
 .segments li { display: flex; align-items: start; gap: 0.5rem; padding: 0.45rem; border-bottom: 1px solid #d7dce3; }
 .segments li.current { background: #e9f2fb; }

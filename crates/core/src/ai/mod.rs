@@ -9,9 +9,18 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize, Serializer};
 use serde_json::Value;
 
 mod http;
+pub use http::OLLAMA_CONTEXT_TOKENS;
 pub use http::{
     list_models, HttpClient, HttpProvider, HttpRequest, HttpResponse, Method, UreqClient,
 };
+
+pub fn context_tokens(kind: ProviderKind) -> usize {
+    match kind {
+        ProviderKind::Ollama => OLLAMA_CONTEXT_TOKENS as usize,
+        ProviderKind::Openai => 128_000,
+        ProviderKind::Anthropic => 200_000,
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

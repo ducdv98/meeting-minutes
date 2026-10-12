@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
 import { dismissImportErrors, importStatus, onImportHover, onImportStatus, pickAudioFiles, type ImportStatus } from "./importing";
 import wordmark from "./assets/wordmark-dark.png";
-import { rescanLibrary, type MalformedFolder, type MeetingSummary } from "./library";
+import { deleteMeeting, rescanLibrary, type MalformedFolder, type MeetingSummary, type SearchHit } from "./library";
 import MeetingView from "./MeetingView";
+import LibrarySearch from "./LibrarySearch";
+import ConfirmDelete from "./ConfirmDelete";
 import RecordingBar from "./RecordingBar";
 import SettingsView from "./SettingsView";
-import { formatElapsed, onLibraryChanged } from "./recording";
+import { formatElapsed, onLibraryChanged, onRecordingStatus, recordingStatus, type RecorderStatus } from "./recording";
 import { cancelProcessing, onProcessingStatus, processingStageLabel, processingStatus, type ProcessingJob } from "./processing";
 
 export default function App() {
@@ -14,10 +16,23 @@ export default function App() {
   const [failed, setFailed] = useState(false);
   const [scan, setScan] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [openAt, setOpenAt] = useState<Pick<SearchHit, "segment_id" | "revision" | "start_ms" | "end_ms"> | null>(null);
+  const [deleting, setDeleting] = useState<MeetingSummary | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [jobs, setJobs] = useState<ProcessingJob[]>([]);
+  const [recorder, setRecorder] = useState<RecorderStatus | null>(null);
   const [imports, setImports] = useState<ImportStatus>({ current: null, queued: 0, errors: [] });
   const [importHover, setImportHover] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    let eventArrived = false;
+    recordingStatus().then((status) => { if (active && !eventArrived) setRecorder(status); }, () => {});
+    const listener = onRecordingStatus((status) => { if (active) { eventArrived = true; setRecorder(status); } });
+    return () => { active = false; void listener.then((stop) => stop(), () => {}); };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -53,6 +68,18 @@ export default function App() {
     setJobs(status.jobs);
   }
 
+  async function confirmDelete() {
+    if (!deleting || deleteBusy) return;
+    setDeleteBusy(true);
+    setDeleteError(null);
+    try {
+      await deleteMeeting(deleting.id);
+      setDeleting(null);
+      setScan((value) => value + 1);
+    } catch (reason) { setDeleteError(String(reason)); }
+    finally { setDeleteBusy(false); }
+  }
+
   useEffect(() => {
     let active = true;
     setFailed(false);
@@ -85,8 +112,11 @@ export default function App() {
       </header>
       <RecordingBar />
       {showSettings ? <SettingsView onBack={() => setShowSettings(false)} /> : selectedId ? (
-        <MeetingView id={selectedId} onRenamed={setSelectedId} onOpenSettings={() => setShowSettings(true)} onBack={() => {
+        <MeetingView id={selectedId} recordingMeetingId={recorder?.phase !== "idle" ? recorder?.meeting_id : null} openAt={openAt} onOpened={() => setOpenAt(null)} onDeleted={() => {
+          setSelectedId(null); setOpenAt(null); setScan((value) => value + 1);
+        }} onRenamed={setSelectedId} onOpenSettings={() => setShowSettings(true)} onBack={() => {
           setSelectedId(null);
+          setOpenAt(null);
           setScan((value) => value + 1);
         }} />
       ) : (
@@ -94,6 +124,9 @@ export default function App() {
           <h1>Library</h1>
           <button type="button" onClick={() => void pickFiles()}>Import audio</button>
           <button type="button" onClick={() => setScan((value) => value + 1)}>Rescan</button>
+          <LibrarySearch onOpen={(hit) => { setSelectedId(hit.meeting_id); setOpenAt({ segment_id: hit.segment_id, revision: hit.revision, start_ms: hit.start_ms, end_ms: hit.end_ms }); }} />
+          {deleteError && <p role="alert">{deleteError}</p>}
+          {deleting && <ConfirmDelete title={deleting.title} busy={deleteBusy} onConfirm={() => void confirmDelete()} onCancel={() => setDeleting(null)} />}
           {imports.current && <p role="status">Importing {imports.current}…{imports.queued > 0 ? ` (+${imports.queued} queued)` : ""}</p>}
           {imports.errors.length > 0 && <div role="alert"><ul>{imports.errors.map((error, index) => <li key={`${index}:${error}`}>{error}</li>)}</ul><button type="button" onClick={() => void dismissErrors()}>Dismiss import errors</button></div>}
           {failed && <p role="alert">Could not load the Library</p>}
@@ -114,6 +147,7 @@ export default function App() {
                   {meeting.duration_ms > 0 && <> · {formatElapsed(meeting.duration_ms)}</>}
                   {job && <> · <span>{processingStageLabel(job)}</span></>}
                   {job && job.stage !== "failed" && <> <button type="button" aria-label="Cancel processing" onClick={() => void cancelJob(meeting.id)}>Cancel</button></>}
+                  {" "}<button type="button" aria-label={`Delete ${meeting.title}`} disabled={recorder?.phase !== "idle" && recorder?.meeting_id === meeting.id} onClick={() => { setDeleteError(null); setDeleting(meeting); }}>Delete</button>
                 </li>;
               })}
             </ul>
