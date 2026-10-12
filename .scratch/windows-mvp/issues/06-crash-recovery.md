@@ -1,6 +1,6 @@
 # Crash recovery and multi-Recording Meetings
 
-Status: ready-for-human
+Status: resolved
 Blocked by: 05
 Spec: ../spec.md
 
@@ -10,8 +10,8 @@ On startup, find orphan Chunks from an interrupted Recording and recover them in
 
 ## Acceptance criteria
 
-- [ ] Killing the app mid-recording loses at most the Chunk in progress; on relaunch the Meeting is recovered and playable.
-- [ ] Continue adds Recording 2 to the same Meeting; the Timeline and mixed MP3 cover both with a gap Marker.
+- [x] Killing the app mid-recording loses at most the Chunk in progress; on relaunch the Meeting is recovered and playable.
+- [x] Continue adds Recording 2 to the same Meeting; the Timeline and mixed MP3 cover both with a gap Marker.
 - [x] Unit tests: Timeline maths across Recordings, pauses and gaps; recovery from truncated Chunks.
 
 ## Comments
@@ -41,3 +41,7 @@ Code is done and tested on Linux, and the Windows build passes `cargo clippy --t
   2. Relaunch. The Meeting should be recovered and play.
   3. Press Continue meeting, record a bit, then Stop.
   4. `meeting.json` should list 2 Recordings and a `gap` Marker, and `meeting.mp3` should cover both.
+
+### 2026-10-12 — laptop check passed; resolved
+
+The user ran the kill test on the laptop and it worked as expected: the Meeting was recovered and played, and Continue added a second Recording to it.
