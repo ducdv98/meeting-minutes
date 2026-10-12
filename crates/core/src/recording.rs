@@ -5,6 +5,7 @@ use crate::capture::{
 use crate::{
     library::LibraryError,
     meeting_file::{MeetingFile, RecordingEntry, RecordingFile, SourceFile},
+    timeline::place_recording,
 };
 use flacenc::error::Verify;
 use flacenc::{
@@ -32,6 +33,7 @@ const MAX_PACKETS_PER_TICK: usize = 64;
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Marker {
     Pause { at_ms: u64, paused_ms: u64 },
+    Gap { at_ms: u64 },
 }
 
 pub struct RecordingClock {
@@ -400,45 +402,100 @@ pub fn finalize_recording(
     number: u32,
 ) -> Result<FinalizedRecording, LibraryError> {
     let chunk_dir = meeting_dir.join(format!(".chunks/recording-{number}"));
-    let manifest: RecordingManifest =
-        serde_json::from_slice(&fs::read(chunk_dir.join("recording.json"))?)?;
-    if manifest.number != number {
-        return Err(LibraryError::Encode("Recording number mismatch".into()));
-    }
     let mut meeting: MeetingFile =
         serde_json::from_slice(&fs::read(meeting_dir.join("meeting.json"))?)?;
     if meeting.schema_version != 1 {
         return Err(LibraryError::Encode("Unsupported Meeting schema".into()));
     }
-    if meeting
-        .recordings
-        .iter()
-        .any(|entry| matches!(entry, RecordingEntry::Known(r) if r.number == number))
-    {
-        return Err(LibraryError::Encode("Recording already finalised".into()));
+    if let Some(recording) = meeting.recordings.iter().find_map(|entry| match entry {
+        RecordingEntry::Known(r) if r.number == number => Some(r),
+        _ => None,
+    }) {
+        let _ = fs::remove_dir_all(chunk_dir);
+        return Ok(FinalizedRecording {
+            number,
+            duration_ms: recording.duration_ms,
+            timeline_start_ms: recording.timeline_start_ms,
+        });
     }
+    for previous in 1..number {
+        if !meeting
+            .recordings
+            .iter()
+            .any(|entry| matches!(entry, RecordingEntry::Known(r) if r.number == previous))
+        {
+            return Err(LibraryError::Encode(format!(
+                "Recording {previous} is not saved yet"
+            )));
+        }
+    }
+    let manifest: RecordingManifest =
+        serde_json::from_slice(&fs::read(chunk_dir.join("recording.json"))?)?;
+    if manifest.number != number {
+        return Err(LibraryError::Encode("Recording number mismatch".into()));
+    }
+    salvage_chunks(&chunk_dir)?;
     let mic = ChunkSet::new(&chunk_dir, Source::Microphone)?;
     let system = ChunkSet::new(&chunk_dir, Source::SystemAudio)?;
     let frames = mic.frames.max(system.frames);
     let duration_ms = frames.saturating_mul(1000) / SAMPLE_RATE as u64;
-    let timeline_start_ms = meeting
+    let earlier: Vec<u64> = meeting
         .recordings
         .iter()
         .filter_map(|entry| match entry {
             RecordingEntry::Known(r) => Some(r.duration_ms),
             _ => None,
         })
-        .sum();
+        .collect();
+    let placement = place_recording(&earlier, duration_ms, &manifest.markers);
+    let timeline_start_ms = placement.timeline_start_ms;
     let mic_name = format!("recording-{number} microphone.flac");
     let system_name = format!("recording-{number} system.flac");
+    let journal_path = chunk_dir.join("finalizing");
+    if journal_path.exists() {
+        for name in fs::read_to_string(&journal_path)?.lines() {
+            if Path::new(name).file_name().is_some_and(|file| file == name) {
+                match fs::remove_file(meeting_dir.join(name)) {
+                    Ok(()) => {}
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(error.into()),
+                }
+            }
+        }
+    }
+    let mut journal = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(&journal_path)?;
+    journal.sync_all()?;
     let mut created = Vec::new();
     let result = (|| -> Result<(), LibraryError> {
-        let mic_file = create_final(meeting_dir, &mic_name, &mut created)?;
+        let mic_file = create_final(meeting_dir, &mic_name, &mut journal, &mut created)?;
         encode_flac(mic_file, &mic, frames)?;
-        let system_file = create_final(meeting_dir, &system_name, &mut created)?;
+        let system_file = create_final(meeting_dir, &system_name, &mut journal, &mut created)?;
         encode_flac(system_file, &system, frames)?;
-        let mp3_file = create_final(meeting_dir, "meeting.mp3", &mut created)?;
-        encode_mp3(mp3_file, &mic, &system, frames)?;
+        let audio_name = meeting
+            .audio
+            .clone()
+            .unwrap_or_else(|| "meeting.mp3".into());
+        let mp3_name = if meeting.audio.is_some() {
+            format!("{audio_name}.tmp")
+        } else {
+            audio_name.clone()
+        };
+        let mp3_file = create_final(meeting_dir, &mp3_name, &mut journal, &mut created)?;
+        encode_mp3(
+            mp3_file,
+            meeting_dir,
+            &meeting.recordings,
+            &mic,
+            &system,
+            frames,
+        )?;
+        if meeting.audio.is_some() {
+            fs::rename(meeting_dir.join(&mp3_name), meeting_dir.join(&audio_name))?;
+        }
         meeting
             .recordings
             .push(RecordingEntry::Known(RecordingFile {
@@ -459,31 +516,29 @@ pub fn finalize_recording(
                     },
                 ],
             }));
-        meeting
-            .markers
-            .extend(manifest.markers.into_iter().map(|marker| match marker {
-                Marker::Pause { at_ms, paused_ms } => Marker::Pause {
-                    at_ms: at_ms + timeline_start_ms,
-                    paused_ms,
-                },
-            }));
+        meeting.markers.extend(placement.markers);
         meeting.duration_ms = timeline_start_ms + duration_ms;
-        meeting.audio = Some("meeting.mp3".into());
-        let temp = meeting_dir.join("meeting.json.tmp");
-        let mut file = File::create(&temp)?;
+        meeting.audio = Some(audio_name);
+        let mut file = create_final(meeting_dir, "meeting.json.tmp", &mut journal, &mut created)?;
         serde_json::to_writer_pretty(&mut file, &meeting)?;
         file.write_all(b"\n")?;
         file.sync_all()?;
-        fs::rename(temp, meeting_dir.join("meeting.json"))?;
+        drop(file);
+        fs::rename(
+            meeting_dir.join("meeting.json.tmp"),
+            meeting_dir.join("meeting.json"),
+        )?;
         Ok(())
     })();
     if let Err(error) = result {
         for path in created {
             let _ = fs::remove_file(path);
         }
-        let _ = fs::remove_file(meeting_dir.join("meeting.json.tmp"));
+        let _ = journal.set_len(0);
+        let _ = journal.sync_all();
         return Err(error);
     }
+    drop(journal);
     let _ = fs::remove_dir_all(chunk_dir);
     Ok(FinalizedRecording {
         number,
@@ -492,14 +547,59 @@ pub fn finalize_recording(
     })
 }
 
-fn create_final(dir: &Path, name: &str, created: &mut Vec<PathBuf>) -> io::Result<File> {
+fn create_final(
+    dir: &Path,
+    name: &str,
+    journal: &mut File,
+    created: &mut Vec<PathBuf>,
+) -> io::Result<File> {
     let path = dir.join(name);
+    journal.write_all(name.as_bytes())?;
+    journal.write_all(b"\n")?;
+    journal.sync_all()?;
     let file = OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(&path)?;
     created.push(path);
     Ok(file)
+}
+
+fn salvage_chunks(dir: &Path) -> io::Result<()> {
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        for source in [Source::Microphone, Source::SystemAudio] {
+            let Some(rest) = name.strip_prefix(&format!("{}-", source.stem())) else {
+                continue;
+            };
+            let part = rest.strip_suffix(".part");
+            let complete = rest.strip_suffix(".f32");
+            if !part
+                .or(complete)
+                .is_some_and(|digits| digits.len() == 6 && digits.parse::<u32>().is_ok())
+            {
+                continue;
+            }
+            let frame_bytes = source.channels() as u64 * 4;
+            let file = OpenOptions::new().write(true).open(entry.path())?;
+            let size = file.metadata()?.len();
+            file.set_len(size - size % frame_bytes)?;
+            drop(file);
+            if part.is_some() {
+                let target = entry.path().with_extension("f32");
+                if target.exists() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::AlreadyExists,
+                        "completed Chunk exists",
+                    ));
+                }
+                fs::rename(entry.path(), target)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 struct ChunkSet {
@@ -646,11 +746,12 @@ fn encode_flac(mut file: File, set: &ChunkSet, frames: u64) -> Result<(), Librar
 
 fn encode_mp3(
     mut file: File,
+    meeting_dir: &Path,
+    earlier: &[RecordingEntry],
     mic: &ChunkSet,
     system: &ChunkSet,
     frames: u64,
 ) -> Result<(), LibraryError> {
-    const BLOCK: usize = 4096;
     let mut encoder = Builder::new()
         .ok_or_else(|| LibraryError::Encode("Could not create MP3 encoder".into()))?
         .with_num_channels(2)
@@ -669,23 +770,57 @@ fn encode_mp3(
         .map_err(|e| LibraryError::Encode(e.to_string()))?;
     let mut mic_reader = mic.reader();
     let mut system_reader = system.reader();
-    let mut offset = 0;
-    let mut output = Vec::with_capacity(mp3lame_encoder::max_required_buffer_size(BLOCK).max(7200));
-    while offset < frames {
-        let count = (frames - offset).min(BLOCK as u64) as usize;
-        let mut samples = Vec::with_capacity(count * 2);
-        for _ in 0..count {
-            let m = mic_reader.sample()?;
-            samples.push(pcm(m + system_reader.sample()?));
-            samples.push(pcm(m + system_reader.sample()?));
-        }
-        output.clear();
-        encoder
-            .encode_to_vec(InterleavedPcm(&samples), &mut output)
+    let mut output = Vec::with_capacity(mp3lame_encoder::max_required_buffer_size(4096).max(7200));
+    for entry in earlier {
+        let RecordingEntry::Known(recording) = entry else {
+            continue;
+        };
+        let source_path = |source| {
+            recording
+                .files
+                .iter()
+                .find(|file| file.source == source)
+                .map(|file| meeting_dir.join(&file.file))
+                .ok_or_else(|| {
+                    LibraryError::Encode(format!(
+                        "Recording {} is missing a Source",
+                        recording.number
+                    ))
+                })
+        };
+        let mut earlier_mic = claxon::FlacReader::open(source_path(Source::Microphone)?)
             .map_err(|e| LibraryError::Encode(e.to_string()))?;
-        file.write_all(&output)?;
-        offset += count as u64;
+        let mut earlier_system = claxon::FlacReader::open(source_path(Source::SystemAudio)?)
+            .map_err(|e| LibraryError::Encode(e.to_string()))?;
+        let mut mic_samples = earlier_mic.samples();
+        let mut system_samples = earlier_system.samples();
+        encode_mp3_frames(
+            &mut encoder,
+            &mut file,
+            &mut output,
+            recording
+                .duration_ms
+                .saturating_mul(SAMPLE_RATE as u64 / 1000),
+            || {
+                let sample =
+                    |value: Option<Result<i32, claxon::Error>>| -> Result<f32, LibraryError> {
+                        value
+                            .transpose()
+                            .map_err(|e| LibraryError::Encode(e.to_string()))
+                            .map(|sample| sample.unwrap_or(0) as f32 / 32767.0)
+                    };
+                let m = sample(mic_samples.next())?;
+                Ok((
+                    m + sample(system_samples.next())?,
+                    m + sample(system_samples.next())?,
+                ))
+            },
+        )?;
     }
+    encode_mp3_frames(&mut encoder, &mut file, &mut output, frames, || {
+        let m = mic_reader.sample()?;
+        Ok((m + system_reader.sample()?, m + system_reader.sample()?))
+    })?;
     output.clear();
     // FlushGap pads and writes the final partial frame; the LAME tag records that padding.
     encoder
@@ -700,5 +835,32 @@ fn encode_mp3(
     file.seek(SeekFrom::Start(0))?;
     file.write_all(&output)?;
     file.sync_all()?;
+    Ok(())
+}
+
+fn encode_mp3_frames(
+    encoder: &mut mp3lame_encoder::Encoder,
+    file: &mut File,
+    output: &mut Vec<u8>,
+    frames: u64,
+    mut next: impl FnMut() -> Result<(f32, f32), LibraryError>,
+) -> Result<(), LibraryError> {
+    const BLOCK: usize = 4096;
+    let mut offset = 0;
+    while offset < frames {
+        let count = (frames - offset).min(BLOCK as u64) as usize;
+        let mut samples = Vec::with_capacity(count * 2);
+        for _ in 0..count {
+            let (left, right) = next()?;
+            samples.push(pcm(left));
+            samples.push(pcm(right));
+        }
+        output.clear();
+        encoder
+            .encode_to_vec(InterleavedPcm(&samples), output)
+            .map_err(|e| LibraryError::Encode(e.to_string()))?;
+        file.write_all(output)?;
+        offset += count as u64;
+    }
     Ok(())
 }

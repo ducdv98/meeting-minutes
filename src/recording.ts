@@ -5,6 +5,8 @@ export interface PendingSave {
   meeting_id: string;
   state: "saving" | "failed";
   error: string | null;
+  /** Recovered from Chunks left by a crash, not from a Stop. */
+  recovered: boolean;
 }
 
 export interface RecorderStatus {
@@ -13,6 +15,8 @@ export interface RecorderStatus {
   elapsed_ms: number;
   notice_acknowledged: boolean;
   saves: PendingSave[];
+  /** Meetings recovered after a crash that can be continued with a new Recording. */
+  continue_offers: string[];
 }
 
 export const recordHotkey = "Ctrl+Alt+Shift+R";
@@ -40,6 +44,14 @@ export function stopRecording(): Promise<RecorderStatus> {
 
 export function retrySave(meetingId: string): Promise<RecorderStatus> {
   return invoke<RecorderStatus>("retry_save", { meetingId });
+}
+
+export function continueMeeting(meetingId: string): Promise<RecorderStatus> {
+  return invoke<RecorderStatus>("continue_meeting", { meetingId });
+}
+
+export function dismissContinue(meetingId: string): Promise<RecorderStatus> {
+  return invoke<RecorderStatus>("dismiss_continue", { meetingId });
 }
 
 export function acknowledgeRecordingNotice(): Promise<RecorderStatus> {

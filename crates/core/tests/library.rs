@@ -1,5 +1,5 @@
 use chrono::{DateTime, FixedOffset};
-use meeting_minutes_core::Library;
+use meeting_minutes_core::{Library, LibraryError, OrphanRecording};
 use tempfile::TempDir;
 
 fn at(value: &str) -> DateTime<FixedOffset> {
@@ -250,4 +250,54 @@ fn corrupt_index_is_recreated_and_can_be_rebuilt() {
     std::fs::write(&index, b"not a database").unwrap();
     let library = Library::open(&root, &index).unwrap();
     assert_eq!(library.list_meetings().unwrap()[0].title, "Planning");
+}
+
+#[test]
+fn orphan_recordings_are_sorted_across_meetings() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().join("Library");
+    let mut library = Library::open(&root, temp.path().join("index.sqlite3")).unwrap();
+    let b = library
+        .create_meeting("B", at("2026-10-12T09:31:00Z"))
+        .unwrap();
+    let a = library
+        .create_meeting("A", at("2026-10-12T09:30:00Z"))
+        .unwrap();
+    for (id, number) in [(&b.id, 2), (&a.id, 10), (&a.id, 1)] {
+        std::fs::create_dir_all(root.join(id).join(format!(".chunks/recording-{number}"))).unwrap();
+    }
+    std::fs::create_dir_all(root.join(&a.id).join(".chunks/recording-nope")).unwrap();
+    std::fs::create_dir_all(root.join(".hidden/.chunks/recording-3")).unwrap();
+    assert_eq!(
+        library.orphan_recordings().unwrap(),
+        vec![
+            OrphanRecording {
+                meeting_id: a.id.clone(),
+                number: 1
+            },
+            OrphanRecording {
+                meeting_id: a.id,
+                number: 10
+            },
+            OrphanRecording {
+                meeting_id: b.id,
+                number: 2
+            },
+        ]
+    );
+}
+
+#[test]
+fn begin_next_recording_refuses_an_unsaved_recording() {
+    let temp = TempDir::new().unwrap();
+    let mut library = Library::open(
+        temp.path().join("Library"),
+        temp.path().join("index.sqlite3"),
+    )
+    .unwrap();
+    let (meeting, _, _) = library.begin_recording(at("2026-10-12T09:30:00Z")).unwrap();
+    assert!(matches!(
+        library.begin_next_recording(&meeting.id, at("2026-10-12T10:00:00Z")),
+        Err(LibraryError::UnsavedRecording)
+    ));
 }

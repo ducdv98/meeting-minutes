@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import {
   acknowledgeRecordingNotice,
+  continueMeeting,
+  dismissContinue,
   formatElapsed,
   onRecordingNoticeRequested,
   onRecordingStatus,
@@ -17,14 +19,15 @@ import {
 
 export default function RecordingBar() {
   const [status, setStatus] = useState<RecorderStatus | null>(null);
-  const [showNotice, setShowNotice] = useState(false);
+  // The action to run once the Recording notice is confirmed; null while the notice is hidden.
+  const [noticeAction, setNoticeAction] = useState<(() => Promise<RecorderStatus>) | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
     const unlisten = [
       onRecordingStatus((next) => { if (active) setStatus(next); }),
-      onRecordingNoticeRequested(() => { if (active) setShowNotice(true); }),
+      onRecordingNoticeRequested(() => { if (active) setNoticeAction(() => startRecording); }),
     ];
     recordingStatus().then(
       (next) => { if (active) setStatus(next); },
@@ -41,19 +44,21 @@ export default function RecordingBar() {
     action().then(setStatus, (reason) => setError(String(reason)));
   }
 
-  function record() {
+  function record(action: () => Promise<RecorderStatus>) {
     if (status && !status.notice_acknowledged) {
-      setShowNotice(true);
+      setNoticeAction(() => action);
       return;
     }
-    run(startRecording);
+    run(action);
   }
 
   function confirmNotice() {
-    setShowNotice(false);
+    const action = noticeAction;
+    setNoticeAction(null);
+    if (!action) return;
     run(async () => {
       await acknowledgeRecordingNotice();
-      return startRecording();
+      return action();
     });
   }
 
@@ -73,7 +78,7 @@ export default function RecordingBar() {
       ) : null}
       <div className="recording-controls">
         {!capturing && (
-          <button type="button" onClick={record} title={recordHotkey}>Record</button>
+          <button type="button" onClick={() => record(startRecording)} title={recordHotkey}>Record</button>
         )}
         {status.phase === "recording" && (
           <button type="button" onClick={() => run(pauseRecording)} title={pauseHotkey}>Pause</button>
@@ -89,7 +94,7 @@ export default function RecordingBar() {
       {status.saves.map((save) => (
         <p key={save.meeting_id} className="pending-save">
           {save.state === "saving" ? (
-            <>Saving {save.meeting_id}…</>
+            <>{save.recovered ? "Recovering" : "Saving"} {save.meeting_id}…</>
           ) : (
             <>
               Could not save {save.meeting_id}: {save.error}. The recorded audio is kept.{" "}
@@ -98,7 +103,14 @@ export default function RecordingBar() {
           )}
         </p>
       ))}
-      {showNotice && (
+      {!capturing && status.continue_offers.map((meetingId) => (
+        <p key={meetingId} className="continue-offer">
+          Recovered {meetingId} after the app closed unexpectedly. Continue it with a new Recording?{" "}
+          <button type="button" onClick={() => record(() => continueMeeting(meetingId))}>Continue meeting</button>
+          <button type="button" onClick={() => run(() => dismissContinue(meetingId))}>Dismiss</button>
+        </p>
+      ))}
+      {noticeAction && (
         <div role="dialog" aria-modal="true" aria-labelledby="recording-notice-title" className="notice">
           <h2 id="recording-notice-title">Before you record</h2>
           <p>
@@ -106,7 +118,7 @@ export default function RecordingBar() {
             While a Recording runs, the window and the tray icon show it.
           </p>
           <button type="button" onClick={confirmNotice}>Start recording</button>
-          <button type="button" onClick={() => setShowNotice(false)}>Cancel</button>
+          <button type="button" onClick={() => setNoticeAction(null)}>Cancel</button>
         </div>
       )}
     </section>

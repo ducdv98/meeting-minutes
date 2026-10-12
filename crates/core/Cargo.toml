@@ -10,6 +10,7 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 serde_json = "1"
 flacenc = { version = "0.5", default-features = false }
 mp3lame-encoder = "0.2"
+claxon = "0.4"
 
 [target.'cfg(windows)'.dependencies]
 wasapi = "0.26"
@@ -17,5 +18,4 @@ windows = { version = "0.62", features = ["Win32_System_Performance"] }
 
 [dev-dependencies]
 tempfile = "3"
-claxon = "0.4"
 minimp3 = "0.5"

@@ -439,3 +439,147 @@ fn mp3_carries_gapless_info_so_players_trim_the_encoder_delay() {
     let audio_frames = mp3.len() / FRAME_BYTES - 1;
     assert_eq!(audio_frames * 1152 - delay - padding, 4_800);
 }
+
+#[test]
+fn finalisation_salvages_partial_chunks_and_is_idempotent() {
+    let temp = TempDir::new().unwrap();
+    let mut library = Library::open(
+        temp.path().join("Library"),
+        temp.path().join("index.sqlite3"),
+    )
+    .unwrap();
+    let (meeting, chunks, _) = library
+        .begin_recording(chrono::DateTime::parse_from_rfc3339("2026-10-12T09:30:00Z").unwrap())
+        .unwrap();
+    std::fs::write(chunks.join("system-000000.part"), vec![0_u8; 10 * 8 + 4]).unwrap();
+    std::fs::write(chunks.join("microphone-000000.f32"), vec![0_u8; 12 * 4 + 2]).unwrap();
+    let dir = library.meeting_dir(&meeting.id);
+    let result = finalize_recording(&dir, 1).unwrap();
+    assert_eq!(result.duration_ms, 0);
+    assert_eq!(
+        claxon::FlacReader::open(dir.join("recording-1 microphone.flac"))
+            .unwrap()
+            .samples()
+            .count(),
+        12
+    );
+    assert!(dir.join("meeting.mp3").exists());
+    let before = std::fs::read(dir.join("meeting.json")).unwrap();
+    std::fs::create_dir_all(&chunks).unwrap();
+    std::fs::write(chunks.join("leftover"), b"old").unwrap();
+    assert_eq!(finalize_recording(&dir, 1).unwrap(), result);
+    assert!(!chunks.exists());
+    assert_eq!(std::fs::read(dir.join("meeting.json")).unwrap(), before);
+}
+
+#[test]
+fn journalled_files_from_an_interrupted_save_are_recreated() {
+    let temp = TempDir::new().unwrap();
+    let mut library = Library::open(
+        temp.path().join("Library"),
+        temp.path().join("index.sqlite3"),
+    )
+    .unwrap();
+    let (meeting, chunks, _) = library
+        .begin_recording(chrono::DateTime::parse_from_rfc3339("2026-10-12T09:30:00Z").unwrap())
+        .unwrap();
+    let dir = library.meeting_dir(&meeting.id);
+    std::fs::write(dir.join("recording-1 microphone.flac"), b"interrupted").unwrap();
+    std::fs::write(chunks.join("finalizing"), b"recording-1 microphone.flac\n").unwrap();
+    finalize_recording(&dir, 1).unwrap();
+    assert_ne!(
+        std::fs::read(dir.join("recording-1 microphone.flac")).unwrap(),
+        b"interrupted"
+    );
+}
+
+#[test]
+fn recovery_never_overwrites_a_completed_chunk_with_a_partial_one() {
+    let temp = TempDir::new().unwrap();
+    let mut library = Library::open(
+        temp.path().join("Library"),
+        temp.path().join("index.sqlite3"),
+    )
+    .unwrap();
+    let (meeting, chunks, _) = library
+        .begin_recording(chrono::DateTime::parse_from_rfc3339("2026-10-12T09:30:00Z").unwrap())
+        .unwrap();
+    let complete = chunks.join("microphone-000000.f32");
+    std::fs::write(&complete, 0.5_f32.to_le_bytes()).unwrap();
+    std::fs::write(
+        chunks.join("microphone-000000.part"),
+        0.25_f32.to_le_bytes(),
+    )
+    .unwrap();
+    let error = finalize_recording(&library.meeting_dir(&meeting.id), 1).unwrap_err();
+    assert!(
+        matches!(error, meeting_minutes_core::LibraryError::Io(ref e) if e.kind() == std::io::ErrorKind::AlreadyExists)
+    );
+    assert_eq!(std::fs::read(complete).unwrap(), 0.5_f32.to_le_bytes());
+}
+
+#[test]
+fn second_recording_rebuilds_the_whole_meeting_audio() {
+    let temp = TempDir::new().unwrap();
+    let mut library = Library::open(
+        temp.path().join("Library"),
+        temp.path().join("index.sqlite3"),
+    )
+    .unwrap();
+    let at = chrono::DateTime::parse_from_rfc3339("2026-10-12T09:30:00Z").unwrap();
+    let (meeting, first, _) = library.begin_recording(at).unwrap();
+    for source in [Source::Microphone, Source::SystemAudio] {
+        let mut writer = ChunkWriter::new(&first, source).unwrap();
+        writer.write(&vec![0.25; 4_800 * 2]).unwrap();
+        writer.finish().unwrap();
+    }
+    let dir = library.meeting_dir(&meeting.id);
+    finalize_recording(&dir, 1).unwrap();
+    let first_flac = std::fs::read(dir.join("recording-1 microphone.flac")).unwrap();
+    let (second, manifest) = library.begin_next_recording(&meeting.id, at).unwrap();
+    assert_eq!(manifest.number, 2);
+    for source in [Source::Microphone, Source::SystemAudio] {
+        let mut writer = ChunkWriter::new(&second, source).unwrap();
+        writer.write(&vec![0.25; 4_800 * 2]).unwrap();
+        writer.finish().unwrap();
+    }
+    let saved = finalize_recording(&dir, 2).unwrap();
+    assert_eq!((saved.timeline_start_ms, saved.duration_ms), (100, 100));
+    let json: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.join("meeting.json")).unwrap()).unwrap();
+    assert_eq!(json["recordings"].as_array().unwrap().len(), 2);
+    assert_eq!(json["duration_ms"], 200);
+    assert_eq!(
+        json["markers"],
+        serde_json::json!([{"kind":"gap", "at_ms":100}])
+    );
+    assert_eq!(
+        std::fs::read(dir.join("recording-1 microphone.flac")).unwrap(),
+        first_flac
+    );
+    let mut decoder = minimp3::Decoder::new(std::fs::File::open(dir.join("meeting.mp3")).unwrap());
+    let mut frames = 0;
+    while let Ok(frame) = decoder.next_frame() {
+        frames += frame.data.len() / frame.channels;
+    }
+    assert!(frames >= 9_600, "decoded {frames} frames");
+}
+
+#[test]
+fn later_recording_cannot_be_finalised_before_earlier_one() {
+    let temp = TempDir::new().unwrap();
+    let mut library = Library::open(
+        temp.path().join("Library"),
+        temp.path().join("index.sqlite3"),
+    )
+    .unwrap();
+    let (meeting, _, _) = library
+        .begin_recording(chrono::DateTime::parse_from_rfc3339("2026-10-12T09:30:00Z").unwrap())
+        .unwrap();
+    let dir = library.meeting_dir(&meeting.id);
+    let before = std::fs::read(dir.join("meeting.json")).unwrap();
+    let error = finalize_recording(&dir, 2).unwrap_err().to_string();
+    assert!(error.contains("Recording 1 is not saved yet"), "{error}");
+    assert_eq!(std::fs::read(dir.join("meeting.json")).unwrap(), before);
+    assert!(!dir.join("recording-2 microphone.flac").exists());
+}

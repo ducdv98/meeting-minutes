@@ -3,6 +3,8 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import RecordingBar from "./RecordingBar";
 import {
   acknowledgeRecordingNotice,
+  continueMeeting,
+  dismissContinue,
   formatElapsed,
   onRecordingNoticeRequested,
   onRecordingStatus,
@@ -25,6 +27,8 @@ vi.mock("./recording", async (importOriginal) => {
     stopRecording: vi.fn(),
     retrySave: vi.fn(),
     acknowledgeRecordingNotice: vi.fn(),
+    continueMeeting: vi.fn(),
+    dismissContinue: vi.fn(),
     onRecordingStatus: vi.fn(),
     onRecordingNoticeRequested: vi.fn(),
   };
@@ -36,6 +40,7 @@ const idle: RecorderStatus = {
   elapsed_ms: 0,
   notice_acknowledged: true,
   saves: [],
+  continue_offers: [],
 };
 const recording: RecorderStatus = { ...idle, phase: "recording", meeting_id: "m1", elapsed_ms: 65_000 };
 
@@ -129,7 +134,7 @@ it("pauses and stops the active Recording", async () => {
   vi.mocked(pauseRecording).mockResolvedValue({ ...recording, phase: "paused" });
   vi.mocked(stopRecording).mockResolvedValue({
     ...idle,
-    saves: [{ meeting_id: "m1", state: "saving", error: null }],
+    saves: [{ meeting_id: "m1", state: "saving", error: null, recovered: false }],
   });
   render(<RecordingBar />);
 
@@ -143,11 +148,11 @@ it("pauses and stops the active Recording", async () => {
 it("offers Retry save after a failed save", async () => {
   vi.mocked(recordingStatus).mockResolvedValue({
     ...idle,
-    saves: [{ meeting_id: "m1", state: "failed", error: "disk full" }],
+    saves: [{ meeting_id: "m1", state: "failed", error: "disk full", recovered: false }],
   });
   vi.mocked(retrySave).mockResolvedValue({
     ...idle,
-    saves: [{ meeting_id: "m1", state: "saving", error: null }],
+    saves: [{ meeting_id: "m1", state: "saving", error: null, recovered: false }],
   });
   render(<RecordingBar />);
 
@@ -166,4 +171,58 @@ it("shows an error when a recording action fails", async () => {
   fireEvent.click(await screen.findByRole("button", { name: "Record" }));
 
   expect((await screen.findByRole("alert")).textContent).toBe("A Recording is already active");
+});
+
+it("labels a save recovered after a crash", async () => {
+  vi.mocked(recordingStatus).mockResolvedValue({
+    ...idle,
+    saves: [{ meeting_id: "m1", state: "saving", error: null, recovered: true }],
+  });
+  render(<RecordingBar />);
+
+  expect(await screen.findByText("Recovering m1…")).toBeTruthy();
+});
+
+it("offers to continue a recovered Meeting with a new Recording", async () => {
+  vi.mocked(recordingStatus).mockResolvedValue({ ...idle, continue_offers: ["m1"] });
+  vi.mocked(continueMeeting).mockResolvedValue(recording);
+  render(<RecordingBar />);
+
+  expect(await screen.findByText(/Recovered m1/)).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Continue meeting" }));
+
+  expect(await screen.findByRole("status")).toBeTruthy();
+  expect(continueMeeting).toHaveBeenCalledWith("m1");
+  expect(screen.queryByText(/Recovered m1/)).toBeNull();
+});
+
+it("dismisses the offer to continue a recovered Meeting", async () => {
+  vi.mocked(recordingStatus).mockResolvedValue({ ...idle, continue_offers: ["m1"] });
+  vi.mocked(dismissContinue).mockResolvedValue(idle);
+  render(<RecordingBar />);
+
+  fireEvent.click(await screen.findByRole("button", { name: "Dismiss" }));
+
+  expect(dismissContinue).toHaveBeenCalledWith("m1");
+  await vi.waitFor(() => expect(screen.queryByText(/Recovered m1/)).toBeNull());
+  expect(continueMeeting).not.toHaveBeenCalled();
+});
+
+it("shows the Recording notice before continuing when it was never shown", async () => {
+  vi.mocked(recordingStatus).mockResolvedValue({
+    ...idle,
+    notice_acknowledged: false,
+    continue_offers: ["m1"],
+  });
+  vi.mocked(acknowledgeRecordingNotice).mockResolvedValue(idle);
+  vi.mocked(continueMeeting).mockResolvedValue(recording);
+  render(<RecordingBar />);
+
+  fireEvent.click(await screen.findByRole("button", { name: "Continue meeting" }));
+  expect(continueMeeting).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Start recording" }));
+
+  expect(await screen.findByRole("status")).toBeTruthy();
+  expect(continueMeeting).toHaveBeenCalledWith("m1");
+  expect(startRecording).not.toHaveBeenCalled();
 });

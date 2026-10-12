@@ -200,3 +200,40 @@ fn pause_resume_and_stop_need_an_active_recording() {
     assert!(matches!(s.recorder.resume(), Err(RecorderError::NotActive)));
     assert!(matches!(s.recorder.stop(), Err(RecorderError::NotActive)));
 }
+
+#[test]
+fn crash_recovery_offers_to_continue_the_same_meeting() {
+    let mut s = setup(true);
+    s.recorder.start(&mut s.library, started_at()).unwrap();
+    let meeting_id = s.recorder.status().meeting_id.unwrap();
+    s.time.fetch_add(10_000_000, Ordering::SeqCst);
+    std::thread::sleep(std::time::Duration::from_millis(30));
+    drop(s.recorder);
+    std::thread::sleep(std::time::Duration::from_millis(30));
+    let mut recorder = Recorder::new(SilentOpener, FakeClock(s.time.clone()), true);
+    let jobs = recorder.recover(&s.library).unwrap();
+    assert_eq!(jobs.len(), 1);
+    assert_eq!(jobs[0].meeting_id, meeting_id);
+    assert!(recorder.status().saves[0].recovered);
+    assert_eq!(recorder.status().saves[0].state, SaveState::Saving);
+    assert!(matches!(
+        recorder.continue_meeting(&mut s.library, &meeting_id, started_at()),
+        Err(RecorderError::SavePending)
+    ));
+    jobs[0].run().unwrap();
+    recorder.save_finished(&meeting_id, Ok(()));
+    assert_eq!(recorder.status().continue_offers, vec![meeting_id.clone()]);
+    recorder
+        .continue_meeting(&mut s.library, &meeting_id, started_at())
+        .unwrap();
+    assert!(recorder.status().continue_offers.is_empty());
+    s.time.fetch_add(10_000_000, Ordering::SeqCst);
+    let second = recorder.stop().unwrap();
+    assert_eq!(second.number, 2);
+    second.run().unwrap();
+    recorder.save_finished(&meeting_id, Ok(()));
+    let json: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(second.meeting_dir.join("meeting.json")).unwrap())
+            .unwrap();
+    assert_eq!(json["recordings"].as_array().unwrap().len(), 2);
+}

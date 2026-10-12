@@ -89,6 +89,19 @@ fn retry_save(app: AppHandle, meeting_id: String) -> Result<RecorderStatus, Stri
 }
 
 #[tauri::command]
+fn continue_meeting(app: AppHandle, meeting_id: String) -> Result<RecorderStatus, String> {
+    start_with(&app, |recorder, library, started_at| {
+        recorder.continue_meeting(library, &meeting_id, started_at)
+    })
+}
+
+#[tauri::command]
+fn dismiss_continue(app: AppHandle, meeting_id: String) -> Result<RecorderStatus, String> {
+    lock_recorder(&app)?.dismiss_continue(&meeting_id);
+    publish(&app)
+}
+
+#[tauri::command]
 fn acknowledge_recording_notice(
     app: AppHandle,
     settings_path: State<'_, SettingsPath>,
@@ -132,13 +145,26 @@ fn with_recorder(
 }
 
 fn start(app: &AppHandle) -> Result<RecorderStatus, String> {
+    start_with(app, |recorder, library, started_at| {
+        recorder.start(library, started_at)
+    })
+}
+
+/// Starts a Recording, in a new Meeting or continuing one, with both the recorder and Library locked.
+fn start_with(
+    app: &AppHandle,
+    action: impl FnOnce(
+        &mut Recorder<WasapiOpener, QpcClock>,
+        &mut Library,
+        chrono::DateTime<chrono::FixedOffset>,
+    ) -> Result<(), RecorderError>,
+) -> Result<RecorderStatus, String> {
     {
         let mut recorder = lock_recorder(app)?;
         let library_state = app.state::<LibraryState>();
         let mut library = library_state.lock().map_err(|error| error.to_string())?;
         let library = library.as_mut().map_err(|error| error.clone())?;
-        recorder
-            .start(library, chrono::Local::now().fixed_offset())
+        action(&mut recorder, library, chrono::Local::now().fixed_offset())
             .map_err(|error| error.to_string())?;
     }
     let _ = app.emit("library-changed", ());
@@ -159,22 +185,50 @@ fn stop(app: &AppHandle) -> Result<RecorderStatus, String> {
 
 /// Writes the FLAC, MP3 and meeting.json off the UI thread; a failure keeps the Chunks for Retry save.
 fn spawn_save(app: AppHandle, job: SaveJob) {
+    spawn_saves(app, vec![job]);
+}
+
+/// Runs saves one after another, so Recordings of the same Meeting are saved in order.
+fn spawn_saves(app: AppHandle, jobs: Vec<SaveJob>) {
     thread::spawn(move || {
-        let result = job.run().map_err(|error| error.to_string());
-        if result.is_ok() {
-            if let Ok(mut library) = app.state::<LibraryState>().lock() {
-                if let Ok(library) = library.as_mut() {
-                    // The files are saved; a stale index row is fixed by the next rescan.
-                    let _ = library.record_finalized(&job.meeting_id);
+        for job in jobs {
+            let result = job.run().map_err(|error| error.to_string());
+            if result.is_ok() {
+                if let Ok(mut library) = app.state::<LibraryState>().lock() {
+                    if let Ok(library) = library.as_mut() {
+                        // The files are saved; a stale index row is fixed by the next rescan.
+                        let _ = library.record_finalized(&job.meeting_id);
+                    }
                 }
             }
+            if let Ok(mut recorder) = app.state::<RecorderState>().lock() {
+                recorder.save_finished(&job.meeting_id, result);
+            }
+            let _ = app.emit("library-changed", ());
+            let _ = publish(&app);
         }
-        if let Ok(mut recorder) = app.state::<RecorderState>().lock() {
-            recorder.save_finished(&job.meeting_id, result);
-        }
-        let _ = app.emit("library-changed", ());
-        let _ = publish(&app);
     });
+}
+
+/// Queues the Chunks a crash left behind, so they are saved as Recordings of their Meetings.
+fn recover(app: &AppHandle) {
+    let jobs = {
+        let Ok(mut recorder) = lock_recorder(app) else {
+            return;
+        };
+        let library_state = app.state::<LibraryState>();
+        let Ok(library) = library_state.lock() else {
+            return;
+        };
+        let Ok(library) = library.as_ref() else {
+            return;
+        };
+        // Recovery is retried on the next launch if the Library cannot be read now.
+        recorder.recover(library).unwrap_or_default()
+    };
+    if !jobs.is_empty() {
+        spawn_saves(app.clone(), jobs);
+    }
 }
 
 /// Record from the tray or hotkey: before the first Recording ever, show the notice instead.
@@ -386,6 +440,8 @@ fn main() {
                 recording_image,
             });
 
+            recover(app.handle());
+
             // Elapsed time for the window indicator and the tray while a Recording runs.
             let handle = app.handle().clone();
             thread::spawn(move || loop {
@@ -412,6 +468,8 @@ fn main() {
             resume_recording,
             stop_recording,
             retry_save,
+            continue_meeting,
+            dismiss_continue,
             acknowledge_recording_notice
         ])
         .run(tauri::generate_context!())

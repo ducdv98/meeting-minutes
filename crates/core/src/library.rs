@@ -11,7 +11,7 @@ use serde::{Serialize, Serializer};
 use crate::{
     folder_name,
     index::Index,
-    meeting_file::MeetingFile,
+    meeting_file::{MeetingFile, RecordingEntry},
     recording::{write_manifest, RecordingManifest},
     MeetingSummary,
 };
@@ -23,6 +23,7 @@ pub enum LibraryError {
     Json(serde_json::Error),
     Encode(String),
     CollisionLimit,
+    UnsavedRecording,
 }
 
 impl fmt::Display for LibraryError {
@@ -33,6 +34,9 @@ impl fmt::Display for LibraryError {
             Self::Json(error) => write!(f, "Meeting metadata error: {error}"),
             Self::Encode(error) => write!(f, "Audio encoding error: {error}"),
             Self::CollisionLimit => write!(f, "Could not find an unused Meeting folder name"),
+            Self::UnsavedRecording => {
+                write!(f, "This Meeting has a Recording that is not saved yet")
+            }
         }
     }
 }
@@ -73,6 +77,12 @@ pub struct MalformedFolder {
 pub struct ScanReport {
     pub meetings: Vec<MeetingSummary>,
     pub malformed: Vec<MalformedFolder>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct OrphanRecording {
+    pub meeting_id: String,
+    pub number: u32,
 }
 
 pub struct Library {
@@ -159,6 +169,68 @@ impl Library {
         Ok((meeting, chunk_dir, manifest))
     }
 
+    pub fn orphan_recordings(&self) -> Result<Vec<OrphanRecording>, LibraryError> {
+        let mut orphans = Vec::new();
+        for meeting in fs::read_dir(&self.root)? {
+            let meeting = meeting?;
+            if !meeting.file_type()?.is_dir()
+                || meeting.file_name().to_string_lossy().starts_with('.')
+            {
+                continue;
+            }
+            let meeting_id = meeting.file_name().to_string_lossy().into_owned();
+            for number in unsaved_recordings(&meeting.path())? {
+                orphans.push(OrphanRecording {
+                    meeting_id: meeting_id.clone(),
+                    number,
+                });
+            }
+        }
+        orphans.sort_by(|a, b| {
+            a.meeting_id
+                .cmp(&b.meeting_id)
+                .then(a.number.cmp(&b.number))
+        });
+        Ok(orphans)
+    }
+
+    pub fn begin_next_recording(
+        &mut self,
+        meeting_id: &str,
+        started_at: DateTime<FixedOffset>,
+    ) -> Result<(PathBuf, RecordingManifest), LibraryError> {
+        let meeting_dir = self.meeting_dir(meeting_id);
+        let meeting: MeetingFile =
+            serde_json::from_slice(&fs::read(meeting_dir.join("meeting.json"))?)?;
+        if !unsaved_recordings(&meeting_dir)?.is_empty() {
+            return Err(LibraryError::UnsavedRecording);
+        }
+        let chunks = meeting_dir.join(".chunks");
+        let highest = meeting
+            .recordings
+            .iter()
+            .filter_map(|entry| match entry {
+                RecordingEntry::Known(recording) => Some(recording.number),
+                RecordingEntry::Unknown(_) => None,
+            })
+            .max()
+            .unwrap_or(0);
+        let number = highest
+            .checked_add(1)
+            .ok_or_else(|| LibraryError::Encode("Recording number overflow".into()))?;
+        fs::create_dir_all(&chunks)?;
+        let chunk_dir = chunks.join(format!("recording-{number}"));
+        fs::create_dir(&chunk_dir)?;
+        let manifest = RecordingManifest {
+            number,
+            started_at: started_at.to_rfc3339(),
+            duration_ms: None,
+            markers: Vec::new(),
+        };
+        write_manifest(&chunk_dir, &manifest)?;
+        Ok((chunk_dir, manifest))
+    }
+
     pub fn record_finalized(&mut self, meeting_id: &str) -> Result<MeetingSummary, LibraryError> {
         let (summary, started_at_ms) = read_meeting(&self.meeting_dir(meeting_id), meeting_id)
             .map_err(LibraryError::Encode)?;
@@ -190,6 +262,30 @@ impl Library {
             malformed,
         })
     }
+}
+
+/// Numbers of the Recordings whose Chunks are still in the Meeting folder, waiting to be saved.
+fn unsaved_recordings(meeting_dir: &Path) -> Result<Vec<u32>, LibraryError> {
+    let chunks = meeting_dir.join(".chunks");
+    if !chunks.is_dir() {
+        return Ok(Vec::new());
+    }
+    let mut numbers = Vec::new();
+    for entry in fs::read_dir(chunks)? {
+        let entry = entry?;
+        if !entry.file_type()?.is_dir() {
+            continue;
+        }
+        if let Some(number) = entry
+            .file_name()
+            .to_string_lossy()
+            .strip_prefix("recording-")
+            .and_then(|n| n.parse().ok())
+        {
+            numbers.push(number);
+        }
+    }
+    Ok(numbers)
 }
 
 fn write_meeting_file(folder: &Path, meeting_file: &MeetingFile) -> Result<(), LibraryError> {

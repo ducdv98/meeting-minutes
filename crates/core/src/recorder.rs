@@ -32,6 +32,7 @@ pub struct PendingSave {
     pub meeting_id: String,
     pub state: SaveState,
     pub error: Option<String>,
+    pub recovered: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -41,6 +42,7 @@ pub struct RecorderStatus {
     pub elapsed_ms: u64,
     pub notice_acknowledged: bool,
     pub saves: Vec<PendingSave>,
+    pub continue_offers: Vec<String>,
 }
 
 /// A stopped Recording whose Chunks still have to be written as FLAC, MP3 and `meeting.json`.
@@ -64,6 +66,7 @@ pub enum RecorderError {
     AlreadyActive,
     NotActive,
     NoFailedSave,
+    SavePending,
     Library(LibraryError),
     Capture(std::io::Error),
 }
@@ -75,6 +78,7 @@ impl fmt::Display for RecorderError {
             Self::AlreadyActive => write!(f, "A Recording is already active"),
             Self::NotActive => write!(f, "No Recording is active"),
             Self::NoFailedSave => write!(f, "That Meeting has no failed save to retry"),
+            Self::SavePending => write!(f, "That Meeting is still being saved"),
             Self::Library(error) => error.fmt(f),
             Self::Capture(error) => write!(f, "Capture error: {error}"),
         }
@@ -110,6 +114,7 @@ struct Save {
     job: SaveJob,
     state: SaveState,
     error: Option<String>,
+    recovered: bool,
 }
 
 pub struct Recorder<O: InputOpener, C: Clock> {
@@ -118,6 +123,7 @@ pub struct Recorder<O: InputOpener, C: Clock> {
     notice_acknowledged: bool,
     active: Option<Active<C>>,
     saves: Vec<Save>,
+    continue_offers: Vec<String>,
 }
 
 impl<O: InputOpener, C: Clock> Recorder<O, C> {
@@ -128,6 +134,7 @@ impl<O: InputOpener, C: Clock> Recorder<O, C> {
             notice_acknowledged,
             active: None,
             saves: Vec::new(),
+            continue_offers: Vec::new(),
         }
     }
 
@@ -160,8 +167,10 @@ impl<O: InputOpener, C: Clock> Recorder<O, C> {
                     meeting_id: save.job.meeting_id.clone(),
                     state: save.state,
                     error: save.error.clone(),
+                    recovered: save.recovered,
                 })
                 .collect(),
+            continue_offers: self.continue_offers.clone(),
         }
     }
 
@@ -212,6 +221,7 @@ impl<O: InputOpener, C: Clock> Recorder<O, C> {
                     job: job.clone(),
                     state: SaveState::Saving,
                     error: None,
+                    recovered: false,
                 });
                 Ok(job)
             }
@@ -220,6 +230,7 @@ impl<O: InputOpener, C: Clock> Recorder<O, C> {
                     job,
                     state: SaveState::Failed,
                     error: Some(error.to_string()),
+                    recovered: false,
                 });
                 Err(error.into())
             }
@@ -236,7 +247,10 @@ impl<O: InputOpener, C: Clock> Recorder<O, C> {
         };
         match result {
             Ok(()) => {
-                self.saves.remove(position);
+                let save = self.saves.remove(position);
+                if save.recovered && !self.continue_offers.iter().any(|id| id == meeting_id) {
+                    self.continue_offers.push(meeting_id.to_owned());
+                }
             }
             Err(error) => {
                 let save = &mut self.saves[position];
@@ -255,5 +269,67 @@ impl<O: InputOpener, C: Clock> Recorder<O, C> {
         save.state = SaveState::Saving;
         save.error = None;
         Ok(save.job.clone())
+    }
+
+    pub fn recover(&mut self, library: &Library) -> Result<Vec<SaveJob>, RecorderError> {
+        let mut jobs = Vec::new();
+        for orphan in library.orphan_recordings()? {
+            if self
+                .saves
+                .iter()
+                .any(|save| save.job.meeting_id == orphan.meeting_id)
+            {
+                continue;
+            }
+            let job = SaveJob {
+                meeting_dir: library.meeting_dir(&orphan.meeting_id),
+                meeting_id: orphan.meeting_id,
+                number: orphan.number,
+            };
+            self.saves.push(Save {
+                job: job.clone(),
+                state: SaveState::Saving,
+                error: None,
+                recovered: true,
+            });
+            jobs.push(job);
+        }
+        Ok(jobs)
+    }
+
+    pub fn continue_meeting(
+        &mut self,
+        library: &mut Library,
+        meeting_id: &str,
+        started_at: DateTime<FixedOffset>,
+    ) -> Result<(), RecorderError> {
+        if !self.notice_acknowledged {
+            return Err(RecorderError::NoticeRequired);
+        }
+        if self.active.is_some() {
+            return Err(RecorderError::AlreadyActive);
+        }
+        if self
+            .saves
+            .iter()
+            .any(|save| save.job.meeting_id == meeting_id)
+        {
+            return Err(RecorderError::SavePending);
+        }
+        let (chunk_dir, manifest) = library.begin_next_recording(meeting_id, started_at)?;
+        let job = SaveJob {
+            meeting_id: meeting_id.to_owned(),
+            meeting_dir: library.meeting_dir(meeting_id),
+            number: manifest.number,
+        };
+        let session =
+            CaptureSession::start(chunk_dir, manifest, self.opener.clone(), self.clock.clone())?;
+        self.active = Some(Active { session, job });
+        self.dismiss_continue(meeting_id);
+        Ok(())
+    }
+
+    pub fn dismiss_continue(&mut self, meeting_id: &str) {
+        self.continue_offers.retain(|id| id != meeting_id);
     }
 }
