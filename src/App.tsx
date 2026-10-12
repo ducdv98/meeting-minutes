@@ -3,7 +3,9 @@ import wordmark from "./assets/wordmark-dark.png";
 import { rescanLibrary, type MalformedFolder, type MeetingSummary } from "./library";
 import MeetingView from "./MeetingView";
 import RecordingBar from "./RecordingBar";
+import SettingsView from "./SettingsView";
 import { formatElapsed, onLibraryChanged } from "./recording";
+import { cancelProcessing, onProcessingStatus, processingStageLabel, processingStatus, type ProcessingJob } from "./processing";
 
 export default function App() {
   const [meetings, setMeetings] = useState<MeetingSummary[] | null>(null);
@@ -11,6 +13,23 @@ export default function App() {
   const [failed, setFailed] = useState(false);
   const [scan, setScan] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [showSettings, setShowSettings] = useState(false);
+  const [jobs, setJobs] = useState<ProcessingJob[]>([]);
+
+  useEffect(() => {
+    let active = true;
+    let eventArrived = false;
+    processingStatus().then((status) => { if (active && !eventArrived) setJobs(status.jobs); }, () => {});
+    const listener = onProcessingStatus((status) => {
+      if (active) { eventArrived = true; setJobs(status.jobs); }
+    });
+    return () => { active = false; void listener.then((stop) => stop(), () => {}); };
+  }, []);
+
+  async function cancelJob(meetingId: string) {
+    const status = await cancelProcessing(meetingId);
+    setJobs(status.jobs);
+  }
 
   useEffect(() => {
     let active = true;
@@ -40,9 +59,10 @@ export default function App() {
     <main>
       <header>
         <img className="wordmark" src={wordmark} alt="Meeting Minutes" />
+        <button type="button" onClick={() => { setSelectedId(null); setShowSettings(true); }}>Settings</button>
       </header>
       <RecordingBar />
-      {selectedId ? (
+      {showSettings ? <SettingsView onBack={() => setShowSettings(false)} /> : selectedId ? (
         <MeetingView id={selectedId} onRenamed={setSelectedId} onBack={() => {
           setSelectedId(null);
           setScan((value) => value + 1);
@@ -61,13 +81,16 @@ export default function App() {
           {meetings?.length === 0 && <p>No meetings yet</p>}
           {meetings && meetings.length > 0 && (
             <ul>
-              {meetings.map((meeting) => (
-                <li key={meeting.id}>
+              {meetings.map((meeting) => {
+                const job = jobs.find((item) => item.meeting_id === meeting.id);
+                return <li key={meeting.id}>
                   <time dateTime={meeting.started_at}>{meeting.started_at.slice(0, 16).replace("T", " ")}</time>{" "}
                   <button type="button" onClick={() => setSelectedId(meeting.id)}>{meeting.title}</button>
                   {meeting.duration_ms > 0 && <> · {formatElapsed(meeting.duration_ms)}</>}
-                </li>
-              ))}
+                  {job && <> · <span>{processingStageLabel(job)}</span></>}
+                  {job && job.stage !== "failed" && <> <button type="button" aria-label="Cancel processing" onClick={() => void cancelJob(meeting.id)}>Cancel</button></>}
+                </li>;
+              })}
             </ul>
           )}
         </>

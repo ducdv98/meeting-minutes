@@ -1,0 +1,8 @@
+[package]
+name = "meeting_minutes_whisper"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+meeting_minutes_core = { path = "../core" }
+whisper-rs = "=0.16.0"

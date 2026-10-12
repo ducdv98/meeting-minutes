@@ -504,6 +504,7 @@ fn settings_default_and_round_trip() {
     assert!(!Settings::load(&path).recording_notice_acknowledged);
     Settings {
         recording_notice_acknowledged: true,
+        ..Settings::default()
     }
     .save(&path)
     .unwrap();

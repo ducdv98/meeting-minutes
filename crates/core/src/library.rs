@@ -1,7 +1,7 @@
 use std::{
     fmt, fs,
     fs::OpenOptions,
-    io::Write,
+    io::{self, Write},
     path::{Path, PathBuf},
 };
 
@@ -13,6 +13,7 @@ use crate::{
     index::Index,
     meeting_file::{MeetingDetail, MeetingFile, RecordingEntry},
     recording::{write_manifest, RecordingManifest},
+    transcript::{render_markdown, Language, Transcript},
     MeetingSummary,
 };
 
@@ -177,6 +178,36 @@ impl Library {
         })
     }
 
+    pub fn transcript(&self, id: &str) -> Result<Option<Transcript>, LibraryError> {
+        let folder = self.checked_meeting_dir(id)?;
+        let mut latest: Option<(u32, PathBuf)> = None;
+        for entry in fs::read_dir(folder)? {
+            let entry = entry?;
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if let Some(revision) = name
+                .strip_prefix("transcript.r")
+                .and_then(|s| s.strip_suffix(".json"))
+                .and_then(|s| s.parse::<u32>().ok())
+            {
+                if latest.as_ref().is_none_or(|(n, _)| revision > *n) {
+                    latest = Some((revision, entry.path()));
+                }
+            }
+        }
+        latest
+            .map(|(_, path)| serde_json::from_slice(&fs::read(path)?).map_err(LibraryError::from))
+            .transpose()
+    }
+
+    pub fn set_language(&self, id: &str, language: Option<Language>) -> Result<(), LibraryError> {
+        let folder = self.checked_meeting_dir(id)?;
+        let mut metadata: serde_json::Value =
+            serde_json::from_slice(&fs::read(folder.join("meeting.json"))?)?;
+        metadata["language"] = serde_json::to_value(language)?;
+        write_metadata(&folder, &metadata)
+    }
+
     pub fn rename_meeting(
         &mut self,
         id: &str,
@@ -240,21 +271,7 @@ impl Library {
         }
         let (new_id, new_folder) = selected.ok_or(LibraryError::CollisionLimit)?;
         metadata["title"] = serde_json::Value::String(title.to_owned());
-        let write_result = (|| -> Result<(), LibraryError> {
-            let mut file = OpenOptions::new()
-                .write(true)
-                .create(true)
-                .truncate(true)
-                .open(new_folder.join("meeting.json.tmp"))?;
-            serde_json::to_writer_pretty(&mut file, &metadata)?;
-            file.write_all(b"\n")?;
-            file.sync_all()?;
-            fs::rename(
-                new_folder.join("meeting.json.tmp"),
-                new_folder.join("meeting.json"),
-            )?;
-            Ok(())
-        })();
+        let write_result = write_metadata(&new_folder, &metadata);
         if let Err(error) = write_result {
             if new_id != id {
                 let _ = fs::rename(&new_folder, &old_folder);
@@ -265,6 +282,9 @@ impl Library {
             read_meeting(&new_folder, &new_id).map_err(LibraryError::Encode)?;
         // The folder is renamed; a stale index row is fixed by the next rescan.
         let _ = self.index.rename(id, &summary, started_at_ms);
+        if let Ok(Some(transcript)) = self.transcript(&new_id) {
+            let _ = write_transcript_markdown(&new_folder, &render_markdown(title, &transcript));
+        }
         Ok(summary)
     }
 
@@ -395,6 +415,31 @@ impl Library {
             malformed,
         })
     }
+}
+
+fn write_metadata(folder: &Path, metadata: &serde_json::Value) -> Result<(), LibraryError> {
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(folder.join("meeting.json.tmp"))?;
+    serde_json::to_writer_pretty(&mut file, metadata)?;
+    file.write_all(b"\n")?;
+    file.sync_all()?;
+    fs::rename(folder.join("meeting.json.tmp"), folder.join("meeting.json"))?;
+    Ok(())
+}
+
+fn write_transcript_markdown(folder: &Path, markdown: &str) -> io::Result<()> {
+    let tmp = folder.join("transcript.md.tmp");
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(&tmp)?;
+    file.write_all(markdown.as_bytes())?;
+    file.sync_all()?;
+    fs::rename(tmp, folder.join("transcript.md"))
 }
 
 /// Numbers of the Recordings whose Chunks are still in the Meeting folder, waiting to be saved.

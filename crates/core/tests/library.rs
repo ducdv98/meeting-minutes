@@ -338,6 +338,40 @@ fn rename_moves_the_folder_preserves_files_and_metadata_and_updates_the_index() 
 }
 
 #[test]
+fn rename_refreshes_derived_markdown_for_current_revision() {
+    let temp = TempDir::new().unwrap();
+    let mut library = Library::open(
+        temp.path().join("Library"),
+        temp.path().join("index.sqlite3"),
+    )
+    .unwrap();
+    let original = library
+        .create_meeting("Planning", at("2026-10-12T09:30:00Z"))
+        .unwrap();
+    let folder = library.meeting_dir(&original.id);
+    let revision = serde_json::json!({
+        "schema_version": 1, "revision": 1, "created_at": "2026-10-12T10:00:00Z",
+        "model": "small", "language": "en", "language_detected": false,
+        "duration_ms": 1000, "segments": [{"id": "s00001", "start_ms": 0, "end_ms": 1000, "text": "Hello", "speaker": "me"}]
+    });
+    std::fs::write(
+        folder.join("transcript.r1.json"),
+        serde_json::to_vec(&revision).unwrap(),
+    )
+    .unwrap();
+    std::fs::write(folder.join("transcript.md"), "# Planning\n\nOld content").unwrap();
+    let renamed = library.rename_meeting(&original.id, "Review").unwrap();
+    let markdown =
+        std::fs::read_to_string(library.meeting_dir(&renamed.id).join("transcript.md")).unwrap();
+    assert!(markdown.starts_with("# Review\n"));
+    assert!(markdown.contains("Hello"));
+    assert_eq!(
+        std::fs::read(library.meeting_dir(&renamed.id).join("transcript.r1.json")).unwrap(),
+        serde_json::to_vec(&revision).unwrap()
+    );
+}
+
+#[test]
 fn rename_to_taken_name_uses_suffix_without_touching_the_other_meeting() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().join("Library");

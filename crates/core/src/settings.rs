@@ -5,9 +5,24 @@ use std::{
     path::Path,
 };
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Settings {
     pub recording_notice_acknowledged: bool,
+    pub auto_process: bool,
+    pub model: String,
+    pub vocabulary: Vec<String>,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            recording_notice_acknowledged: false,
+            auto_process: true,
+            model: "small".into(),
+            vocabulary: Vec::new(),
+        }
+    }
 }
 
 impl Settings {
@@ -27,5 +42,19 @@ impl Settings {
         file.write_all(&bytes)?;
         file.sync_all()?;
         fs::rename(temp, path)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn old_settings_keep_notice_and_get_processing_defaults() {
+        let settings: Settings =
+            serde_json::from_str(r#"{"recording_notice_acknowledged":true}"#).unwrap();
+        assert!(settings.recording_notice_acknowledged);
+        assert!(settings.auto_process);
+        assert_eq!(settings.model, "small");
+        assert!(settings.vocabulary.is_empty());
     }
 }

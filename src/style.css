@@ -77,3 +77,9 @@ main {
 }
 .marker-layer button[data-kind="gap"] { background: #6a4c93; }
 .marker-layer button[data-kind="device_switch"] { background: #006d77; }
+
+header { display: flex; align-items: center; justify-content: space-between; }
+.settings-view { display: grid; gap: 0.75rem; max-width: 30rem; }
+.settings-view textarea, .settings-view select { width: 100%; box-sizing: border-box; }
+.settings-view button { justify-self: start; }
+.transcript-section { margin-top: 1.5rem; }

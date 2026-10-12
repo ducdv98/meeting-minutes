@@ -1,10 +1,12 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import App from "./App";
 import { rescanLibrary } from "./library";
+import { cancelProcessing, onProcessingStatus, processingStatus, type ProcessingStatus } from "./processing";
 
 vi.mock("./library", () => ({ rescanLibrary: vi.fn() }));
 vi.mock("./RecordingBar", () => ({ default: () => null }));
+vi.mock("./processing", async (importOriginal) => ({ ...(await importOriginal<typeof import("./processing")>()), processingStatus: vi.fn(), onProcessingStatus: vi.fn(), cancelProcessing: vi.fn() }));
 vi.mock("./MeetingView", () => ({ default: ({ id, onBack }: { id: string; onBack: () => void }) => (
   <section><h1>Meeting {id}</h1><button type="button" onClick={onBack}>Back to Library</button></section>
 ) }));
@@ -13,9 +15,39 @@ vi.mock("./recording", async (importOriginal) => ({
   onLibraryChanged: () => Promise.resolve(() => {}),
 }));
 
+beforeEach(() => {
+  vi.mocked(processingStatus).mockResolvedValue({ jobs: [] });
+  vi.mocked(onProcessingStatus).mockResolvedValue(() => {});
+  vi.mocked(cancelProcessing).mockResolvedValue({ jobs: [] });
+});
 afterEach(() => {
   cleanup();
   vi.resetAllMocks();
+});
+
+it("shows each Meeting's live processing state and cancels its job", async () => {
+  vi.mocked(rescanLibrary).mockResolvedValue({ meetings: [
+    { id: "one", title: "Planning", started_at: "2026-10-12T09:00:00Z", duration_ms: 0 },
+    { id: "two", title: "Review", started_at: "2026-10-12T10:00:00Z", duration_ms: 0 },
+  ], malformed: [] });
+  vi.mocked(processingStatus).mockResolvedValue({ jobs: [
+    { meeting_id: "one", stage: "queued", progress: 0, error: null },
+    { meeting_id: "two", stage: "downloading", progress: 0.34, error: null },
+  ] });
+  render(<App />);
+  expect(await screen.findByText("Waiting to transcribe")).toBeTruthy();
+  expect(screen.getByText("Downloading model 34%")).toBeTruthy();
+  const handler = vi.mocked(onProcessingStatus).mock.calls[0][0];
+  const live: ProcessingStatus = { jobs: [
+    { meeting_id: "one", stage: "transcribing", progress: 0.61, error: null },
+    { meeting_id: "two", stage: "failed", progress: 0.34, error: "network" },
+  ] };
+  await act(async () => handler(live));
+  expect(screen.getByText("Transcribing 61%")).toBeTruthy();
+  expect(screen.getByText("Transcription failed")).toBeTruthy();
+  const row = screen.getByRole("button", { name: "Planning" }).closest("li")!;
+  fireEvent.click(row.querySelector("button[aria-label='Cancel processing']")!);
+  await waitFor(() => expect(cancelProcessing).toHaveBeenCalledWith("one"));
 });
 
 it("shows an empty Library when there are no Meetings", async () => {

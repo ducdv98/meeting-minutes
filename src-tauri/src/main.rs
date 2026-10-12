@@ -1,13 +1,25 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::{path::PathBuf, sync::Mutex, thread, time::Duration};
+use std::{
+    path::PathBuf,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Mutex,
+    },
+    thread,
+    time::Duration,
+};
 
 use meeting_minutes_core::{
     capture::{QpcClock, WasapiOpener},
+    models::{self, DEFAULT_MODEL, MODELS},
+    processing::{self, JobStage, ProcessingStatus, Processor, TranscribeRequest},
     recorder::{Phase, Recorder, RecorderError, RecorderStatus, SaveJob, SaveState},
     settings::Settings,
+    transcript::{Language, Transcript},
     Library, LibraryError, MeetingDetail, MeetingSummary, ScanReport,
 };
+use meeting_minutes_whisper::WhisperEngine;
 use tauri::{
     image::Image,
     menu::{Menu, MenuItem, PredefinedMenuItem},
@@ -18,11 +30,244 @@ use tauri_plugin_global_shortcut::{Shortcut, ShortcutState};
 
 type LibraryState = Mutex<Result<Library, String>>;
 type RecorderState = Mutex<Recorder<WasapiOpener, QpcClock>>;
+type ProcessorState = Mutex<Processor>;
 
 const RECORD_SHORTCUT: &str = "ctrl+alt+shift+r";
 const PAUSE_SHORTCUT: &str = "ctrl+alt+shift+p";
 
 struct SettingsPath(PathBuf);
+struct ModelsDir(PathBuf);
+struct Quitting(AtomicBool);
+
+fn lock_processor(app: &AppHandle) -> Result<std::sync::MutexGuard<'_, Processor>, String> {
+    app.state::<ProcessorState>()
+        .inner()
+        .lock()
+        .map_err(|e| e.to_string())
+}
+
+fn meeting_busy(app: &AppHandle, meeting_id: &str) -> Result<(), String> {
+    let processor = lock_processor(app)?;
+    if processor.is_busy(meeting_id) {
+        return Err("This Meeting is being processed".into());
+    }
+    let recorder = lock_recorder(app)?;
+    let status = recorder.status();
+    if status.meeting_id.as_deref() == Some(meeting_id)
+        || status
+            .saves
+            .iter()
+            .any(|save| save.meeting_id == meeting_id)
+    {
+        return Err(LibraryError::UnsavedRecording.to_string());
+    }
+    Ok(())
+}
+
+fn publish_processing(app: &AppHandle) -> Result<ProcessingStatus, String> {
+    let status = lock_processor(app)?.status();
+    let _ = app.emit("processing-status", &status);
+    Ok(status)
+}
+
+fn processing_stage(app: &AppHandle, id: &str, stage: JobStage, progress: f32) {
+    if let Ok(mut processor) = lock_processor(app) {
+        processor.set_stage(id, stage, progress);
+    }
+    let _ = publish_processing(app);
+}
+
+#[tauri::command]
+fn processing_status(app: AppHandle) -> Result<ProcessingStatus, String> {
+    publish_processing(&app)
+}
+
+#[tauri::command]
+fn transcribe_meeting(app: AppHandle, meeting_id: String) -> Result<ProcessingStatus, String> {
+    let mut processor = lock_processor(&app)?;
+    {
+        let library_state = app.state::<LibraryState>();
+        let library = library_state.lock().map_err(|e| e.to_string())?;
+        library
+            .as_ref()
+            .map_err(Clone::clone)?
+            .meeting(&meeting_id)
+            .map_err(|e| e.to_string())?;
+    }
+    processor.enqueue(&meeting_id);
+    drop(processor);
+    publish_processing(&app)
+}
+
+#[tauri::command]
+fn cancel_processing(app: AppHandle, meeting_id: String) -> Result<ProcessingStatus, String> {
+    lock_processor(&app)?.cancel(&meeting_id);
+    publish_processing(&app)
+}
+
+#[tauri::command]
+fn dismiss_processing(app: AppHandle, meeting_id: String) -> Result<ProcessingStatus, String> {
+    lock_processor(&app)?.dismiss(&meeting_id);
+    publish_processing(&app)
+}
+
+#[tauri::command]
+fn meeting_transcript(
+    state: State<'_, LibraryState>,
+    meeting_id: String,
+) -> Result<Option<Transcript>, String> {
+    let library = state.lock().map_err(|e| e.to_string())?;
+    library
+        .as_ref()
+        .map_err(Clone::clone)?
+        .transcript(&meeting_id)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn set_meeting_language(
+    app: AppHandle,
+    meeting_id: String,
+    language: Option<Language>,
+) -> Result<(), String> {
+    meeting_busy(&app, &meeting_id)?;
+    let library_state = app.state::<LibraryState>();
+    let library = library_state.lock().map_err(|e| e.to_string())?;
+    library
+        .as_ref()
+        .map_err(Clone::clone)?
+        .set_language(&meeting_id, language)
+        .map_err(|e| e.to_string())?;
+    let _ = app.emit("library-changed", ());
+    Ok(())
+}
+
+#[tauri::command]
+fn get_settings(path: State<'_, SettingsPath>) -> Settings {
+    Settings::load(&path.0)
+}
+
+#[tauri::command]
+fn update_settings(
+    path: State<'_, SettingsPath>,
+    auto_process: bool,
+    model: String,
+    vocabulary: Vec<String>,
+) -> Result<Settings, String> {
+    let mut settings = Settings::load(&path.0);
+    settings.auto_process = auto_process;
+    settings.model = model;
+    settings.vocabulary = vocabulary;
+    settings.save(&path.0).map_err(|e| e.to_string())?;
+    Ok(settings)
+}
+
+fn processing_worker(app: AppHandle) {
+    thread::spawn(move || loop {
+        thread::sleep(Duration::from_millis(100));
+        if app.state::<Quitting>().0.load(Ordering::SeqCst) {
+            continue;
+        }
+        if !matches!(status(&app), Ok(status)
+            if status.phase == Phase::Idle
+                && !status.saves.iter().any(|save| save.state == SaveState::Saving))
+        {
+            continue;
+        }
+        let id = match lock_processor(&app).ok().and_then(|mut p| p.next()) {
+            Some(id) => id,
+            None => continue,
+        };
+        if app.state::<Quitting>().0.load(Ordering::SeqCst) {
+            if let Ok(mut processor) = lock_processor(&app) {
+                processor.finished(&id, Err(processing::ProcessingError::Cancelled));
+            }
+            continue;
+        }
+        let _ = publish_processing(&app);
+        let cancel = match lock_processor(&app) {
+            Ok(p) => p.cancel_flag(),
+            Err(_) => continue,
+        };
+        let result = (|| -> Result<(), processing::ProcessingError> {
+            let meeting_dir = {
+                let library_state = app.state::<LibraryState>();
+                let library = library_state
+                    .lock()
+                    .map_err(|e| processing::ProcessingError::Engine(e.to_string()))?;
+                let library = library
+                    .as_ref()
+                    .map_err(|e| processing::ProcessingError::Engine(e.clone()))?;
+                library
+                    .meeting(&id)
+                    .map_err(|e| processing::ProcessingError::Engine(e.to_string()))?;
+                library.meeting_dir(&id)
+            };
+            let settings = Settings::load(&app.state::<SettingsPath>().0);
+            let model = MODELS
+                .iter()
+                .find(|m| m.name == settings.model)
+                .unwrap_or_else(|| MODELS.iter().find(|m| m.name == DEFAULT_MODEL).unwrap());
+            let models_state = app.state::<ModelsDir>();
+            let models_dir = &models_state.0;
+            let model_path = if models::is_installed(models_dir, model) {
+                models::model_path(models_dir, model)
+            } else {
+                processing_stage(&app, &id, JobStage::Downloading, 0.0);
+                let mut last = 0u32;
+                models::download(
+                    models_dir,
+                    model,
+                    &mut |bytes| {
+                        let percent = (bytes.saturating_mul(100) / model.size) as u32;
+                        if percent > last {
+                            last = percent;
+                            processing_stage(
+                                &app,
+                                &id,
+                                JobStage::Downloading,
+                                bytes as f32 / model.size as f32,
+                            );
+                        }
+                    },
+                    &cancel,
+                )?
+            };
+            if cancel.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err(processing::ProcessingError::Cancelled);
+            }
+            processing_stage(&app, &id, JobStage::Transcribing, 0.0);
+            let mut engine =
+                WhisperEngine::load(&model_path).map_err(processing::ProcessingError::Engine)?;
+            let mut last = 0u32;
+            processing::transcribe_meeting(
+                &TranscribeRequest {
+                    meeting_dir: &meeting_dir,
+                    model: model.name,
+                    vocabulary: &settings.vocabulary,
+                },
+                &mut engine,
+                &mut |fraction| {
+                    let percent = (fraction * 100.0) as u32;
+                    if percent > last {
+                        last = percent;
+                        processing_stage(&app, &id, JobStage::Transcribing, fraction);
+                    }
+                },
+                &cancel,
+            )?;
+            Ok(())
+        })();
+        let success = result.is_ok();
+        if let Ok(mut processor) = lock_processor(&app) {
+            processor.finished(&id, result);
+        }
+        let _ = publish_processing(&app);
+        if success {
+            let _ = app.emit("library-changed", ());
+        }
+    });
+}
 
 struct Tray {
     icon: TrayIcon,
@@ -73,18 +318,9 @@ fn rename_meeting(
     meeting_id: String,
     title: String,
 ) -> Result<MeetingSummary, String> {
+    meeting_busy(&app, &meeting_id)?;
     let summary = {
         let mut recorder = lock_recorder(&app)?;
-        // A save may have removed its Chunks but not finished yet; its files are written by path.
-        let status = recorder.status();
-        if status.meeting_id.as_deref() == Some(meeting_id.as_str())
-            || status
-                .saves
-                .iter()
-                .any(|save| save.meeting_id == meeting_id)
-        {
-            return Err(LibraryError::UnsavedRecording.to_string());
-        }
         let library_state = app.state::<LibraryState>();
         let mut library = library_state.lock().map_err(|error| error.to_string())?;
         let library = library.as_mut().map_err(|error| error.clone())?;
@@ -245,6 +481,14 @@ fn spawn_saves(app: AppHandle, jobs: Vec<SaveJob>) {
                         let _ = library.record_finalized(&job.meeting_id);
                     }
                 }
+                if !app.state::<Quitting>().0.load(Ordering::SeqCst)
+                    && Settings::load(&app.state::<SettingsPath>().0).auto_process
+                {
+                    if let Ok(mut processor) = lock_processor(&app) {
+                        processor.enqueue(&job.meeting_id);
+                    }
+                    let _ = publish_processing(&app);
+                }
             }
             if let Ok(mut recorder) = app.state::<RecorderState>().lock() {
                 recorder.save_finished(&job.meeting_id, result);
@@ -310,6 +554,14 @@ fn toggle_pause(app: &AppHandle) {
 /// Saves an active Recording and waits for running saves before exiting, so no save is cut off
 /// half-written. Waits off the main thread: tray updates from the save thread need it.
 fn quit(app: &AppHandle) {
+    app.state::<Quitting>().0.store(true, Ordering::SeqCst);
+    if let Ok(status) = publish_processing(app) {
+        for job in status.jobs {
+            if let Ok(mut processor) = lock_processor(app) {
+                processor.cancel(&job.meeting_id);
+            }
+        }
+    }
     if matches!(status(app), Ok(status) if status.phase != Phase::Idle) {
         let _ = stop(app);
     }
@@ -317,6 +569,7 @@ fn quit(app: &AppHandle) {
     thread::spawn(move || {
         while matches!(status(&app), Ok(status)
             if status.saves.iter().any(|save| save.state == SaveState::Saving))
+            || lock_processor(&app).is_ok_and(|processor| processor.is_running())
         {
             thread::sleep(Duration::from_millis(100));
         }
@@ -425,6 +678,9 @@ fn main() {
             let settings_path = app.path().app_data_dir()?.join("settings.json");
             let settings = Settings::load(&settings_path);
             app.manage(SettingsPath(settings_path));
+            app.manage(ModelsDir(app.path().app_data_dir()?.join("models")));
+            app.manage(Quitting(AtomicBool::new(false)));
+            app.manage(Mutex::new(Processor::new()));
             app.manage(Mutex::new(Recorder::new(
                 WasapiOpener,
                 QpcClock::new()?,
@@ -486,6 +742,7 @@ fn main() {
             });
 
             recover(app.handle());
+            processing_worker(app.handle().clone());
 
             // Elapsed time for the window indicator and the tray while a Recording runs.
             let handle = app.handle().clone();
@@ -520,7 +777,15 @@ fn main() {
             retry_save,
             continue_meeting,
             dismiss_continue,
-            acknowledge_recording_notice
+            acknowledge_recording_notice,
+            processing_status,
+            transcribe_meeting,
+            cancel_processing,
+            dismiss_processing,
+            meeting_transcript,
+            set_meeting_language,
+            get_settings,
+            update_settings
         ])
         .run(tauri::generate_context!())
         .expect("error while running Meeting Minutes");

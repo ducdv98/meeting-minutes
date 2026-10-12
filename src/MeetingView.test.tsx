@@ -1,11 +1,15 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import MeetingView from "./MeetingView";
 import { meetingDetail, renameMeeting, type MeetingDetail } from "./library";
 import { convertFileSrc } from "@tauri-apps/api/core";
+import { onLibraryChanged } from "./recording";
+import { processingStatus, meetingTranscript, enqueueTranscription, cancelProcessing, onProcessingStatus, setMeetingLanguage, type ProcessingStatus } from "./processing";
 
 vi.mock("./library", () => ({ meetingDetail: vi.fn(), renameMeeting: vi.fn() }));
+vi.mock("./processing", async (importOriginal) => ({ ...(await importOriginal<typeof import("./processing")>()), processingStatus: vi.fn(), meetingTranscript: vi.fn(), enqueueTranscription: vi.fn(), cancelProcessing: vi.fn(), dismissProcessing: vi.fn(), setMeetingLanguage: vi.fn(), onProcessingStatus: vi.fn(() => Promise.resolve(() => {})) }));
+vi.mock("./recording", async (importOriginal) => ({ ...(await importOriginal<typeof import("./recording")>()), onLibraryChanged: vi.fn(() => Promise.resolve(() => {})) }));
 vi.mock("@tauri-apps/api/core", () => ({ convertFileSrc: vi.fn((path: string) => `asset:${path}`) }));
 
 const detail: MeetingDetail = {
@@ -20,6 +24,11 @@ const detail: MeetingDetail = {
 
 beforeEach(() => {
   vi.mocked(meetingDetail).mockResolvedValue(detail);
+  vi.mocked(processingStatus).mockResolvedValue({ jobs: [] });
+  vi.mocked(meetingTranscript).mockResolvedValue(null);
+  vi.mocked(enqueueTranscription).mockResolvedValue({ jobs: [{ meeting_id: "old", stage: "queued", progress: 0, error: null }] });
+  vi.mocked(cancelProcessing).mockResolvedValue({ jobs: [] });
+  vi.mocked(setMeetingLanguage).mockResolvedValue();
   vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
   vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => {});
 });
@@ -30,7 +39,7 @@ it("shows the Meeting fields and Timeline markers", async () => {
   expect(await screen.findByRole("heading", { name: "Planning" })).toBeTruthy();
   expect(screen.getByText("2026-10-12 09:30").getAttribute("datetime")).toBe(detail.started_at);
   expect(screen.getByText("Duration: 00:02:05")).toBeTruthy();
-  expect(screen.getByText("Language: Vietnamese")).toBeTruthy();
+  expect((screen.getByRole("combobox", { name: "Language" }) as HTMLSelectElement).value).toBe("vi");
   expect(convertFileSrc).toHaveBeenCalledWith(detail.audio_path);
   expect(container.querySelector("audio")?.getAttribute("src")).toBe(`asset:${detail.audio_path}`);
   expect((screen.getByRole("slider", { name: "Position" }) as HTMLInputElement).max).toBe("125000");
@@ -81,13 +90,66 @@ it("shows no audio, disables empty saves, and handles Escape", async () => {
   vi.mocked(meetingDetail).mockResolvedValue({ ...detail, language: null, audio_path: null });
   render(<MeetingView id="old" onBack={() => {}} onRenamed={() => {}} />);
   expect(await screen.findByText("No audio yet")).toBeTruthy();
-  expect(screen.getByText("Language: Not set")).toBeTruthy();
+  expect((screen.getByRole("combobox", { name: "Language" }) as HTMLSelectElement).value).toBe("");
   fireEvent.click(screen.getByRole("button", { name: "Rename" }));
   const title = screen.getByRole("textbox", { name: "Title" });
   fireEvent.change(title, { target: { value: "   " } });
   expect((screen.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true);
   fireEvent.keyDown(title, { key: "Escape" });
   await waitFor(() => expect(screen.getByRole("heading", { name: "Planning" })).toBeTruthy());
+});
+
+it("enqueues transcription and can cancel a queued job", async () => {
+  render(<MeetingView id="old" onBack={() => {}} onRenamed={() => {}} />);
+  fireEvent.click(await screen.findByRole("button", { name: "Transcribe" }));
+  expect(enqueueTranscription).toHaveBeenCalledWith("old");
+  expect(await screen.findByText("Waiting to transcribe")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Cancel processing" }));
+  await waitFor(() => expect(cancelProcessing).toHaveBeenCalledWith("old"));
+});
+
+it("shows download progress, failure actions, and a ready revision", async () => {
+  const downloading: ProcessingStatus = { jobs: [{ meeting_id: "old", stage: "downloading", progress: 0.34, error: null }] };
+  vi.mocked(processingStatus).mockResolvedValue(downloading);
+  const { rerender } = render(<MeetingView id="old" onBack={() => {}} onRenamed={() => {}} />);
+  expect(await screen.findByText("Downloading model 34%")).toBeTruthy();
+  vi.mocked(processingStatus).mockResolvedValue({ jobs: [{ meeting_id: "old", stage: "failed", progress: 0.34, error: "Model unavailable" }] });
+  rerender(<MeetingView id="new" onBack={() => {}} onRenamed={() => {}} />);
+  rerender(<MeetingView id="old" onBack={() => {}} onRenamed={() => {}} />);
+  expect((await screen.findByRole("alert")).textContent).toContain("Model unavailable");
+  expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Dismiss" })).toBeTruthy();
+});
+
+it("shows transcript metadata and changes the Meeting language", async () => {
+  vi.mocked(meetingTranscript).mockResolvedValue({ schema_version: 1, revision: 2, created_at: "2026-10-12T10:00:00Z", model: "small", language: "vi", language_detected: true, duration_ms: 125000, segments: [{ id: "s00001", start_ms: 0, end_ms: 1000, text: "Hello", speaker: "me" }] });
+  render(<MeetingView id="old" onBack={() => {}} onRenamed={() => {}} />);
+  expect(await screen.findByText("Transcript revision 2 · 1 segments · Vietnamese")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Re-transcribe" })).toBeTruthy();
+  fireEvent.change(screen.getByRole("combobox", { name: "Language" }), { target: { value: "en" } });
+  await waitFor(() => expect(setMeetingLanguage).toHaveBeenCalledWith("old", "en"));
+});
+
+it("shows transcription progress and reloads a completed transcript", async () => {
+  vi.mocked(processingStatus).mockResolvedValue({ jobs: [{ meeting_id: "old", stage: "transcribing", progress: 0.61, error: null }] });
+  render(<MeetingView id="old" onBack={() => {}} onRenamed={() => {}} />);
+  expect(await screen.findByText("Transcribing 61%")).toBeTruthy();
+  vi.mocked(meetingTranscript).mockResolvedValue({ schema_version: 1, revision: 1, created_at: "2026-10-12T10:00:00Z", model: "small", language: "en", language_detected: false, duration_ms: 125000, segments: [] });
+  await act(async () => { vi.mocked(onLibraryChanged).mock.calls[0][0](); });
+  expect(await screen.findByText("Transcript revision 1 · 0 segments · English")).toBeTruthy();
+});
+
+it("keeps a newer processing event when the initial snapshot arrives late", async () => {
+  let resolveSnapshot!: (status: ProcessingStatus) => void;
+  vi.mocked(processingStatus).mockReturnValue(new Promise((resolve) => { resolveSnapshot = resolve; }));
+  render(<MeetingView id="old" onBack={() => {}} onRenamed={() => {}} />);
+  await screen.findByRole("heading", { name: "Planning" });
+  const event = vi.mocked(onProcessingStatus).mock.calls[0][0];
+  await act(async () => event({ jobs: [{ meeting_id: "old", stage: "transcribing", progress: 0.61, error: null }] }));
+  expect(screen.getByText("Transcribing 61%")).toBeTruthy();
+  await act(async () => resolveSnapshot({ jobs: [{ meeting_id: "old", stage: "queued", progress: 0, error: null }] }));
+  expect(screen.getByText("Transcribing 61%")).toBeTruthy();
+  expect(screen.queryByText("Waiting to transcribe")).toBeNull();
 });
 
 it("follows the new id even when reloading the renamed Meeting fails", async () => {
