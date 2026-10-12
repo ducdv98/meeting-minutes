@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import wordmark from "./assets/wordmark-dark.png";
 import { listMeetings, type MeetingSummary } from "./library";
 
 export default function App() {
@@ -20,6 +21,9 @@ export default function App() {
 
   return (
     <main>
+      <header>
+        <img className="wordmark" src={wordmark} alt="Meeting Minutes" />
+      </header>
       <h1>Library</h1>
       {failed && <p role="alert">Could not load the Library</p>}
       {meetings?.length === 0 && <p>No meetings yet</p>}

@@ -19,6 +19,15 @@ it("shows an empty Library when there are no Meetings", async () => {
   expect(await screen.findByText("No meetings yet")).toBeTruthy();
 });
 
+it("shows the Meeting Minutes wordmark", async () => {
+  vi.mocked(listMeetings).mockResolvedValue([]);
+
+  render(<App />);
+
+  expect(screen.getByRole("img", { name: "Meeting Minutes" })).toBeTruthy();
+  await screen.findByText("No meetings yet");
+});
+
 it("lists Meeting titles in the Library", async () => {
   vi.mocked(listMeetings).mockResolvedValue([
     { id: "one", title: "Planning", started_at: "2026-10-12T09:00:00Z" },

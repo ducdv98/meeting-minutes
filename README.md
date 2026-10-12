@@ -1,3 +1,5 @@
+<img src="assets/brand/wordmark-dark.png" alt="Meeting Minutes" width="360">
+
 # Meeting Minutes
 
 A local-first Windows app for keeping Meetings in a personal Library. This scaffold currently shows an empty Library.
@@ -32,3 +34,14 @@ The installer is written to `target/release/bundle/nsis/`.
 ## Install a CI build
 
 Open the repository's **Actions** tab, choose a successful CI run, and download **meeting-minutes-windows-installer** under **Artifacts**. Unzip it and run the NSIS `.exe` installer. The installer is unsigned; if Windows SmartScreen warns, choose **More info → Run anyway**.
+
+## Branding
+
+The brand pack in `assets/brand/` holds the original files and is never edited. The build uses files derived from it: `src-tauri/app-icon.png` and `src-tauri/icons/` for the app, and `src/assets/` for the UI. To rebuild them after changing the pack:
+
+```sh
+python scripts/build-brand-assets.py      # needs Pillow
+pnpm tauri icon src-tauri/app-icon.png    # then keep only the files listed in tauri.conf.json
+```
+
+See `docs/adr/0004-branding-from-the-image-pack.md`.
