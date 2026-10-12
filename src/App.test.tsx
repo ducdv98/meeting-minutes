@@ -4,6 +4,11 @@ import App from "./App";
 import { rescanLibrary } from "./library";
 
 vi.mock("./library", () => ({ rescanLibrary: vi.fn() }));
+vi.mock("./RecordingBar", () => ({ default: () => null }));
+vi.mock("./recording", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./recording")>()),
+  onLibraryChanged: () => Promise.resolve(() => {}),
+}));
 
 afterEach(() => {
   cleanup();
@@ -30,14 +35,14 @@ it("shows the Meeting Minutes wordmark", async () => {
 
 it("lists Meeting titles in the Library", async () => {
   vi.mocked(rescanLibrary).mockResolvedValue({ meetings: [
-    { id: "one", title: "Planning", started_at: "2026-10-12T09:00:00Z" },
-    { id: "two", title: "Review", started_at: "2026-10-12T10:00:00Z" },
+    { id: "one", title: "Planning", started_at: "2026-10-12T09:00:00Z", duration_ms: 0 },
+    { id: "two", title: "Review", started_at: "2026-10-12T10:00:00Z", duration_ms: 1_830_000 },
   ], malformed: [] });
 
   render(<App />);
 
   expect(await screen.findByText("Planning")).toBeTruthy();
-  expect(screen.getByText("Review")).toBeTruthy();
+  expect(screen.getAllByRole("listitem")[1].textContent).toContain("Review · 00:30:30");
   expect(screen.getByText("2026-10-12 09:00").getAttribute("datetime")).toBe("2026-10-12T09:00:00Z");
 });
 
@@ -51,7 +56,7 @@ it("shows an error when the Library cannot be loaded", async () => {
 
 it("reports malformed folders while listing valid Meetings", async () => {
   vi.mocked(rescanLibrary).mockResolvedValue({
-    meetings: [{ id: "one", title: "Planning", started_at: "2026-10-12T09:00:00Z" }],
+    meetings: [{ id: "one", title: "Planning", started_at: "2026-10-12T09:00:00Z", duration_ms: 0 }],
     malformed: [{ folder: "Broken folder", reason: "missing meeting.json" }],
   });
   render(<App />);
@@ -63,7 +68,7 @@ it("reports malformed folders while listing valid Meetings", async () => {
 it("rescans the Library when the Rescan button is clicked", async () => {
   vi.mocked(rescanLibrary)
     .mockResolvedValueOnce({ meetings: [], malformed: [] })
-    .mockResolvedValueOnce({ meetings: [{ id: "one", title: "Planning", started_at: "2026-10-12T09:00:00Z" }], malformed: [] });
+    .mockResolvedValueOnce({ meetings: [{ id: "one", title: "Planning", started_at: "2026-10-12T09:00:00Z", duration_ms: 0 }], malformed: [] });
   render(<App />);
   await screen.findByText("No meetings yet");
   fireEvent.click(screen.getByRole("button", { name: "Rescan" }));

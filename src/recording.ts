@@ -1,0 +1,68 @@
+import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+
+export interface PendingSave {
+  meeting_id: string;
+  state: "saving" | "failed";
+  error: string | null;
+}
+
+export interface RecorderStatus {
+  phase: "idle" | "recording" | "paused";
+  meeting_id: string | null;
+  elapsed_ms: number;
+  notice_acknowledged: boolean;
+  saves: PendingSave[];
+}
+
+export const recordHotkey = "Ctrl+Alt+Shift+R";
+export const pauseHotkey = "Ctrl+Alt+Shift+P";
+
+export function recordingStatus(): Promise<RecorderStatus> {
+  return invoke<RecorderStatus>("recording_status");
+}
+
+export function startRecording(): Promise<RecorderStatus> {
+  return invoke<RecorderStatus>("start_recording");
+}
+
+export function pauseRecording(): Promise<RecorderStatus> {
+  return invoke<RecorderStatus>("pause_recording");
+}
+
+export function resumeRecording(): Promise<RecorderStatus> {
+  return invoke<RecorderStatus>("resume_recording");
+}
+
+export function stopRecording(): Promise<RecorderStatus> {
+  return invoke<RecorderStatus>("stop_recording");
+}
+
+export function retrySave(meetingId: string): Promise<RecorderStatus> {
+  return invoke<RecorderStatus>("retry_save", { meetingId });
+}
+
+export function acknowledgeRecordingNotice(): Promise<RecorderStatus> {
+  return invoke<RecorderStatus>("acknowledge_recording_notice");
+}
+
+export function onRecordingStatus(handler: (status: RecorderStatus) => void): Promise<UnlistenFn> {
+  return listen<RecorderStatus>("recording-status", (event) => handler(event.payload));
+}
+
+/** The tray or hotkey asked to record before the Recording notice was ever shown. */
+export function onRecordingNoticeRequested(handler: () => void): Promise<UnlistenFn> {
+  return listen("recording-notice-requested", () => handler());
+}
+
+export function onLibraryChanged(handler: () => void): Promise<UnlistenFn> {
+  return listen("library-changed", () => handler());
+}
+
+export function formatElapsed(ms: number): string {
+  const total = Math.floor(ms / 1000);
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = total % 60;
+  return [hours, minutes, seconds].map((part) => String(part).padStart(2, "0")).join(":");
+}

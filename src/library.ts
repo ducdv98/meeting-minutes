@@ -4,6 +4,7 @@ export interface MeetingSummary {
   id: string;
   title: string;
   started_at: string;
+  duration_ms: number;
 }
 
 export interface MalformedFolder {

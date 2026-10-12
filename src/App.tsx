@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import wordmark from "./assets/wordmark-dark.png";
 import { rescanLibrary, type MalformedFolder, type MeetingSummary } from "./library";
+import RecordingBar from "./RecordingBar";
+import { formatElapsed, onLibraryChanged } from "./recording";
 
 export default function App() {
   const [meetings, setMeetings] = useState<MeetingSummary[] | null>(null);
@@ -26,11 +28,18 @@ export default function App() {
     return () => { active = false; };
   }, [scan]);
 
+  useEffect(() => {
+    // A saved Recording or a new Meeting changes the Library list.
+    const unlisten = onLibraryChanged(() => setScan((value) => value + 1));
+    return () => { unlisten.then((stop) => stop(), () => {}); };
+  }, []);
+
   return (
     <main>
       <header>
         <img className="wordmark" src={wordmark} alt="Meeting Minutes" />
       </header>
+      <RecordingBar />
       <h1>Library</h1>
       <button type="button" onClick={() => setScan((value) => value + 1)}>Rescan</button>
       {failed && <p role="alert">Could not load the Library</p>}
@@ -46,6 +55,7 @@ export default function App() {
           {meetings.map((meeting) => (
             <li key={meeting.id}>
               <time dateTime={meeting.started_at}>{meeting.started_at.slice(0, 16).replace("T", " ")}</time> {meeting.title}
+              {meeting.duration_ms > 0 && <> · {formatElapsed(meeting.duration_ms)}</>}
             </li>
           ))}
         </ul>

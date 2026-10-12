@@ -8,13 +8,20 @@ use std::{
 use chrono::{DateTime, FixedOffset};
 use serde::{Serialize, Serializer};
 
-use crate::{folder_name, index::Index, meeting_file::MeetingFile, MeetingSummary};
+use crate::{
+    folder_name,
+    index::Index,
+    meeting_file::MeetingFile,
+    recording::{write_manifest, RecordingManifest},
+    MeetingSummary,
+};
 
 #[derive(Debug)]
 pub enum LibraryError {
     Io(std::io::Error),
     Index(rusqlite::Error),
     Json(serde_json::Error),
+    Encode(String),
     CollisionLimit,
 }
 
@@ -24,6 +31,7 @@ impl fmt::Display for LibraryError {
             Self::Io(error) => write!(f, "Library I/O error: {error}"),
             Self::Index(error) => write!(f, "Library index error: {error}"),
             Self::Json(error) => write!(f, "Meeting metadata error: {error}"),
+            Self::Encode(error) => write!(f, "Audio encoding error: {error}"),
             Self::CollisionLimit => write!(f, "Could not find an unused Meeting folder name"),
         }
     }
@@ -114,6 +122,7 @@ impl Library {
                         id,
                         title: title.to_owned(),
                         started_at: started_at_string,
+                        duration_ms: 0,
                     };
                     self.index.insert(&summary, started_at.timestamp_millis())?;
                     return Ok(summary);
@@ -127,6 +136,34 @@ impl Library {
 
     pub fn list_meetings(&self) -> Result<Vec<MeetingSummary>, LibraryError> {
         self.index.list()
+    }
+
+    pub fn meeting_dir(&self, id: &str) -> PathBuf {
+        self.root.join(id)
+    }
+
+    pub fn begin_recording(
+        &mut self,
+        started_at: DateTime<FixedOffset>,
+    ) -> Result<(MeetingSummary, PathBuf, RecordingManifest), LibraryError> {
+        let meeting = self.create_meeting("Untitled meeting", started_at)?;
+        let chunk_dir = self.meeting_dir(&meeting.id).join(".chunks/recording-1");
+        fs::create_dir_all(&chunk_dir)?;
+        let manifest = RecordingManifest {
+            number: 1,
+            started_at: started_at.to_rfc3339(),
+            duration_ms: None,
+            markers: Vec::new(),
+        };
+        write_manifest(&chunk_dir, &manifest)?;
+        Ok((meeting, chunk_dir, manifest))
+    }
+
+    pub fn record_finalized(&mut self, meeting_id: &str) -> Result<MeetingSummary, LibraryError> {
+        let (summary, started_at_ms) = read_meeting(&self.meeting_dir(meeting_id), meeting_id)
+            .map_err(LibraryError::Encode)?;
+        self.index.insert(&summary, started_at_ms)?;
+        Ok(summary)
     }
 
     pub fn rescan(&mut self) -> Result<ScanReport, LibraryError> {
@@ -185,6 +222,7 @@ fn read_meeting(path: &Path, id: &str) -> Result<(MeetingSummary, i64), String> 
             id: id.to_owned(),
             title: file.title,
             started_at: file.started_at,
+            duration_ms: file.duration_ms,
         },
         started_at.timestamp_millis(),
     ))

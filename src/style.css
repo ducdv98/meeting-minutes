@@ -16,3 +16,37 @@ main {
   display: block;
   height: 2rem;
 }
+
+.recording-bar { margin: 1.5rem 0; }
+
+.recording-controls { display: flex; gap: 0.5rem; }
+
+.recording-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.recording-indicator .dot {
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 50%;
+  background: #d62828;
+}
+
+.recording-indicator.paused .dot { background: #8a94a6; }
+
+.notice {
+  position: fixed;
+  inset: 20% auto auto 50%;
+  transform: translateX(-50%);
+  max-width: 28rem;
+  padding: 1.5rem;
+  background: #fff;
+  border-radius: 0.5rem;
+  box-shadow: 0 0.5rem 2rem rgb(0 0 0 / 25%);
+}
+
+.notice button + button { margin-left: 0.5rem; }

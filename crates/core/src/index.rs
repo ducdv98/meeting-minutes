@@ -4,7 +4,7 @@ use rusqlite::{params, Connection, ErrorCode};
 
 use crate::{library::LibraryError, MeetingSummary};
 
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 
 pub(crate) struct Index {
     connection: Connection,
@@ -39,13 +39,14 @@ impl Index {
                      id TEXT PRIMARY KEY,
                      title TEXT NOT NULL,
                      started_at TEXT NOT NULL,
-                     started_at_ms INTEGER NOT NULL
+                     started_at_ms INTEGER NOT NULL,
+                     duration_ms INTEGER NOT NULL
                  );
-                 PRAGMA user_version = 1;
+                 PRAGMA user_version = 2;
                  COMMIT;",
             )?;
         }
-        connection.prepare("SELECT id, title, started_at FROM meetings LIMIT 0")?;
+        connection.prepare("SELECT id, title, started_at, duration_ms FROM meetings LIMIT 0")?;
         Ok(Self { connection, fresh })
     }
 
@@ -55,8 +56,8 @@ impl Index {
         started_at_ms: i64,
     ) -> Result<(), LibraryError> {
         self.connection.execute(
-            "INSERT OR REPLACE INTO meetings (id, title, started_at, started_at_ms) VALUES (?1, ?2, ?3, ?4)",
-            params![meeting.id, meeting.title, meeting.started_at, started_at_ms],
+            "INSERT OR REPLACE INTO meetings (id, title, started_at, started_at_ms, duration_ms) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![meeting.id, meeting.title, meeting.started_at, started_at_ms, meeting.duration_ms as i64],
         )?;
         Ok(())
     }
@@ -69,8 +70,8 @@ impl Index {
         transaction.execute("DELETE FROM meetings", [])?;
         for (meeting, started_at_ms) in meetings {
             transaction.execute(
-                "INSERT INTO meetings (id, title, started_at, started_at_ms) VALUES (?1, ?2, ?3, ?4)",
-                params![meeting.id, meeting.title, meeting.started_at, started_at_ms],
+                "INSERT INTO meetings (id, title, started_at, started_at_ms, duration_ms) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![meeting.id, meeting.title, meeting.started_at, started_at_ms, meeting.duration_ms as i64],
             )?;
         }
         transaction.commit()?;
@@ -79,13 +80,14 @@ impl Index {
 
     pub(crate) fn list(&self) -> Result<Vec<MeetingSummary>, LibraryError> {
         let mut statement = self.connection.prepare(
-            "SELECT id, title, started_at FROM meetings ORDER BY started_at_ms DESC, title ASC, id ASC",
+            "SELECT id, title, started_at, duration_ms FROM meetings ORDER BY started_at_ms DESC, title ASC, id ASC",
         )?;
         let rows = statement.query_map([], |row| {
             Ok(MeetingSummary {
                 id: row.get(0)?,
                 title: row.get(1)?,
                 started_at: row.get(2)?,
+                duration_ms: row.get(3)?,
             })
         })?;
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)

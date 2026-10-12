@@ -26,7 +26,7 @@ fn creating_a_meeting_makes_a_readable_folder_and_index_entry() {
         json,
         serde_json::json!({
             "schema_version": 1, "title": "Planning", "started_at": "2026-10-12T09:30:00+07:00",
-            "language": null, "recordings": [], "markers": []
+            "language": null, "duration_ms": 0, "audio": null, "recordings": [], "markers": []
         })
     );
 }
