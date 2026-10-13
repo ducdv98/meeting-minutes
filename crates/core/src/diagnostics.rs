@@ -40,6 +40,11 @@ pub enum LogEvent {
     ProcessingDownloading,
     ProcessingTranscribing,
     ProcessingCompleted,
+    CorrectionResult {
+        outcome: &'static str,
+        changed_segments: usize,
+        duration_ms: u128,
+    },
     ProcessingFailed {
         stage: ProcessingStage,
         kind: &'static str,
@@ -79,7 +84,12 @@ pub enum LogEvent {
         round_trip_ms: u128,
         fallback: &'static str,
     },
-    EngineUsage { groq_ms: u64, gemini_ms: u64, local_ms: u64, fallback: &'static str },
+    EngineUsage {
+        groq_ms: u64,
+        gemini_ms: u64,
+        local_ms: u64,
+        fallback: &'static str,
+    },
     SummaryStarted,
     SummaryCompleted,
     SummaryFailed,
@@ -150,7 +160,12 @@ fn safe_engine_message(message: &str) -> String {
 
 impl LogEvent {
     pub fn engine_usage(groq_ms: u64, gemini_ms: u64, local_ms: u64, reason: Option<&str>) -> Self {
-        Self::EngineUsage { groq_ms, gemini_ms, local_ms, fallback: safe_fallback(reason) }
+        Self::EngineUsage {
+            groq_ms,
+            gemini_ms,
+            local_ms,
+            fallback: safe_fallback(reason),
+        }
     }
     pub fn cloud_span(
         engine: &str,
@@ -328,6 +343,13 @@ impl fmt::Display for LogEvent {
             Self::ProcessingDownloading => "processing_downloading",
             Self::ProcessingTranscribing => "processing_transcribing",
             Self::ProcessingCompleted => "processing_completed",
+            Self::CorrectionResult {
+                outcome,
+                changed_segments,
+                duration_ms,
+            } => {
+                return write!(f, "correction_result outcome={outcome} changed_segments={changed_segments} duration_ms={duration_ms}");
+            }
             Self::ProcessingFailed {
                 stage,
                 kind,
@@ -378,7 +400,12 @@ impl fmt::Display for LogEvent {
             } => {
                 return write!(f, "cloud_span engine={engine} audio_ms={audio_ms} round_trip_ms={round_trip_ms} fallback={fallback}");
             }
-            Self::EngineUsage { groq_ms, gemini_ms, local_ms, fallback } => {
+            Self::EngineUsage {
+                groq_ms,
+                gemini_ms,
+                local_ms,
+                fallback,
+            } => {
                 return write!(f, "engine_usage groq_ms={groq_ms} gemini_ms={gemini_ms} local_ms={local_ms} fallback={fallback}");
             }
             Self::SummaryStarted => "summary_started",
@@ -448,12 +475,25 @@ fn safe_fallback(reason: Option<&str>) -> &'static str {
 }
 
 fn parse_engine_usage(event: &str) -> bool {
-    let Some(rest) = event.strip_prefix("engine_usage groq_ms=") else { return false; };
-    let Some((groq, rest)) = rest.split_once(" gemini_ms=") else { return false; };
-    let Some((gemini, rest)) = rest.split_once(" local_ms=") else { return false; };
-    let Some((local, fallback)) = rest.split_once(" fallback=") else { return false; };
-    [groq, gemini, local].iter().all(|audio| audio.parse::<u64>().is_ok())
-        && matches!(fallback, "none" | "quota" | "unauthorized" | "offline" | "rate_limit" | "other")
+    let Some(rest) = event.strip_prefix("engine_usage groq_ms=") else {
+        return false;
+    };
+    let Some((groq, rest)) = rest.split_once(" gemini_ms=") else {
+        return false;
+    };
+    let Some((gemini, rest)) = rest.split_once(" local_ms=") else {
+        return false;
+    };
+    let Some((local, fallback)) = rest.split_once(" fallback=") else {
+        return false;
+    };
+    [groq, gemini, local]
+        .iter()
+        .all(|audio| audio.parse::<u64>().is_ok())
+        && matches!(
+            fallback,
+            "none" | "quota" | "unauthorized" | "offline" | "rate_limit" | "other"
+        )
 }
 
 pub fn log_provider_error(kind: ProviderKind, error: &AiError) {
@@ -543,7 +583,13 @@ fn safe_log_line(line: &str) -> bool {
     if parse_processing_event(event) {
         return true;
     }
-    if parse_transcription_rtf(event).is_some() || parse_cloud_span(event) || parse_engine_usage(event) {
+    if parse_correction_event(event) {
+        return true;
+    }
+    if parse_transcription_rtf(event).is_some()
+        || parse_cloud_span(event)
+        || parse_engine_usage(event)
+    {
         return true;
     }
     let Some(rest) = event.strip_prefix("provider_error provider=") else {
@@ -557,6 +603,25 @@ fn safe_log_line(line: &str) -> bool {
             || status
                 .parse::<u16>()
                 .is_ok_and(|value| value.to_string() == status))
+}
+
+fn parse_correction_event(event: &str) -> bool {
+    let Some((outcome, rest)) = event
+        .strip_prefix("correction_result outcome=")
+        .and_then(|rest| rest.split_once(" changed_segments="))
+    else {
+        return false;
+    };
+    let Some((changed, duration)) = rest.split_once(" duration_ms=") else {
+        return false;
+    };
+    matches!(outcome, "completed" | "failed" | "unavailable")
+        && changed
+            .parse::<usize>()
+            .is_ok_and(|value| value.to_string() == changed)
+        && duration
+            .parse::<u128>()
+            .is_ok_and(|value| value.to_string() == duration)
 }
 
 fn parse_processing_event(event: &str) -> bool {

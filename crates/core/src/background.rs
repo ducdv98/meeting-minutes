@@ -6,11 +6,7 @@
 //! are a cache in memory: they never reach the Library, and Processing after Stop transcribes only
 //! the audio after each Source's committed point.
 
-use std::{
-    fs, io,
-    path::Path,
-    sync::atomic::AtomicBool,
-};
+use std::{fs, io, path::Path, sync::atomic::AtomicBool};
 
 use crate::{
     audio_prep::{Decimator, WHISPER_RATE},
@@ -235,7 +231,11 @@ impl BackgroundTranscriber {
 
     /// Adds 48 kHz mono audio of one Source, as a Chunk would.
     pub fn push(&mut self, source: Source, samples_48k: &[f32]) {
-        if let Some(stream) = self.streams.iter_mut().find(|stream| stream.source == source) {
+        if let Some(stream) = self
+            .streams
+            .iter_mut()
+            .find(|stream| stream.source == source)
+        {
             stream.push(samples_48k);
         }
     }

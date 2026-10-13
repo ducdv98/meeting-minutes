@@ -2,7 +2,10 @@ use std::{fs, path::Path};
 
 use rusqlite::{params, Connection, ErrorCode};
 
-use crate::{library::LibraryError, participant::Participants, transcript::Transcript, MeetingSummary, SearchHit};
+use crate::{
+    library::LibraryError, participant::Participants, transcript::Transcript, MeetingSummary,
+    SearchHit,
+};
 
 const SCHEMA_VERSION: i64 = 4;
 

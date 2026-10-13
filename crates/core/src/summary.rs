@@ -51,17 +51,31 @@ pub struct Summary {
 
 pub fn participants_fingerprint(transcript: &Transcript, participants: &Participants) -> String {
     // The prompt also names the user, so the Me Participant counts even when it has no Segments.
-    let segments: Vec<_> = transcript.segments.iter().map(|segment| (&segment.id, participants.name(segment, transcript.revision))).collect();
-    serde_json::to_string(&(participants.label_name(Speaker::Me), segments)).expect("Segment ids and Participant names serialize")
+    let segments: Vec<_> = transcript
+        .segments
+        .iter()
+        .map(|segment| (&segment.id, participants.name(segment, transcript.revision)))
+        .collect();
+    serde_json::to_string(&(participants.label_name(Speaker::Me), segments))
+        .expect("Segment ids and Participant names serialize")
 }
 
 impl Summary {
-    pub fn participants_changed(&self, transcript: &Transcript, participants: &Participants) -> bool {
+    pub fn participants_changed(
+        &self,
+        transcript: &Transcript,
+        participants: &Participants,
+    ) -> bool {
         match &self.participants_fingerprint {
             Some(saved) => saved != &participants_fingerprint(transcript, participants),
             None => transcript.segments.iter().any(|segment| {
-                let label = if participants.voice_note { Speaker::Me } else { segment.speaker };
-                participants.name(segment, transcript.revision) != crate::participant::default_name(label, None)
+                let label = if participants.voice_note {
+                    Speaker::Me
+                } else {
+                    segment.speaker
+                };
+                participants.name(segment, transcript.revision)
+                    != crate::participant::default_name(label, None)
             }),
         }
     }
@@ -99,7 +113,9 @@ pub fn write_summary(meeting_dir: &Path, title: &str, summary: &Summary) -> io::
 }
 
 pub fn write_summary_for_meeting(meeting_dir: &Path, summary: &Summary) -> io::Result<()> {
-    with_current_title(meeting_dir, |title| write_summary(meeting_dir, title, summary))
+    with_current_title(meeting_dir, |title| {
+        write_summary(meeting_dir, title, summary)
+    })
 }
 
 fn time(ms: u64) -> String {
@@ -237,18 +253,32 @@ fn system(language: Language, reduce: bool, user_name: &str) -> String {
     }
     s
 }
-fn map_request(language: Language, segments: &[Segment], participants: &Participants, revision: u32, max_tokens: u32) -> GenerateRequest {
+fn map_request(
+    language: Language,
+    segments: &[Segment],
+    participants: &Participants,
+    revision: u32,
+    max_tokens: u32,
+) -> GenerateRequest {
     GenerateRequest {
         system: system(language, false, &participants.label_name(Speaker::Me)),
         messages: vec![Message {
             role: Role::User,
-            content: format!("Transcript:\n{}", evidence_text(segments, participants, revision)),
+            content: format!(
+                "Transcript:\n{}",
+                evidence_text(segments, participants, revision)
+            ),
         }],
         schema: Some(schema()),
         max_tokens,
     }
 }
-fn reduce_request(language: Language, parts: &[RawSummary], user_name: &str, max_tokens: u32) -> GenerateRequest {
+fn reduce_request(
+    language: Language,
+    parts: &[RawSummary],
+    user_name: &str,
+    max_tokens: u32,
+) -> GenerateRequest {
     GenerateRequest {
         system: system(language, true, user_name),
         messages: vec![Message {
@@ -271,14 +301,24 @@ impl SummaryOptions {
         }
     }
 }
-pub fn summary_requests(transcript: &Transcript, participants: &Participants, options: &SummaryOptions) -> Vec<GenerateRequest> {
+pub fn summary_requests(
+    transcript: &Transcript,
+    participants: &Participants,
+    options: &SummaryOptions,
+) -> Vec<GenerateRequest> {
     let mut requests = Vec::new();
-    let system_tokens = estimate_tokens(&system(transcript.language, false, &participants.label_name(Speaker::Me)));
+    let system_tokens = estimate_tokens(&system(
+        transcript.language,
+        false,
+        &participants.label_name(Speaker::Me),
+    ));
     let prefix_chars = "Transcript:\n".chars().count();
     let mut chunk_start = 0;
     let mut evidence_chars = 0;
     for (index, segment) in transcript.segments.iter().enumerate() {
-        let line_chars = evidence_line(segment, participants, transcript.revision).chars().count();
+        let line_chars = evidence_line(segment, participants, transcript.revision)
+            .chars()
+            .count();
         let trial_chars = evidence_chars + line_chars + usize::from(index > chunk_start);
         if index > chunk_start
             && system_tokens + (prefix_chars + trial_chars).div_ceil(3) > options.input_tokens
@@ -286,7 +326,9 @@ pub fn summary_requests(transcript: &Transcript, participants: &Participants, op
             requests.push(map_request(
                 transcript.language,
                 &transcript.segments[chunk_start..index],
-                participants, transcript.revision, options.max_tokens,
+                participants,
+                transcript.revision,
+                options.max_tokens,
             ));
             chunk_start = index;
             evidence_chars = line_chars;
@@ -298,7 +340,9 @@ pub fn summary_requests(transcript: &Transcript, participants: &Participants, op
         requests.push(map_request(
             transcript.language,
             &transcript.segments[chunk_start..],
-            participants, transcript.revision, options.max_tokens,
+            participants,
+            transcript.revision,
+            options.max_tokens,
         ));
     }
     requests
@@ -443,7 +487,12 @@ pub fn summarize(
             if !group.is_empty() {
                 let mut trial = group.clone();
                 trial.push(part.clone());
-                let req = reduce_request(transcript.language, &trial, &participants.label_name(Speaker::Me), options.max_tokens);
+                let req = reduce_request(
+                    transcript.language,
+                    &trial,
+                    &participants.label_name(Speaker::Me),
+                    options.max_tokens,
+                );
                 if estimate_tokens(&req.system) + estimate_tokens(&req.messages[0].content)
                     > options.input_tokens
                 {
@@ -472,7 +521,12 @@ pub fn summarize(
                 return Err(AiError::Cancelled);
             }
             let allowed = group.iter().flat_map(RawSummary::ids).collect();
-            let req = reduce_request(transcript.language, &group, &participants.label_name(Speaker::Me), options.max_tokens);
+            let req = reduce_request(
+                transcript.language,
+                &group,
+                &participants.label_name(Speaker::Me),
+                options.max_tokens,
+            );
             let raw: RawSummary = generate_json(provider, &req, &mut |_| {}, cancel)?;
             parts.push(validate(raw, transcript, Some(&allowed), &mut dropped));
             done += 1;
@@ -480,5 +534,11 @@ pub fn summarize(
         }
     }
     let final_raw = validate(parts.pop().unwrap(), transcript, None, &mut dropped);
-    Ok(finish(final_raw, transcript, participants, provider, dropped))
+    Ok(finish(
+        final_raw,
+        transcript,
+        participants,
+        provider,
+        dropped,
+    ))
 }

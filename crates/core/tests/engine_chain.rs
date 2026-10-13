@@ -71,8 +71,18 @@ fn next_cloud_engine_can_handle_fallback_without_local_model() {
     let groq_calls = Arc::new(AtomicUsize::new(0));
     let gemini_calls = Arc::new(AtomicUsize::new(0));
     let loads = Arc::new(AtomicUsize::new(0));
-    let gemini = Box::new(FakeCloud { name: "Gemini", calls: gemini_calls.clone(), replies: vec![Ok(vec![])].into() });
-    let mut engine = chain(vec![cloud(vec![Err(EngineError::QuotaExhausted)], groq_calls.clone()), gemini], loads.clone());
+    let gemini = Box::new(FakeCloud {
+        name: "Gemini",
+        calls: gemini_calls.clone(),
+        replies: vec![Ok(vec![])].into(),
+    });
+    let mut engine = chain(
+        vec![
+            cloud(vec![Err(EngineError::QuotaExhausted)], groq_calls.clone()),
+            gemini,
+        ],
+        loads.clone(),
+    );
     run(&mut engine, &[0.0; 16_000]).unwrap();
     assert_eq!(groq_calls.load(Ordering::SeqCst), 1);
     assert_eq!(gemini_calls.load(Ordering::SeqCst), 1);

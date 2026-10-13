@@ -22,7 +22,10 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{self, BufWriter, Write},
     path::{Path, PathBuf},
-    sync::{mpsc, Arc, atomic::{AtomicU32, AtomicU64, Ordering}},
+    sync::{
+        atomic::{AtomicU32, AtomicU64, Ordering},
+        mpsc, Arc,
+    },
     thread,
     time::{Duration, Instant},
 };
@@ -278,20 +281,27 @@ struct SourceLevel {
 
 impl SourceLevel {
     fn new(start: u64) -> Self {
-        Self { value: AtomicU32::new(0), at_100ns: AtomicU64::new(start), audible_at_100ns: AtomicU64::new(start) }
+        Self {
+            value: AtomicU32::new(0),
+            at_100ns: AtomicU64::new(start),
+            audible_at_100ns: AtomicU64::new(start),
+        }
     }
     fn report(&self, samples: &[f32], at: u64) {
         let value = crate::capture::buffer_level(samples);
         self.value.store(value.to_bits(), Ordering::Relaxed);
         self.at_100ns.store(at, Ordering::Relaxed);
-        if value > 0.0 { self.audible_at_100ns.store(at, Ordering::Relaxed); }
+        if value > 0.0 {
+            self.audible_at_100ns.store(at, Ordering::Relaxed);
+        }
     }
     fn current(&self, now: u64) -> (f32, bool) {
         let age = now.saturating_sub(self.at_100ns.load(Ordering::Relaxed));
         // Decay a stopped stream over one second; the capture worker never waits on the UI.
-        let level = f32::from_bits(self.value.load(Ordering::Relaxed)) *
-            (1.0 - age as f32 / HNS_PER_SECOND as f32).clamp(0.0, 1.0);
-        let silent = now.saturating_sub(self.audible_at_100ns.load(Ordering::Relaxed)) > 3 * HNS_PER_SECOND;
+        let level = f32::from_bits(self.value.load(Ordering::Relaxed))
+            * (1.0 - age as f32 / HNS_PER_SECOND as f32).clamp(0.0, 1.0);
+        let silent =
+            now.saturating_sub(self.audible_at_100ns.load(Ordering::Relaxed)) > 3 * HNS_PER_SECOND;
         (level, silent)
     }
 }
@@ -327,7 +337,10 @@ impl<C: Clock> CaptureSession<C> {
                         worker_clock,
                         start,
                         rx,
-                        WorkerFeedback { switches: worker_switch_tx, level },
+                        WorkerFeedback {
+                            switches: worker_switch_tx,
+                            level,
+                        },
                     );
                 })?;
             workers.push(Worker { tx, join });
@@ -402,10 +415,17 @@ impl<C: Clock> CaptureSession<C> {
     }
     pub fn source_levels(&self) -> Vec<(Source, f32, bool)> {
         let now = self.clock.now_100ns();
-        self.source_levels.iter().map(|(source, level)| {
-            let (value, silent) = level.current(now);
-            (*source, if self.is_paused() { 0.0 } else { value }, silent && !self.is_paused())
-        }).collect()
+        self.source_levels
+            .iter()
+            .map(|(source, level)| {
+                let (value, silent) = level.current(now);
+                (
+                    *source,
+                    if self.is_paused() { 0.0 } else { value },
+                    silent && !self.is_paused(),
+                )
+            })
+            .collect()
     }
     fn control(
         &self,
@@ -601,7 +621,7 @@ fn capture_pending<O: InputOpener, C: Clock>(
                 let now = clock.now_100ns();
                 feedback.level.report(&packet.samples, now);
                 writer.write(&timeline.packet(&packet, now))?
-            },
+            }
             Ok(None) => break,
             Err(_) => input.device = None,
         }
@@ -723,19 +743,36 @@ pub fn finalize_recording(
             timeline_start_ms,
             duration_ms,
             files: vec![
-                SourceFile { source: Source::Microphone, file: mic_name, channels: 1 },
-                SourceFile { source: Source::SystemAudio, file: system_name, channels: 2 },
+                SourceFile {
+                    source: Source::Microphone,
+                    file: mic_name,
+                    channels: 1,
+                },
+                SourceFile {
+                    source: Source::SystemAudio,
+                    file: system_name,
+                    channels: 2,
+                },
             ],
         };
         update_metadata(meeting_dir, |metadata| {
             if metadata["recordings"] != initial_recordings {
-                return Err(LibraryError::Encode("Meeting changed during save; retry".into()));
+                return Err(LibraryError::Encode(
+                    "Meeting changed during save; retry".into(),
+                ));
             }
-            let mut recordings = metadata["recordings"].as_array().cloned().unwrap_or_default();
+            let mut recordings = metadata["recordings"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
             recordings.push(serde_json::to_value(&recording)?);
             metadata["recordings"] = serde_json::Value::Array(recordings);
             let mut markers = metadata["markers"].as_array().cloned().unwrap_or_default();
-            let added: Vec<serde_json::Value> = placement.markers.iter().map(serde_json::to_value).collect::<Result<_, _>>()?;
+            let added: Vec<serde_json::Value> = placement
+                .markers
+                .iter()
+                .map(serde_json::to_value)
+                .collect::<Result<_, _>>()?;
             markers.extend(added);
             metadata["markers"] = serde_json::Value::Array(markers);
             metadata["duration_ms"] = serde_json::to_value(timeline_start_ms + duration_ms)?;

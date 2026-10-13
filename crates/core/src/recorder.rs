@@ -204,8 +204,18 @@ impl<O: InputOpener, C: Clock> Recorder<O, C> {
                     .map(|(source, device)| SourceDevice { source, device })
                     .collect()
             }),
-            source_levels: self.active.as_ref().map_or_else(Vec::new, |active| active.session.source_levels()
-                .into_iter().map(|(source, level, silent)| SourceMeter { source, level, silent }).collect()),
+            source_levels: self.active.as_ref().map_or_else(Vec::new, |active| {
+                active
+                    .session
+                    .source_levels()
+                    .into_iter()
+                    .map(|(source, level, silent)| SourceMeter {
+                        source,
+                        level,
+                        silent,
+                    })
+                    .collect()
+            }),
         }
     }
 
@@ -374,5 +384,4 @@ impl<O: InputOpener, C: Clock> Recorder<O, C> {
     pub fn dismiss_continue(&mut self, meeting_id: &str) {
         self.continue_offers.retain(|id| id != meeting_id);
     }
-
 }

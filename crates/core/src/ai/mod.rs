@@ -292,6 +292,25 @@ pub fn configured_provider(
         }
     })
 }
+
+/// Correction uses Gemini even when Summary and Ask use another provider.
+pub fn correction_provider(
+    settings: &AiSettings,
+    secrets: &dyn SecretStore,
+    http: Arc<dyn HttpClient>,
+) -> Result<Option<HttpProvider>, AiError> {
+    let Some(key) = secrets
+        .get(ProviderKind::Gemini)
+        .map_err(AiError::KeyStore)?
+    else {
+        return Ok(None);
+    };
+    let model = settings
+        .model_for(ProviderKind::Gemini)
+        .filter(|model| !model.trim().is_empty())
+        .unwrap_or("gemini-2.5-flash");
+    Ok(Some(HttpProvider::gemini(http, model, key)))
+}
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Disclosure {
     pub provider: ProviderKind,

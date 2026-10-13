@@ -365,11 +365,24 @@ pub fn retrieve<'a>(
     if segments.is_empty() {
         return Vec::new();
     }
-    let line_chars: Vec<_> = segments.iter().map(|segment| evidence_line(segment, participants, transcript.revision).chars().count()).collect();
+    let line_chars: Vec<_> = segments
+        .iter()
+        .map(|segment| {
+            evidence_line(segment, participants, transcript.revision)
+                .chars()
+                .count()
+        })
+        .collect();
     let query = terms(question);
     let segment_words: Vec<_> = segments
         .iter()
-        .map(|segment| words(&format!("{} {}", participants.name(segment, transcript.revision), segment.text)))
+        .map(|segment| {
+            words(&format!(
+                "{} {}",
+                participants.name(segment, transcript.revision),
+                segment.text
+            ))
+        })
         .collect();
     let mut df = HashMap::new();
     for words in &segment_words {
@@ -394,7 +407,10 @@ pub fn retrieve<'a>(
     if ranks.is_empty() {
         for stride in 1..=segments.len() {
             let candidate: HashSet<_> = (0..segments.len()).step_by(stride).collect();
-            let chars: usize = candidate.iter().map(|index| line_chars[*index]).sum::<usize>()
+            let chars: usize = candidate
+                .iter()
+                .map(|index| line_chars[*index])
+                .sum::<usize>()
                 + candidate.len().saturating_sub(1);
             if chars.div_ceil(3) <= budget_tokens {
                 selected = candidate;
@@ -413,7 +429,8 @@ pub fn retrieve<'a>(
             .flatten()
             {
                 if !selected.contains(&next) {
-                    let trial_chars = selected_chars + line_chars[next] + usize::from(!selected.is_empty());
+                    let trial_chars =
+                        selected_chars + line_chars[next] + usize::from(!selected.is_empty());
                     if trial_chars.div_ceil(3) <= budget_tokens {
                         selected.insert(next);
                         selected_chars = trial_chars;

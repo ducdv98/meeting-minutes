@@ -12,10 +12,7 @@ mod tests {
     #[test]
     fn names_meeting_with_its_own_wall_clock_time() {
         let started_at = DateTime::parse_from_rfc3339("2026-10-12T09:30:00+07:00").unwrap();
-        assert_eq!(
-            folder_name(started_at),
-            "2026-10-12 0930"
-        );
+        assert_eq!(folder_name(started_at), "2026-10-12 0930");
     }
 
     #[test]

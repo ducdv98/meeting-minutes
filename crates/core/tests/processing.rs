@@ -1,5 +1,8 @@
+use meeting_minutes_core::ai::{AiError, GenerateRequest, ProviderKind, TextProvider};
 use meeting_minutes_core::processing::{
-    transcribe_meeting, transcribe_meeting_named_with_draft, SpeechEngine, TranscribeRequest,
+    transcribe_meeting, transcribe_meeting_named_with_draft,
+    transcribe_meeting_resuming_with_correction, CorrectionProvider, SpeechEngine,
+    TranscribeRequest, TranscriptionContext,
 };
 use meeting_minutes_core::processing::{JobStage, ProcessingError, Processor};
 use meeting_minutes_core::transcript::{Language, RawSegment, Speaker};
@@ -11,6 +14,116 @@ use meeting_minutes_core::{
 use std::sync::atomic::AtomicBool;
 use std::sync::{Mutex, Once, OnceLock};
 use tempfile::TempDir;
+
+struct FakeCorrection(Result<String, AiError>);
+impl TextProvider for FakeCorrection {
+    fn kind(&self) -> ProviderKind {
+        ProviderKind::Gemini
+    }
+    fn model(&self) -> &str {
+        "gemini-2.5-flash"
+    }
+    fn generate(
+        &self,
+        _: &GenerateRequest,
+        _: &mut dyn FnMut(&str),
+        _: &AtomicBool,
+    ) -> Result<String, AiError> {
+        match &self.0 {
+            Ok(response) => Ok(response.clone()),
+            Err(_) => Err(AiError::GeminiLimit),
+        }
+    }
+}
+
+#[test]
+fn correction_changes_the_revision_after_the_uncorrected_draft() {
+    let (_temp, dir) = saved_meeting();
+    let mut engine = AudibleEngine {
+        calls: vec![],
+        detected: 0,
+        detected_peak: 0.0,
+    };
+    let provider = FakeCorrection(Ok(
+        r#"{"segments":[{"id":"s00001","text":"Corrected speech"}]}"#.into(),
+    ));
+    let mut draft = vec![];
+    let transcript = transcribe_meeting_resuming_with_correction(
+        &TranscribeRequest {
+            meeting_dir: &dir,
+            model: "small",
+            vocabulary: &[],
+            default_language: Some(Language::En),
+        },
+        &mut engine,
+        &mut |_| {},
+        &AtomicBool::new(false),
+        None,
+        &mut |segments| draft.extend(segments.iter().map(|segment| segment.text.clone())),
+        TranscriptionContext {
+            background: &[],
+            correction: CorrectionProvider::Ready(&provider),
+        },
+    )
+    .unwrap();
+    assert!(draft.iter().all(|text| text == "Speech"));
+    assert_eq!(transcript.segments[0].text, "Corrected speech");
+    let published: meeting_minutes_core::transcript::Transcript =
+        serde_json::from_slice(&std::fs::read(dir.join("transcript.r1.json")).unwrap()).unwrap();
+    assert_eq!(published.segments[0].text, "Corrected speech");
+}
+
+#[test]
+fn correction_quota_failure_publishes_original_revision_with_notice() {
+    let (temp, dir) = saved_meeting();
+    let mut engine = AudibleEngine {
+        calls: vec![],
+        detected: 0,
+        detected_peak: 0.0,
+    };
+    let provider = FakeCorrection(Err(AiError::GeminiLimit));
+    let transcript = transcribe_meeting_resuming_with_correction(
+        &TranscribeRequest {
+            meeting_dir: &dir,
+            model: "small",
+            vocabulary: &[],
+            default_language: Some(Language::En),
+        },
+        &mut engine,
+        &mut |_| {},
+        &AtomicBool::new(false),
+        None,
+        &mut |_| {},
+        TranscriptionContext {
+            background: &[],
+            correction: CorrectionProvider::Ready(&provider),
+        },
+    )
+    .unwrap();
+    assert!(transcript
+        .segments
+        .iter()
+        .all(|segment| segment.text == "Speech"));
+    let published: meeting_minutes_core::transcript::Transcript =
+        serde_json::from_slice(&std::fs::read(dir.join("transcript.r1.json")).unwrap()).unwrap();
+    assert_eq!(published.segments, transcript.segments);
+    let metadata: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.join("meeting.json")).unwrap()).unwrap();
+    assert_eq!(
+        metadata["correction_notice"],
+        "Correction was unavailable; this Revision has uncorrected text."
+    );
+    let library = Library::open(
+        temp.path().join("Library"),
+        temp.path().join("index.sqlite3"),
+    )
+    .unwrap();
+    let id = dir.file_name().unwrap().to_str().unwrap();
+    assert_eq!(
+        library.meeting(id).unwrap().correction_notice.as_deref(),
+        Some("Correction was unavailable; this Revision has uncorrected text.")
+    );
+}
 
 struct FakeEngine {
     calls: usize,
@@ -324,8 +437,15 @@ fn cloud_quota_mid_meeting_publishes_one_revision_with_both_engines() {
     assert!(dir.join("transcript.r1.json").exists());
     assert!(!dir.join("transcript.r2.json").exists());
     let current = std::thread::current().id();
-    assert!(EVENTS.get().unwrap().lock().unwrap().iter().any(|(thread, event)|
-        *thread == current && event.starts_with("engine_usage groq_ms=") && event.contains("fallback=quota")));
+    assert!(EVENTS
+        .get()
+        .unwrap()
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|(thread, event)| *thread == current
+            && event.starts_with("engine_usage groq_ms=")
+            && event.contains("fallback=quota")));
 }
 
 struct AudibleEngine {

@@ -71,7 +71,10 @@ impl Decimator {
         if self.history.len() > TAPS {
             self.history.pop_back();
         }
-        if self.frames.is_multiple_of((INPUT_RATE / WHISPER_RATE) as usize) {
+        if self
+            .frames
+            .is_multiple_of((INPUT_RATE / WHISPER_RATE) as usize)
+        {
             self.output.push(
                 self.taps
                     .iter()

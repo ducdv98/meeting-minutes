@@ -48,12 +48,17 @@ pub(crate) fn with_current_title<T>(
     write: impl FnOnce(&str) -> io::Result<T>,
 ) -> io::Result<T> {
     with_current_metadata(folder, |metadata| {
-        let title = metadata["title"].as_str().ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Missing Meeting title"))?;
+        let title = metadata["title"]
+            .as_str()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Missing Meeting title"))?;
         write(title)
     })
 }
 
-pub(crate) fn with_current_metadata<T>(folder: &Path, write: impl FnOnce(&Value) -> io::Result<T>) -> io::Result<T> {
+pub(crate) fn with_current_metadata<T>(
+    folder: &Path,
+    write: impl FnOnce(&Value) -> io::Result<T>,
+) -> io::Result<T> {
     let _guard = METADATA_LOCK
         .get_or_init(|| Mutex::new(()))
         .lock()

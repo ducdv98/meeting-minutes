@@ -1,7 +1,9 @@
 use crate::{
+    ai::TextProvider,
     audio_prep::{prepare_import, prepare_recording, PreparedRecording},
     background::BackgroundResult,
     cloud::{CloudEngine, EngineError},
+    correction,
     diagnostics::{log_event, LogEvent, TranscriptionEnvironment},
     meeting_file::{MeetingFile, RecordingEntry, RecordingFile},
     transcript::{
@@ -282,14 +284,16 @@ impl SpeechEngine for EngineChain<'_> {
     }
     fn engine_audio_ms(&self) -> Option<(u64, u64, u64)> {
         (!self.cloud.is_empty()).then(|| {
-            self.audio_ms.iter().fold((0, 0, 0), |mut totals, (name, audio)| {
-                match name.as_str() {
-                    "Groq" => totals.0 += audio,
-                    "Gemini" => totals.1 += audio,
-                    _ => totals.2 += audio,
-                }
-                totals
-            })
+            self.audio_ms
+                .iter()
+                .fold((0, 0, 0), |mut totals, (name, audio)| {
+                    match name.as_str() {
+                        "Groq" => totals.0 += audio,
+                        "Gemini" => totals.1 += audio,
+                        _ => totals.2 += audio,
+                    }
+                    totals
+                })
         })
     }
     fn has_speech(&mut self, samples: &[f32]) -> bool {
@@ -662,7 +666,18 @@ pub fn transcribe_meeting_named(
     cancel: &AtomicBool,
     your_name: Option<&str>,
 ) -> Result<Transcript, ProcessingError> {
-    transcribe_meeting_with_draft(request, engine, progress, cancel, your_name, None, &[])
+    transcribe_meeting_with_draft(
+        request,
+        engine,
+        progress,
+        cancel,
+        your_name,
+        None,
+        TranscriptionContext {
+            background: &[],
+            correction: CorrectionProvider::Disabled,
+        },
+    )
 }
 
 pub fn transcribe_meeting_named_with_draft(
@@ -687,6 +702,41 @@ pub fn transcribe_meeting_resuming(
     draft: &mut dyn FnMut(&[PlacedSegment]),
     background: &[BackgroundResult],
 ) -> Result<Transcript, ProcessingError> {
+    transcribe_meeting_resuming_with_correction(
+        request,
+        engine,
+        progress,
+        cancel,
+        your_name,
+        draft,
+        TranscriptionContext {
+            background,
+            correction: CorrectionProvider::Disabled,
+        },
+    )
+}
+
+#[derive(Clone, Copy)]
+pub enum CorrectionProvider<'a> {
+    Disabled,
+    Ready(&'a dyn TextProvider),
+    Unavailable,
+}
+
+pub struct TranscriptionContext<'a> {
+    pub background: &'a [BackgroundResult],
+    pub correction: CorrectionProvider<'a>,
+}
+
+pub fn transcribe_meeting_resuming_with_correction(
+    request: &TranscribeRequest,
+    engine: &mut dyn SpeechEngine,
+    progress: &mut dyn FnMut(f32),
+    cancel: &AtomicBool,
+    your_name: Option<&str>,
+    draft: &mut dyn FnMut(&[PlacedSegment]),
+    context: TranscriptionContext<'_>,
+) -> Result<Transcript, ProcessingError> {
     transcribe_meeting_with_draft(
         request,
         engine,
@@ -694,7 +744,7 @@ pub fn transcribe_meeting_resuming(
         cancel,
         your_name,
         Some(draft),
-        background,
+        context,
     )
 }
 
@@ -705,7 +755,7 @@ fn transcribe_meeting_with_draft(
     cancel: &AtomicBool,
     your_name: Option<&str>,
     draft: Option<&mut DraftCallback<'_>>,
-    background: &[BackgroundResult],
+    context: TranscriptionContext<'_>,
 ) -> Result<Transcript, ProcessingError> {
     let mut telemetry = ProcessingTelemetry {
         stage: ProcessingStage::Preparing,
@@ -723,7 +773,8 @@ fn transcribe_meeting_with_draft(
         Resume {
             your_name,
             draft,
-            background,
+            background: context.background,
+            correction_provider: context.correction,
         },
         &mut telemetry,
     );
@@ -747,6 +798,7 @@ struct Resume<'a, 'd> {
     your_name: Option<&'a str>,
     draft: Option<&'a mut DraftCallback<'d>>,
     background: &'a [BackgroundResult],
+    correction_provider: CorrectionProvider<'a>,
 }
 
 fn transcribe_meeting_inner(
@@ -761,6 +813,7 @@ fn transcribe_meeting_inner(
         your_name,
         mut draft,
         background,
+        correction_provider,
     } = resume;
     if cancel.load(Ordering::SeqCst) {
         return Err(ProcessingError::Cancelled);
@@ -994,6 +1047,68 @@ fn transcribe_meeting_inner(
             metadata.duration_ms,
         ),
     };
+    let mut correction_notice = None;
+    if let CorrectionProvider::Ready(provider) = correction_provider {
+        let mut names = std::collections::BTreeSet::new();
+        let participants = crate::participant::Participants::new(
+            metadata.participants.clone(),
+            metadata.segment_participants.clone(),
+            your_name,
+            metadata.is_voice_note(),
+        );
+        names.extend(participants.vocabulary_names(None));
+        names.extend(
+            transcript
+                .segments
+                .iter()
+                .map(|segment| participants.label_name(segment.speaker)),
+        );
+        if let Some(assignments) = &metadata.segment_participants {
+            names.extend(assignments.segments.values().cloned());
+        }
+        let names = names.into_iter().collect::<Vec<_>>();
+        let started = Instant::now();
+        match correction::correct(
+            provider,
+            &transcript.segments,
+            transcript.language,
+            request.vocabulary,
+            &names,
+            cancel,
+        ) {
+            Ok(corrected) => {
+                let changed = transcript
+                    .segments
+                    .iter()
+                    .zip(&corrected)
+                    .filter(|(before, after)| before.text != after.text)
+                    .count();
+                transcript.segments = corrected;
+                log_event(LogEvent::CorrectionResult {
+                    outcome: "completed",
+                    changed_segments: changed,
+                    duration_ms: started.elapsed().as_millis(),
+                });
+            }
+            Err(_) if cancel.load(Ordering::SeqCst) => return Err(ProcessingError::Cancelled),
+            Err(_) => {
+                correction_notice =
+                    Some("Correction was unavailable; this Revision has uncorrected text.");
+                log_event(LogEvent::CorrectionResult {
+                    outcome: "failed",
+                    changed_segments: 0,
+                    duration_ms: started.elapsed().as_millis(),
+                });
+            }
+        }
+    } else if matches!(correction_provider, CorrectionProvider::Unavailable) {
+        correction_notice = Some("Correction was unavailable; this Revision has uncorrected text.");
+        log_event(LogEvent::CorrectionResult {
+            outcome: "unavailable",
+            changed_segments: 0,
+            duration_ms: 0,
+        });
+    }
     let markdown_tmp = request.meeting_dir.join("transcript.md.tmp");
     let mut published = false;
     for _ in 0..10 {
@@ -1040,6 +1155,11 @@ fn transcribe_meeting_inner(
     let write = crate::metadata::update_metadata_and(
         request.meeting_dir,
         |metadata| {
+            if let Some(notice) = correction_notice {
+                metadata["correction_notice"] = serde_json::Value::String(notice.into());
+            } else if let Some(object) = metadata.as_object_mut() {
+                object.remove("correction_notice");
+            }
             let file: MeetingFile = serde_json::from_value(metadata.clone())?;
             // Segment moves belong to the Revision they were made on; carry them onto this one by time.
             let previous_path = file
@@ -1107,7 +1227,12 @@ fn transcribe_meeting_inner(
         whisper_wall_time,
     ));
     if let Some((groq_ms, gemini_ms, local_ms)) = engine.engine_audio_ms() {
-        log_event(LogEvent::engine_usage(groq_ms, gemini_ms, local_ms, engine.fallback_reason()));
+        log_event(LogEvent::engine_usage(
+            groq_ms,
+            gemini_ms,
+            local_ms,
+            engine.fallback_reason(),
+        ));
     }
     Ok(transcript)
 }

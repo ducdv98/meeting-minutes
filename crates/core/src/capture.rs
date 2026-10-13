@@ -16,9 +16,17 @@ pub const HNS_PER_SECOND: u64 = 10_000_000;
 
 /// Peak level on a perceptual meter: silence below -60 dBFS, full scale at 0 dBFS.
 pub fn buffer_level(samples: &[f32]) -> f32 {
-    let peak = samples.iter().copied().filter(|sample| sample.is_finite())
-        .map(f32::abs).fold(0.0_f32, f32::max);
-    if peak <= 0.001 { 0.0 } else { ((20.0 * peak.log10() + 60.0) / 60.0).clamp(0.0, 1.0) }
+    let peak = samples
+        .iter()
+        .copied()
+        .filter(|sample| sample.is_finite())
+        .map(f32::abs)
+        .fold(0.0_f32, f32::max);
+    if peak <= 0.001 {
+        0.0
+    } else {
+        ((20.0 * peak.log10() + 60.0) / 60.0).clamp(0.0, 1.0)
+    }
 }
 const GAP_TOLERANCE_FRAMES: u64 = 480;
 const IDLE_MARGIN_HNS: u64 = 2_000_000;

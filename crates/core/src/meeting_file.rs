@@ -40,6 +40,7 @@ pub struct MeetingDetail {
     pub voice_note: bool,
     pub participants: MeetingParticipants,
     pub segment_participants: Option<SegmentParticipants>,
+    pub correction_notice: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -100,6 +101,8 @@ pub(crate) struct MeetingFile {
     pub segment_participants: Option<SegmentParticipants>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cloud_consent: Vec<CloudConsent>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub correction_notice: Option<String>,
 }
 
 impl MeetingFile {
@@ -117,17 +120,25 @@ impl MeetingFile {
             participants: MeetingParticipants::new(),
             segment_participants: None,
             cloud_consent: Vec::new(),
+            correction_notice: None,
         }
     }
 }
 
 impl MeetingFile {
     pub(crate) fn is_voice_note(&self) -> bool {
-        if self.import.is_some() { return false; }
-        let sources: Vec<_> = self.recordings.iter().filter_map(|recording| match recording {
-            RecordingEntry::Known(known) => Some(known.files.iter().map(|file| file.source)),
-            _ => None,
-        }).flatten().collect();
+        if self.import.is_some() {
+            return false;
+        }
+        let sources: Vec<_> = self
+            .recordings
+            .iter()
+            .filter_map(|recording| match recording {
+                RecordingEntry::Known(known) => Some(known.files.iter().map(|file| file.source)),
+                _ => None,
+            })
+            .flatten()
+            .collect();
         !sources.is_empty() && sources.iter().all(|source| *source == Source::Microphone)
     }
 }

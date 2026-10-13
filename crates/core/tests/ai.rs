@@ -73,6 +73,29 @@ fn gemini_can_be_selected_for_summary_with_a_saved_key_and_default_model() {
 }
 
 #[test]
+fn correction_uses_gemini_key_independent_of_summary_provider() {
+    let secrets = MemorySecretStore::default();
+    let settings = AiSettings {
+        provider: Some(ProviderKind::Openai),
+        gemini_model: Some("gemini-2.5-pro".into()),
+        ..AiSettings::default()
+    };
+    assert!(
+        correction_provider(&settings, &secrets, Arc::new(FakeHttp::default()))
+            .unwrap()
+            .is_none()
+    );
+    secrets
+        .set(ProviderKind::Gemini, &ApiKey::new("gemini-secret").unwrap())
+        .unwrap();
+    let provider = correction_provider(&settings, &secrets, Arc::new(FakeHttp::default()))
+        .unwrap()
+        .unwrap();
+    assert_eq!(provider.kind(), ProviderKind::Gemini);
+    assert_eq!(provider.model(), "gemini-2.5-pro");
+}
+
+#[test]
 fn provider_context_sizes_match_generation_budgets() {
     use meeting_minutes_core::ai::{context_tokens, OLLAMA_CONTEXT_TOKENS};
     assert_eq!(
@@ -84,9 +107,9 @@ fn provider_context_sizes_match_generation_budgets() {
 }
 
 use meeting_minutes_core::ai::{
-    configured_provider, disclosure, generate_json, list_models, test_cloud_key, AiError,
-    GenerateRequest, HttpClient, HttpProvider, HttpRequest, HttpResponse, Message, Method,
-    OutputSchema, Role, SecretStore, TextProvider,
+    configured_provider, correction_provider, disclosure, generate_json, list_models,
+    test_cloud_key, AiError, GenerateRequest, HttpClient, HttpProvider, HttpRequest, HttpResponse,
+    Message, Method, OutputSchema, Role, SecretStore, TextProvider,
 };
 
 #[test]

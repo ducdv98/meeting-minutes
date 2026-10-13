@@ -2,7 +2,10 @@ use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{participant::Participants, transcript::{Segment, Transcript}};
+use crate::{
+    participant::Participants,
+    transcript::{Segment, Transcript},
+};
 
 /// A Segment ID and its Timeline range, copied from the Transcript by app code.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -50,10 +53,19 @@ pub fn check_citations(
 }
 
 pub fn evidence_line(segment: &Segment, participants: &Participants, revision: u32) -> String {
-    format!("[{}] {}: {}", segment.id, participants.name(segment, revision), segment.text)
+    format!(
+        "[{}] {}: {}",
+        segment.id,
+        participants.name(segment, revision),
+        segment.text
+    )
 }
 
-pub fn evidence_text<'a>(segments: impl IntoIterator<Item = &'a Segment>, participants: &Participants, revision: u32) -> String {
+pub fn evidence_text<'a>(
+    segments: impl IntoIterator<Item = &'a Segment>,
+    participants: &Participants,
+    revision: u32,
+) -> String {
     segments
         .into_iter()
         .map(|segment| evidence_line(segment, participants, revision))
