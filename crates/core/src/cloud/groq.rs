@@ -1,5 +1,6 @@
 use crate::{
-    ai::{AiError, ApiKey, HttpBody, HttpClient, HttpRequest, Method, UreqClient},
+    ai::{AiError, ApiKey, HttpBody, HttpClient, HttpRequest, HttpResponse, Method, UreqClient},
+    cloud::CloudEngine,
     processing::{ProcessingError, SpeechEngine},
     transcript::{Language, RawSegment, RawWord},
 };
@@ -12,12 +13,12 @@ use flacenc::{
 };
 use serde_json::Value;
 use std::{
-    fmt,
-    io::Read,
+    io::{Cursor, Read},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
-        Arc,
+        mpsc, Arc,
     },
+    thread,
     time::Duration,
 };
 
@@ -27,28 +28,7 @@ const MAX_FILE_BYTES: usize = 25 * 1024 * 1024;
 const MAX_SPAN_SAMPLES: usize = 5 * 60 * 16_000;
 static BOUNDARY_ID: AtomicU64 = AtomicU64::new(0);
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum EngineError {
-    RateLimited { retry_after: Duration },
-    QuotaExhausted,
-    Unauthorized,
-    Offline,
-    Cancelled,
-    Other,
-}
-impl fmt::Display for EngineError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::RateLimited { .. } => f.write_str("Groq rate limit reached"),
-            Self::QuotaExhausted => f.write_str("Groq daily quota exhausted"),
-            Self::Unauthorized => f.write_str("Groq rejected the API key"),
-            Self::Offline => f.write_str("Could not reach Groq"),
-            Self::Cancelled => f.write_str("Processing cancelled"),
-            Self::Other => f.write_str("Groq transcription failed"),
-        }
-    }
-}
-impl std::error::Error for EngineError {}
+pub use crate::cloud::EngineError;
 
 pub struct GroqEngine {
     http: Arc<dyn HttpClient>,
@@ -147,9 +127,9 @@ impl GroqEngine {
             return Ok((first, first_lang.or(second_lang)));
         }
         let body = multipart(&self.boundary, &audio, language, vocabulary);
-        let response = self
-            .http
-            .send(HttpRequest {
+        let response = send_cancellable(
+            self.http.clone(),
+            HttpRequest {
                 method: Method::Post,
                 url: URL.into(),
                 headers: vec![(
@@ -160,11 +140,14 @@ impl GroqEngine {
                     boundary: self.boundary.clone(),
                     bytes: body,
                 }),
-            })
-            .map_err(|error| match error {
-                AiError::Unreachable(_) => EngineError::Offline,
-                _ => EngineError::Other,
-            })?;
+            },
+            cancel,
+        )
+        .map_err(|error| match error {
+            AiError::Unreachable(_) => EngineError::Offline,
+            AiError::Cancelled => EngineError::Cancelled,
+            _ => EngineError::Other,
+        })?;
         if !(200..300).contains(&response.status) {
             let status = response.status;
             let retry_after = response
@@ -246,6 +229,37 @@ impl GroqEngine {
     }
 }
 
+fn send_cancellable(
+    http: Arc<dyn HttpClient>,
+    request: HttpRequest,
+    cancel: &AtomicBool,
+) -> Result<HttpResponse, AiError> {
+    let (sender, receiver) = mpsc::sync_channel(1);
+    thread::spawn(move || {
+        let result = http.send(request).and_then(|mut response| {
+            let mut body = Vec::new();
+            (&mut response.body)
+                .take(16 * 1024 * 1024)
+                .read_to_end(&mut body)?;
+            response.body = Box::new(Cursor::new(body));
+            Ok(response)
+        });
+        let _ = sender.send(result);
+    });
+    loop {
+        if cancel.load(Ordering::SeqCst) {
+            return Err(AiError::Cancelled);
+        }
+        match receiver.recv_timeout(Duration::from_millis(100)) {
+            Ok(result) => return result,
+            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                return Err(AiError::Unreachable("Provider request ended".into()))
+            }
+        }
+    }
+}
+
 impl SpeechEngine for GroqEngine {
     fn backend(&self) -> &str {
         "Groq"
@@ -279,6 +293,30 @@ impl SpeechEngine for GroqEngine {
             })?;
         progress(1.0);
         Ok(result)
+    }
+}
+
+impl CloudEngine for GroqEngine {
+    fn name(&self) -> &str {
+        "Groq"
+    }
+    fn transcribe_span(
+        &mut self,
+        samples_16k: &[f32],
+        language: Language,
+        vocabulary: Option<&str>,
+        cancel: &AtomicBool,
+    ) -> Result<Vec<RawSegment>, EngineError> {
+        self.transcribe_typed(samples_16k, Some(language), vocabulary, cancel)
+    }
+    fn detect_language(
+        &mut self,
+        samples_16k: &[f32],
+        cancel: &AtomicBool,
+    ) -> Result<Option<Language>, EngineError> {
+        let opening = &samples_16k[..samples_16k.len().min(30 * 16_000)];
+        self.transcribe_with_language(opening, None, None, cancel)
+            .map(|(_, language)| language)
     }
 }
 

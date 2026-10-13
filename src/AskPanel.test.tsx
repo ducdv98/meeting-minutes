@@ -4,7 +4,7 @@ import AskPanel from "./AskPanel";
 import { askMeeting, askSendPlan, meetingAsks, onAskDelta, onAsksChanged, retryAsk, stopAsk } from "./ask";
 import type { Transcript } from "./processing";
 vi.mock("./ask", () => ({ askMeeting: vi.fn(), askSendPlan: vi.fn(), meetingAsks: vi.fn(), onAskDelta: vi.fn(() => Promise.resolve(() => {})), onAsksChanged: vi.fn(() => Promise.resolve(() => {})), retryAsk: vi.fn(), stopAsk: vi.fn(), answerLabel: (state: string) => ({ incomplete: "Incomplete", unverified: "Unverified", failed: "Failed", insufficient_evidence: "Insufficient evidence" })[state] ?? "" }));
-const transcript: Transcript = { schema_version: 1, revision: 2, created_at: "now", model: "small", language: "en", language_detected: false, duration_ms: 30000, segments: [] };
+const transcript: Transcript = { schema_version: 1, revision: 2, created_at: "now", model: ["small"], language: "en", language_detected: false, duration_ms: 30000, segments: [] };
 const aiStatus = { provider: "ollama" as const, model: "llama", configured: true, has_openai_key: false, has_anthropic_key: false, has_groq_key: false, has_gemini_key: false };
 const empty = { asks: [], active: null, retryable_id: null };
 beforeEach(() => { vi.mocked(meetingAsks).mockResolvedValue(empty); vi.mocked(askSendPlan).mockResolvedValue({ provider: "ollama", cloud: false, consented: true, disclosure: null }); vi.mocked(askMeeting).mockResolvedValue(empty); vi.mocked(retryAsk).mockResolvedValue(empty); vi.mocked(stopAsk).mockResolvedValue(); });

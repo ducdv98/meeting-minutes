@@ -1,7 +1,13 @@
-use meeting_minutes_core::processing::{transcribe_meeting, transcribe_meeting_named_with_draft, SpeechEngine, TranscribeRequest};
+use meeting_minutes_core::processing::{
+    transcribe_meeting, transcribe_meeting_named_with_draft, SpeechEngine, TranscribeRequest,
+};
 use meeting_minutes_core::processing::{JobStage, ProcessingError, Processor};
 use meeting_minutes_core::transcript::{Language, RawSegment, Speaker};
 use meeting_minutes_core::{capture::Source, finalize_recording, recording::ChunkWriter, Library};
+use meeting_minutes_core::{
+    cloud::{CloudEngine, EngineError},
+    processing::EngineChain,
+};
 use std::sync::atomic::AtomicBool;
 use std::sync::{Mutex, Once, OnceLock};
 use tempfile::TempDir;
@@ -259,6 +265,69 @@ fn saved_meeting() -> (TempDir, std::path::PathBuf) {
     (temp, dir)
 }
 
+#[test]
+fn cloud_quota_mid_meeting_publishes_one_revision_with_both_engines() {
+    record_events();
+    struct QuotaCloud {
+        calls: usize,
+    }
+    impl CloudEngine for QuotaCloud {
+        fn name(&self) -> &str {
+            "Groq"
+        }
+        fn transcribe_span(
+            &mut self,
+            _: &[f32],
+            _: Language,
+            _: Option<&str>,
+            _: &AtomicBool,
+        ) -> Result<Vec<RawSegment>, EngineError> {
+            self.calls += 1;
+            if self.calls == 2 {
+                Err(EngineError::QuotaExhausted)
+            } else {
+                Ok(vec![])
+            }
+        }
+    }
+    let (_temp, dir) = saved_meeting();
+    let mut engine = EngineChain::new(
+        vec![Box::new(QuotaCloud { calls: 0 })],
+        "small",
+        Box::new(|| {
+            Ok(Box::new(FakeEngine {
+                calls: 0,
+                prompts: vec![],
+                detected: 0,
+                lengths: vec![],
+            }))
+        }),
+    );
+    let transcript = transcribe_meeting(
+        &TranscribeRequest {
+            meeting_dir: &dir,
+            model: "small",
+            vocabulary: &[],
+            default_language: Some(Language::En),
+        },
+        &mut engine,
+        &mut |_| {},
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    assert_eq!(transcript.revision, 1);
+    assert_eq!(transcript.model, vec!["Groq", "small"]);
+    assert_eq!(
+        transcript.fallback_reason.as_deref(),
+        Some("Groq daily limit reached")
+    );
+    assert!(dir.join("transcript.r1.json").exists());
+    assert!(!dir.join("transcript.r2.json").exists());
+    let current = std::thread::current().id();
+    assert!(EVENTS.get().unwrap().lock().unwrap().iter().any(|(thread, event)|
+        *thread == current && event.starts_with("engine_usage groq_ms=") && event.contains("fallback=quota")));
+}
+
 struct AudibleEngine {
     calls: Vec<(usize, f32)>,
     detected: usize,
@@ -387,22 +456,46 @@ fn simultaneous_sources_keep_overlapping_segments_with_distinct_speakers() {
 #[test]
 fn draft_callback_reports_placed_segments_per_source_with_bounded_progress() {
     let (_temp, dir) = saved_meeting();
-    let mut engine = AudibleEngine { calls: vec![], detected: 0, detected_peak: 0.0 };
+    let mut engine = AudibleEngine {
+        calls: vec![],
+        detected: 0,
+        detected_peak: 0.0,
+    };
     let mut batches = vec![];
     let mut progress = vec![];
     let transcript = transcribe_meeting_named_with_draft(
-        &TranscribeRequest { meeting_dir: &dir, model: "small", vocabulary: &[], default_language: Some(Language::En) },
+        &TranscribeRequest {
+            meeting_dir: &dir,
+            model: "small",
+            vocabulary: &[],
+            default_language: Some(Language::En),
+        },
         &mut engine,
         &mut |fraction| progress.push(fraction),
         &AtomicBool::new(false),
         None,
         &mut |segments| batches.push(segments.to_vec()),
-    ).unwrap();
+    )
+    .unwrap();
     assert_eq!(batches.len(), 2);
-    assert_eq!(batches[0].iter().map(|s| (s.start_ms, s.end_ms, s.speaker)).collect::<Vec<_>>(), vec![(0, 80, Speaker::Me)]);
-    assert_eq!(batches[1].iter().map(|s| (s.start_ms, s.end_ms, s.speaker)).collect::<Vec<_>>(), vec![(100, 180, Speaker::Remote)]);
+    assert_eq!(
+        batches[0]
+            .iter()
+            .map(|s| (s.start_ms, s.end_ms, s.speaker))
+            .collect::<Vec<_>>(),
+        vec![(0, 80, Speaker::Me)]
+    );
+    assert_eq!(
+        batches[1]
+            .iter()
+            .map(|s| (s.start_ms, s.end_ms, s.speaker))
+            .collect::<Vec<_>>(),
+        vec![(100, 180, Speaker::Remote)]
+    );
     assert_eq!(transcript.segments.len(), 2);
-    assert!(progress.iter().all(|fraction| (0.0..=1.0).contains(fraction)));
+    assert!(progress
+        .iter()
+        .all(|fraction| (0.0..=1.0).contains(fraction)));
 }
 
 fn meeting_with_sources(mic: f32, system: f32) -> (TempDir, std::path::PathBuf) {

@@ -58,9 +58,21 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.resetAllMocks(); });
 
+it("shows why part of the Meeting used local transcription", async () => {
+  vi.mocked(meetingTranscript).mockResolvedValue({ schema_version: 1, revision: 1, created_at: "now", model: ["Groq", "small"], fallback_reason: "Groq daily limit reached", language: "en", language_detected: false, duration_ms: 1000, segments: [] });
+  render(<MeetingView id="old" onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
+  expect(await screen.findByText("Part of this Meeting was transcribed locally: Groq daily limit reached.")).toBeTruthy();
+});
+
+it("names the cloud fallback engine in the Meeting notice", async () => {
+  vi.mocked(meetingTranscript).mockResolvedValue({ schema_version: 1, revision: 1, created_at: "now", model: ["Groq", "Gemini"], fallback_reason: "Groq daily limit reached", language: "en", language_detected: false, duration_ms: 1000, segments: [] });
+  render(<MeetingView id="old" onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
+  expect(await screen.findByText("Part of this Meeting was transcribed with Gemini: Groq daily limit reached.")).toBeTruthy();
+});
+
 it("names Participants for present Speaker labels while Processing is busy", async () => {
   vi.mocked(processingStatus).mockResolvedValue({ jobs: [{ meeting_id: "old", model: "small", stage: "transcribing", progress: 0.5, error: null }] });
-  vi.mocked(meetingTranscript).mockResolvedValue({ schema_version: 1, revision: 1, created_at: "2026-10-12T10:00:00Z", model: "small", language: "en", language_detected: false, duration_ms: 2000, segments: [
+  vi.mocked(meetingTranscript).mockResolvedValue({ schema_version: 1, revision: 1, created_at: "2026-10-12T10:00:00Z", model: ["small"], language: "en", language_detected: false, duration_ms: 2000, segments: [
     { id: "s00001", start_ms: 0, end_ms: 500, text: "Hello", speaker: "me" },
     { id: "s00002", start_ms: 600, end_ms: 1000, text: "Hi", speaker: "remote" },
   ] });
@@ -79,7 +91,7 @@ it("names Participants for present Speaker labels while Processing is busy", asy
 it("names only the user in a Voice note with Unknown Segments", async () => {
   vi.mocked(meetingDetail).mockResolvedValue({ ...detail, sources: ["microphone"], voice_note: true });
   vi.mocked(getSettings).mockResolvedValue({ recording_notice_acknowledged: true, cloud_notice_acknowledged: false, auto_process: true, model: "small", vocabulary: [], language: null, your_name: "Duc", ai: { provider: null, ollama_model: null, openai_model: null, anthropic_model: null, gemini_model: null } });
-  vi.mocked(meetingTranscript).mockResolvedValue({ schema_version: 1, revision: 1, created_at: "2026-10-12T10:00:00Z", model: "small", language: "en", language_detected: false, duration_ms: 1000, segments: [{ id: "s00001", start_ms: 0, end_ms: 500, text: "Note to self", speaker: "unknown" }] });
+  vi.mocked(meetingTranscript).mockResolvedValue({ schema_version: 1, revision: 1, created_at: "2026-10-12T10:00:00Z", model: ["small"], language: "en", language_detected: false, duration_ms: 1000, segments: [{ id: "s00001", start_ms: 0, end_ms: 500, text: "Note to self", speaker: "unknown" }] });
   render(<MeetingView id="old" onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
   const me = await screen.findByRole("combobox", { name: "Me Participant" });
   await waitFor(() => expect((me as HTMLInputElement).value).toBe("Duc"));
@@ -92,7 +104,7 @@ it("names only the user in a Voice note with Unknown Segments", async () => {
 
 it("renames a Segment Participant onto an existing name and removes it", async () => {
   vi.mocked(meetingDetail).mockResolvedValueOnce({ ...detail, participants: { remote: "Anna" }, segment_participants: { revision: 1, segments: { s00002: "Bao" } } }).mockResolvedValue({ ...detail, participants: { remote: "Anna" }, segment_participants: null });
-  vi.mocked(meetingTranscript).mockResolvedValue({ schema_version: 1, revision: 1, created_at: "now", model: "small", language: "en", language_detected: false, duration_ms: 2000, segments: [
+  vi.mocked(meetingTranscript).mockResolvedValue({ schema_version: 1, revision: 1, created_at: "now", model: ["small"], language: "en", language_detected: false, duration_ms: 2000, segments: [
     { id: "s00001", start_ms: 0, end_ms: 800, text: "One", speaker: "remote" },
     { id: "s00002", start_ms: 900, end_ms: 1700, text: "Two", speaker: "remote" },
   ] });
@@ -107,7 +119,7 @@ it("renames a Segment Participant onto an existing name and removes it", async (
 });
 
 it("moves selected Segments through the Meeting command", async () => {
-  vi.mocked(meetingTranscript).mockResolvedValue({ schema_version: 1, revision: 3, created_at: "now", model: "small", language: "en", language_detected: false, duration_ms: 1000, segments: [{ id: "s00001", start_ms: 0, end_ms: 800, text: "One", speaker: "unknown" }] });
+  vi.mocked(meetingTranscript).mockResolvedValue({ schema_version: 1, revision: 3, created_at: "now", model: ["small"], language: "en", language_detected: false, duration_ms: 1000, segments: [{ id: "s00001", start_ms: 0, end_ms: 800, text: "One", speaker: "unknown" }] });
   vi.mocked(meetingDetail).mockResolvedValueOnce(detail).mockResolvedValue({ ...detail, segment_participants: { revision: 3, segments: { s00001: "Bao" } } });
   render(<MeetingView id="old" onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
   fireEvent.click(await screen.findByRole("checkbox", { name: "Select Segment s00001" }));
@@ -119,7 +131,7 @@ it("moves selected Segments through the Meeting command", async () => {
 });
 
 it("plays and highlights a search result once the Transcript and player load", async () => {
-  vi.mocked(meetingTranscript).mockResolvedValue({ schema_version: 1, revision: 1, created_at: "2026-10-12T10:00:00Z", model: "small", language: "en", language_detected: false, duration_ms: 125000, segments: [{ id: "s00001", start_ms: 1000, end_ms: 2000, text: "Budget", speaker: "me" }] });
+  vi.mocked(meetingTranscript).mockResolvedValue({ schema_version: 1, revision: 1, created_at: "2026-10-12T10:00:00Z", model: ["small"], language: "en", language_detected: false, duration_ms: 125000, segments: [{ id: "s00001", start_ms: 1000, end_ms: 2000, text: "Budget", speaker: "me" }] });
   const onOpened = vi.fn();
   const { container } = render(<MeetingView id="old" openAt={{ segment_id: "s00001", revision: 1, start_ms: 1000, end_ms: 2000 }} onOpened={onOpened} onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
   await waitFor(() => expect(onOpened).toHaveBeenCalledTimes(1));
@@ -129,7 +141,7 @@ it("plays and highlights a search result once the Transcript and player load", a
 });
 
 it("does not play a search hit from an older Revision", async () => {
-  vi.mocked(meetingTranscript).mockResolvedValue({ schema_version: 1, revision: 2, created_at: "2026-10-12T10:00:00Z", model: "small", language: "en", language_detected: false, duration_ms: 125000, segments: [{ id: "s00001", start_ms: 8000, end_ms: 9000, text: "Different span", speaker: "me" }] });
+  vi.mocked(meetingTranscript).mockResolvedValue({ schema_version: 1, revision: 2, created_at: "2026-10-12T10:00:00Z", model: ["small"], language: "en", language_detected: false, duration_ms: 125000, segments: [{ id: "s00001", start_ms: 8000, end_ms: 9000, text: "Different span", speaker: "me" }] });
   const onOpened = vi.fn();
   render(<MeetingView id="old" openAt={{ segment_id: "s00001", revision: 1, start_ms: 1000, end_ms: 2000 }} onOpened={onOpened} onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
   await waitFor(() => expect(onOpened).toHaveBeenCalledTimes(1));
@@ -139,7 +151,7 @@ it("does not play a search hit from an older Revision", async () => {
 });
 
 it("does not play a search hit whose Segment is absent", async () => {
-  vi.mocked(meetingTranscript).mockResolvedValue({ schema_version: 1, revision: 1, created_at: "2026-10-12T10:00:00Z", model: "small", language: "en", language_detected: false, duration_ms: 125000, segments: [{ id: "s00002", start_ms: 8000, end_ms: 9000, text: "Another span", speaker: "me" }] });
+  vi.mocked(meetingTranscript).mockResolvedValue({ schema_version: 1, revision: 1, created_at: "2026-10-12T10:00:00Z", model: ["small"], language: "en", language_detected: false, duration_ms: 125000, segments: [{ id: "s00002", start_ms: 8000, end_ms: 9000, text: "Another span", speaker: "me" }] });
   const onOpened = vi.fn();
   render(<MeetingView id="old" openAt={{ segment_id: "s00001", revision: 1, start_ms: 1000, end_ms: 2000 }} onOpened={onOpened} onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
   await waitFor(() => expect(onOpened).toHaveBeenCalledTimes(1));
@@ -185,7 +197,7 @@ it("shows recorded Sources and opens the Meeting folder", async () => {
 
 it("highlights the cited Timeline span when a Summary Citation plays", async () => {
   vi.mocked(aiStatus).mockResolvedValue({ provider: "ollama", model: "llama", configured: true, has_openai_key: false, has_anthropic_key: false, has_groq_key: false, has_gemini_key: false });
-  vi.mocked(meetingTranscript).mockResolvedValue({ schema_version: 1, revision: 1, created_at: "now", model: "small", language: "en", language_detected: false, duration_ms: 125000, segments: [{ id: "s00001", start_ms: 1000, end_ms: 2500, text: "Budget approved", speaker: "me" }] });
+  vi.mocked(meetingTranscript).mockResolvedValue({ schema_version: 1, revision: 1, created_at: "now", model: ["small"], language: "en", language_detected: false, duration_ms: 125000, segments: [{ id: "s00001", start_ms: 1000, end_ms: 2500, text: "Budget approved", speaker: "me" }] });
   vi.mocked(meetingSummary).mockResolvedValue({ schema_version: 1, revision: 1, created_at: "now", provider: "ollama", model: "llama", overview: [{ text: "Approved", citations: [{ segment_id: "s00001", start_ms: 1000, end_ms: 2500 }] }], key_points: [], decisions: [], action_items: [], dropped_items: 0 });
   render(<MeetingView id="old" onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
   fireEvent.click(await screen.findByRole("button", { name: /Play from 00:01/ }));
@@ -260,7 +272,7 @@ it("shows download progress, failure actions, and a ready revision", async () =>
 });
 
 it("shows transcript metadata and changes the Meeting language", async () => {
-  vi.mocked(meetingTranscript).mockResolvedValue({ schema_version: 1, revision: 2, created_at: "2026-10-12T10:00:00Z", model: "small", language: "vi", language_detected: true, duration_ms: 125000, segments: [{ id: "s00001", start_ms: 0, end_ms: 1000, text: "Hello", speaker: "me" }] });
+  vi.mocked(meetingTranscript).mockResolvedValue({ schema_version: 1, revision: 2, created_at: "2026-10-12T10:00:00Z", model: ["small"], language: "vi", language_detected: true, duration_ms: 125000, segments: [{ id: "s00001", start_ms: 0, end_ms: 1000, text: "Hello", speaker: "me" }] });
   render(<MeetingView id="old" onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
   expect(await screen.findByText("Transcript revision 2 · model small · 1 segments · Vietnamese")).toBeTruthy();
   expect(screen.getByRole("button", { name: "Re-transcribe" })).toBeTruthy();
@@ -271,7 +283,7 @@ it("shows transcript metadata and changes the Meeting language", async () => {
 });
 
 it("re-transcribes with the chosen model and edits the current Revision", async () => {
-  const original = { schema_version: 1, revision: 2, created_at: "2026-10-12T10:00:00Z", model: "small", language: "en" as const, language_detected: false, duration_ms: 125000, segments: [{ id: "s00001", start_ms: 0, end_ms: 1000, text: "Hello", speaker: "me" as const }] };
+  const original = { schema_version: 1, revision: 2, created_at: "2026-10-12T10:00:00Z", model: ["small"], language: "en" as const, language_detected: false, duration_ms: 125000, segments: [{ id: "s00001", start_ms: 0, end_ms: 1000, text: "Hello", speaker: "me" as const }] };
   vi.mocked(meetingTranscript).mockResolvedValue(original);
   vi.mocked(editSegment).mockResolvedValue({ ...original, segments: [{ ...original.segments[0], text: "Updated" }] });
   render(<MeetingView id="old" onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
@@ -287,7 +299,7 @@ it("re-transcribes with the chosen model and edits the current Revision", async 
 });
 
 it("closes an open Segment editor and keeps the newer Revision when one arrives", async () => {
-  const r1 = { schema_version: 1, revision: 1, created_at: "2026-10-12T10:00:00Z", model: "small", language: "en" as const, language_detected: false, duration_ms: 125000, segments: [{ id: "s00001", start_ms: 0, end_ms: 1000, text: "Hello", speaker: "me" as const }] };
+  const r1 = { schema_version: 1, revision: 1, created_at: "2026-10-12T10:00:00Z", model: ["small"], language: "en" as const, language_detected: false, duration_ms: 125000, segments: [{ id: "s00001", start_ms: 0, end_ms: 1000, text: "Hello", speaker: "me" as const }] };
   const r2 = { ...r1, revision: 2, segments: [{ ...r1.segments[0], text: "Hello again" }] };
   vi.mocked(meetingTranscript).mockResolvedValue(r1);
   let resolveEdit!: (transcript: typeof r1) => void;
@@ -310,7 +322,7 @@ it("shows transcription progress and reloads a completed transcript", async () =
   vi.mocked(processingStatus).mockResolvedValue({ jobs: [{ meeting_id: "old", model: null, stage: "transcribing", progress: 0.61, error: null }] });
   render(<MeetingView id="old" onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
   expect(await screen.findByText("Transcribing 61%")).toBeTruthy();
-  vi.mocked(meetingTranscript).mockResolvedValue({ schema_version: 1, revision: 1, created_at: "2026-10-12T10:00:00Z", model: "small", language: "en", language_detected: false, duration_ms: 125000, segments: [] });
+  vi.mocked(meetingTranscript).mockResolvedValue({ schema_version: 1, revision: 1, created_at: "2026-10-12T10:00:00Z", model: ["small"], language: "en", language_detected: false, duration_ms: 125000, segments: [] });
   await act(async () => { vi.mocked(onLibraryChanged).mock.calls[0][0](); });
   expect(await screen.findByText("Transcript revision 1 · model small · 0 segments · English")).toBeTruthy();
 });
@@ -379,7 +391,7 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-const transcriptWith = (revision: number, text: string) => ({ schema_version: 1, revision, created_at: "2026-10-12T10:00:00Z", model: "small", language: "en" as const, language_detected: false, duration_ms: 125000, segments: [{ id: "s00001", start_ms: 1000, end_ms: 2000, text, speaker: "me" as const }] });
+const transcriptWith = (revision: number, text: string) => ({ schema_version: 1, revision, created_at: "2026-10-12T10:00:00Z", model: ["small"], language: "en" as const, language_detected: false, duration_ms: 125000, segments: [{ id: "s00001", start_ms: 1000, end_ms: 2000, text, speaker: "me" as const }] });
 
 it("shows arriving Draft Segments instead of the old Revision and restores it on cancel", async () => {
   vi.mocked(meetingTranscript).mockResolvedValue(transcriptWith(1, "Old Revision words"));

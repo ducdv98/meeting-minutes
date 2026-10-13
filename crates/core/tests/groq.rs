@@ -167,6 +167,59 @@ fn classifies_auth_offline_and_other_errors() {
 }
 
 #[test]
+fn cancel_returns_while_http_is_waiting() {
+    use std::sync::{mpsc, Condvar};
+    struct WaitingHttp {
+        started: Mutex<Option<mpsc::Sender<()>>>,
+        release: Arc<(Mutex<bool>, Condvar)>,
+    }
+    impl HttpClient for WaitingHttp {
+        fn send(&self, _: HttpRequest) -> Result<HttpResponse, AiError> {
+            self.started
+                .lock()
+                .unwrap()
+                .take()
+                .unwrap()
+                .send(())
+                .unwrap();
+            let (lock, signal) = &*self.release;
+            let mut released = lock.lock().unwrap();
+            while !*released {
+                released = signal.wait(released).unwrap();
+            }
+            Ok(HttpResponse {
+                status: 200,
+                headers: vec![],
+                body: Box::new(Cursor::new(br#"{"segments":[]}"#.to_vec())),
+            })
+        }
+    }
+    let (started_tx, started_rx) = mpsc::channel();
+    let (result_tx, result_rx) = mpsc::channel();
+    let release = Arc::new((Mutex::new(false), Condvar::new()));
+    let http = Arc::new(WaitingHttp {
+        started: Mutex::new(Some(started_tx)),
+        release: release.clone(),
+    });
+    let cancel = Arc::new(AtomicBool::new(false));
+    let worker_cancel = cancel.clone();
+    let worker = std::thread::spawn(move || {
+        let engine = GroqEngine::with_boundary(http, ApiKey::new("secret").unwrap(), "test");
+        result_tx
+            .send(engine.transcribe_typed(&[0.1; 160], Some(Language::En), None, &worker_cancel))
+            .unwrap();
+    });
+    started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    cancel.store(true, std::sync::atomic::Ordering::SeqCst);
+    let result = result_rx.recv_timeout(Duration::from_millis(500));
+    let (lock, signal) = &*release;
+    *lock.lock().unwrap() = true;
+    signal.notify_all();
+    worker.join().unwrap();
+    assert_eq!(result.unwrap().unwrap_err(), EngineError::Cancelled);
+}
+
+#[test]
 fn detects_meeting_language_without_sending_language_field() {
     let http = FakeHttp::reply(200, &[], r#"{"language":"vietnamese","segments":[]}"#);
     let mut engine =

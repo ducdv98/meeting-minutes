@@ -115,7 +115,7 @@ mod tests {
     use crate::transcript::Language;
 
     fn transcript(revision: u32, spans: &[(u64, u64, Speaker)]) -> Transcript {
-        Transcript { schema_version: 1, revision, created_at: "now".into(), model: "small".into(), language: Language::En, language_detected: false, duration_ms: 5000,
+        Transcript { schema_version: 1, revision, created_at: "now".into(), model: vec!["small".into()], fallback_reason: None, language: Language::En, language_detected: false, duration_ms: 5000,
             segments: spans.iter().enumerate().map(|(index, &(start_ms, end_ms, speaker))| Segment { id: format!("s{index:05}"), start_ms, end_ms, text: "words".into(), speaker }).collect() }
     }
 

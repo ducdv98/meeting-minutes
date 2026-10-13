@@ -73,6 +73,13 @@ pub enum LogEvent {
         whisper_ms: u128,
         rtf: Option<f64>,
     },
+    CloudSpan {
+        engine: &'static str,
+        audio_ms: u64,
+        round_trip_ms: u128,
+        fallback: &'static str,
+    },
+    EngineUsage { groq_ms: u64, gemini_ms: u64, local_ms: u64, fallback: &'static str },
     SummaryStarted,
     SummaryCompleted,
     SummaryFailed,
@@ -142,6 +149,29 @@ fn safe_engine_message(message: &str) -> String {
 }
 
 impl LogEvent {
+    pub fn engine_usage(groq_ms: u64, gemini_ms: u64, local_ms: u64, reason: Option<&str>) -> Self {
+        Self::EngineUsage { groq_ms, gemini_ms, local_ms, fallback: safe_fallback(reason) }
+    }
+    pub fn cloud_span(
+        engine: &str,
+        audio_ms: u64,
+        round_trip: Duration,
+        fallback: Option<&str>,
+    ) -> Self {
+        let engine = match engine {
+            "Groq" => "groq",
+            "Gemini" => "gemini",
+            "local" => "local",
+            _ => "unknown",
+        };
+        let fallback = safe_fallback(fallback);
+        Self::CloudSpan {
+            engine,
+            audio_ms,
+            round_trip_ms: round_trip.as_millis(),
+            fallback,
+        }
+    }
     pub fn processing_result(
         error: &ProcessingError,
         stage: ProcessingStage,
@@ -156,7 +186,10 @@ impl LogEvent {
             .copied()
             .find(|known| Some(*known) == backend)
             .unwrap_or("unknown");
-        let device = device.and_then(safe_device_name).unwrap_or("none").to_owned();
+        let device = device
+            .and_then(safe_device_name)
+            .unwrap_or("none")
+            .to_owned();
         let audio_ms = audio_ms.min(total_ms);
         if matches!(error, ProcessingError::Cancelled) {
             return Self::ProcessingCancelled {
@@ -236,7 +269,10 @@ impl LogEvent {
         Self::TranscriptionCompleted {
             model: model.to_owned(),
             backend: (*backend).to_owned(),
-            device: environment.device.and_then(safe_device_name).map(str::to_owned),
+            device: environment
+                .device
+                .and_then(safe_device_name)
+                .map(str::to_owned),
             power: environment.power,
             threads,
             audio_ms,
@@ -334,6 +370,17 @@ impl fmt::Display for LogEvent {
                     audio_after_vad_ms.map_or_else(|| "none".to_owned(), |ms| ms.to_string()),
                     rtf.map_or_else(|| "none".to_owned(), |factor| format!("{factor:.3}")));
             }
+            Self::CloudSpan {
+                engine,
+                audio_ms,
+                round_trip_ms,
+                fallback,
+            } => {
+                return write!(f, "cloud_span engine={engine} audio_ms={audio_ms} round_trip_ms={round_trip_ms} fallback={fallback}");
+            }
+            Self::EngineUsage { groq_ms, gemini_ms, local_ms, fallback } => {
+                return write!(f, "engine_usage groq_ms={groq_ms} gemini_ms={gemini_ms} local_ms={local_ms} fallback={fallback}");
+            }
             Self::SummaryStarted => "summary_started",
             Self::SummaryCompleted => "summary_completed",
             Self::SummaryFailed => "summary_failed",
@@ -365,6 +412,48 @@ impl fmt::Display for LogEvent {
 
 pub fn log_event(event: LogEvent) {
     log::info!(target: "meeting_minutes_events", "{event}");
+}
+
+fn parse_cloud_span(event: &str) -> bool {
+    let Some(rest) = event.strip_prefix("cloud_span engine=") else {
+        return false;
+    };
+    let Some((engine, rest)) = rest.split_once(" audio_ms=") else {
+        return false;
+    };
+    let Some((audio, rest)) = rest.split_once(" round_trip_ms=") else {
+        return false;
+    };
+    let Some((round_trip, fallback)) = rest.split_once(" fallback=") else {
+        return false;
+    };
+    matches!(engine, "groq" | "gemini" | "local" | "unknown")
+        && audio.parse::<u64>().is_ok()
+        && round_trip.parse::<u128>().is_ok()
+        && matches!(
+            fallback,
+            "none" | "quota" | "unauthorized" | "offline" | "rate_limit" | "other"
+        )
+}
+
+fn safe_fallback(reason: Option<&str>) -> &'static str {
+    match reason {
+        Some(reason) if reason.ends_with("daily limit reached") => "quota",
+        Some(reason) if reason.ends_with("API key rejected") => "unauthorized",
+        Some(reason) if reason.ends_with("unavailable") => "offline",
+        Some(reason) if reason.ends_with("rate limit reached") => "rate_limit",
+        Some(_) => "other",
+        None => "none",
+    }
+}
+
+fn parse_engine_usage(event: &str) -> bool {
+    let Some(rest) = event.strip_prefix("engine_usage groq_ms=") else { return false; };
+    let Some((groq, rest)) = rest.split_once(" gemini_ms=") else { return false; };
+    let Some((gemini, rest)) = rest.split_once(" local_ms=") else { return false; };
+    let Some((local, fallback)) = rest.split_once(" fallback=") else { return false; };
+    [groq, gemini, local].iter().all(|audio| audio.parse::<u64>().is_ok())
+        && matches!(fallback, "none" | "quota" | "unauthorized" | "offline" | "rate_limit" | "other")
 }
 
 pub fn log_provider_error(kind: ProviderKind, error: &AiError) {
@@ -454,7 +543,7 @@ fn safe_log_line(line: &str) -> bool {
     if parse_processing_event(event) {
         return true;
     }
-    if parse_transcription_rtf(event).is_some() {
+    if parse_transcription_rtf(event).is_some() || parse_cloud_span(event) || parse_engine_usage(event) {
         return true;
     }
     let Some(rest) = event.strip_prefix("provider_error provider=") else {

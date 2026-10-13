@@ -1,6 +1,7 @@
 use crate::{
-    background::BackgroundResult,
     audio_prep::{prepare_import, prepare_recording, PreparedRecording},
+    background::BackgroundResult,
+    cloud::{CloudEngine, EngineError},
     diagnostics::{log_event, LogEvent, TranscriptionEnvironment},
     meeting_file::{MeetingFile, RecordingEntry, RecordingFile},
     transcript::{
@@ -35,7 +36,23 @@ pub trait SpeechEngine {
     fn audio_after_vad_ms(&self) -> Option<u64> {
         None
     }
+    fn engines_used(&self) -> Vec<String> {
+        vec![]
+    }
+    fn fallback_reason(&self) -> Option<&str> {
+        None
+    }
+    fn engine_audio_ms(&self) -> Option<(u64, u64, u64)> {
+        None
+    }
     fn detect_language(&mut self, samples_16k: &[f32]) -> Result<Language, String>;
+    fn detect_language_with_cancel(
+        &mut self,
+        samples_16k: &[f32],
+        _cancel: &AtomicBool,
+    ) -> Result<Language, String> {
+        self.detect_language(samples_16k)
+    }
     fn has_speech(&mut self, samples_16k: &[f32]) -> bool {
         samples_16k.iter().any(|sample| sample.abs() > 0.01)
     }
@@ -58,7 +75,325 @@ pub trait SpeechEngine {
     ) -> Result<Vec<StreamTranscription>, ProcessingError> {
         transcribe_sequentially(self, streams, language, initial_prompt, progress, cancel)
     }
+}
 
+const CHAIN_SPAN_SAMPLES: usize = 30 * 16_000;
+type LocalFactory<'a> = Box<dyn FnMut() -> Result<Box<dyn SpeechEngine>, ProcessingError> + 'a>;
+type RetrySleeper<'a> = Box<dyn FnMut(Duration, &AtomicBool) -> bool + 'a>;
+
+/// An ordered list of cloud engines followed by a local model that is loaded on demand.
+pub struct EngineChain<'a> {
+    cloud: Vec<Box<dyn CloudEngine>>,
+    unavailable: Vec<bool>,
+    local_name: String,
+    local_factory: LocalFactory<'a>,
+    local: Option<Box<dyn SpeechEngine>>,
+    sleeper: RetrySleeper<'a>,
+    used: Vec<String>,
+    fallback: Option<String>,
+    audio_ms: Vec<(String, u64)>,
+}
+
+impl<'a> EngineChain<'a> {
+    pub fn new(
+        cloud: Vec<Box<dyn CloudEngine>>,
+        local_name: &str,
+        local_factory: LocalFactory<'a>,
+    ) -> Self {
+        let unavailable = vec![false; cloud.len()];
+        Self {
+            cloud,
+            unavailable,
+            local_name: local_name.into(),
+            local_factory,
+            local: None,
+            sleeper: Box::new(|duration, cancel| {
+                let mut left = duration;
+                while !left.is_zero() {
+                    if cancel.load(Ordering::SeqCst) {
+                        return false;
+                    }
+                    let step = left.min(Duration::from_millis(100));
+                    std::thread::sleep(step);
+                    left -= step;
+                }
+                !cancel.load(Ordering::SeqCst)
+            }),
+            used: Vec::new(),
+            fallback: None,
+            audio_ms: Vec::new(),
+        }
+    }
+
+    pub fn set_sleeper(&mut self, sleeper: RetrySleeper<'a>) {
+        self.sleeper = sleeper;
+    }
+
+    fn local(&mut self) -> Result<&mut dyn SpeechEngine, ProcessingError> {
+        if self.local.is_none() {
+            self.local = Some((self.local_factory)()?);
+        }
+        Ok(self.local.as_deref_mut().expect("loaded local engine"))
+    }
+
+    fn remember(&mut self, name: &str) {
+        if !self.used.iter().any(|used| used == name) {
+            self.used.push(name.into());
+        }
+    }
+
+    fn count_audio(&mut self, name: &str, samples: &[f32]) {
+        let audio_ms = samples.len() as u64 / 16;
+        if let Some((_, total)) = self.audio_ms.iter_mut().find(|(engine, _)| engine == name) {
+            *total += audio_ms;
+        } else {
+            self.audio_ms.push((name.into(), audio_ms));
+        }
+    }
+
+    fn transcribe_span(
+        &mut self,
+        samples: &[f32],
+        language: Language,
+        prompt: Option<&str>,
+        cancel: &AtomicBool,
+    ) -> Result<Vec<RawSegment>, ProcessingError> {
+        let mut failed = Vec::new();
+        for index in 0..self.cloud.len() {
+            if self.unavailable[index] {
+                continue;
+            }
+            let name = self.cloud[index].name().to_owned();
+            let mut other_retries = 0;
+            let mut waited = Duration::ZERO;
+            loop {
+                if cancel.load(Ordering::SeqCst) {
+                    return Err(ProcessingError::Cancelled);
+                }
+                let started = Instant::now();
+                let result = self.cloud[index].transcribe_span(samples, language, prompt, cancel);
+                let round_trip = started.elapsed();
+                match result {
+                    Ok(segments) => {
+                        self.remember(&name);
+                        self.count_audio(&name, samples);
+                        if self.fallback.is_none() {
+                            self.fallback = failed.first().cloned();
+                        }
+                        log_event(LogEvent::cloud_span(
+                            &name,
+                            samples.len() as u64 / 16,
+                            round_trip,
+                            None,
+                        ));
+                        return Ok(segments);
+                    }
+                    Err(EngineError::Cancelled) => return Err(ProcessingError::Cancelled),
+                    Err(EngineError::RateLimited { retry_after })
+                        if waited < Duration::from_secs(60) =>
+                    {
+                        let pause = retry_after
+                            .max(Duration::from_millis(100))
+                            .min(Duration::from_secs(60) - waited);
+                        waited += pause;
+                        if !(self.sleeper)(pause, cancel) {
+                            return Err(ProcessingError::Cancelled);
+                        }
+                    }
+                    Err(error) => {
+                        if error == EngineError::Other && other_retries == 0 {
+                            other_retries += 1;
+                            continue;
+                        }
+                        let reason = match error {
+                            EngineError::QuotaExhausted => "daily limit reached",
+                            EngineError::Unauthorized => "API key rejected",
+                            EngineError::Offline => "unavailable",
+                            EngineError::RateLimited { .. } => "rate limit reached",
+                            _ => "transcription failed",
+                        };
+                        let reason = format!("{name} {reason}");
+                        if matches!(
+                            error,
+                            EngineError::QuotaExhausted
+                                | EngineError::Unauthorized
+                                | EngineError::Offline
+                        ) {
+                            self.unavailable[index] = true;
+                        }
+                        log_event(LogEvent::cloud_span(&name, 0, round_trip, Some(&reason)));
+                        failed.push(reason);
+                        break;
+                    }
+                }
+            }
+        }
+        let local_name = self.local_name.clone();
+        let started = Instant::now();
+        let result = self
+            .local()?
+            .transcribe(samples, language, prompt, &mut |_| {}, cancel)?;
+        if !self.cloud.is_empty() {
+            log_event(LogEvent::cloud_span(
+                "local",
+                samples.len() as u64 / 16,
+                started.elapsed(),
+                None,
+            ));
+        }
+        self.remember(&local_name);
+        self.count_audio(&local_name, samples);
+        if self.fallback.is_none() {
+            self.fallback = failed.into_iter().next();
+        }
+        Ok(result)
+    }
+}
+
+impl SpeechEngine for EngineChain<'_> {
+    fn backend(&self) -> &str {
+        self.local
+            .as_ref()
+            .map_or("cloud", |engine| engine.backend())
+    }
+    fn thread_count(&self) -> usize {
+        self.local
+            .as_ref()
+            .map_or(0, |engine| engine.thread_count())
+    }
+    fn device(&self) -> Option<&str> {
+        self.local.as_ref().and_then(|engine| engine.device())
+    }
+    fn power_state(&self) -> PowerState {
+        self.local
+            .as_ref()
+            .map_or(PowerState::Unknown, |engine| engine.power_state())
+    }
+    fn audio_after_vad_ms(&self) -> Option<u64> {
+        self.local
+            .as_ref()
+            .and_then(|engine| engine.audio_after_vad_ms())
+    }
+    fn engines_used(&self) -> Vec<String> {
+        self.used.clone()
+    }
+    fn fallback_reason(&self) -> Option<&str> {
+        self.fallback.as_deref()
+    }
+    fn engine_audio_ms(&self) -> Option<(u64, u64, u64)> {
+        (!self.cloud.is_empty()).then(|| {
+            self.audio_ms.iter().fold((0, 0, 0), |mut totals, (name, audio)| {
+                match name.as_str() {
+                    "Groq" => totals.0 += audio,
+                    "Gemini" => totals.1 += audio,
+                    _ => totals.2 += audio,
+                }
+                totals
+            })
+        })
+    }
+    fn has_speech(&mut self, samples: &[f32]) -> bool {
+        if self.cloud.is_empty() {
+            return self.local().map_or_else(
+                |_| samples.iter().any(|sample| sample.abs() > 0.01),
+                |engine| engine.has_speech(samples),
+            );
+        }
+        samples.iter().any(|sample| sample.abs() > 0.01)
+    }
+    fn detect_language(&mut self, samples: &[f32]) -> Result<Language, String> {
+        self.detect_language_with_cancel(samples, &AtomicBool::new(false))
+    }
+    fn detect_language_with_cancel(
+        &mut self,
+        samples: &[f32],
+        cancel: &AtomicBool,
+    ) -> Result<Language, String> {
+        for (index, engine) in self.cloud.iter_mut().enumerate() {
+            if self.unavailable[index] {
+                continue;
+            }
+            match engine.detect_language(samples, cancel) {
+                Ok(Some(language)) => return Ok(language),
+                Ok(None) => continue,
+                Err(EngineError::Cancelled) => return Err("Processing cancelled".into()),
+                Err(error) => {
+                    if matches!(
+                        error,
+                        EngineError::QuotaExhausted
+                            | EngineError::Unauthorized
+                            | EngineError::Offline
+                    ) {
+                        self.unavailable[index] = true;
+                        let reason = match error {
+                            EngineError::QuotaExhausted => "daily limit reached",
+                            EngineError::Unauthorized => "API key rejected",
+                            _ => "unavailable",
+                        };
+                        self.fallback
+                            .get_or_insert_with(|| format!("{} {reason}", engine.name()));
+                    }
+                }
+            }
+        }
+        self.local()
+            .map_err(|error| error.to_string())?
+            .detect_language(samples)
+    }
+    fn transcribe(
+        &mut self,
+        samples: &[f32],
+        language: Language,
+        prompt: Option<&str>,
+        progress: &mut dyn FnMut(f32),
+        cancel: &AtomicBool,
+    ) -> Result<Vec<RawSegment>, ProcessingError> {
+        if self.cloud.is_empty() {
+            let result = self
+                .local()?
+                .transcribe(samples, language, prompt, progress, cancel)?;
+            let name = self.local_name.clone();
+            self.remember(&name);
+            return Ok(result);
+        }
+        let mut all = Vec::new();
+        for (index, span) in samples.chunks(CHAIN_SPAN_SAMPLES).enumerate() {
+            let offset = index as u64 * CHAIN_SPAN_SAMPLES as u64 / 16;
+            let mut segments = self.transcribe_span(span, language, prompt, cancel)?;
+            for segment in &mut segments {
+                segment.start_ms += offset;
+                segment.end_ms += offset;
+                for word in &mut segment.words {
+                    word.start_ms += offset;
+                    word.end_ms += offset;
+                }
+            }
+            all.extend(segments);
+            progress(
+                ((index + 1) * CHAIN_SPAN_SAMPLES).min(samples.len()) as f32
+                    / samples.len().max(1) as f32,
+            );
+        }
+        Ok(all)
+    }
+    fn transcribe_streams(
+        &mut self,
+        streams: &[&[f32]],
+        language: Language,
+        prompt: Option<&str>,
+        progress: &mut dyn FnMut(f32),
+        cancel: &AtomicBool,
+    ) -> Result<Vec<StreamTranscription>, ProcessingError> {
+        if self.cloud.is_empty() {
+            let result = self
+                .local()?
+                .transcribe_streams(streams, language, prompt, progress, cancel)?;
+            let name = self.local_name.clone();
+            self.remember(&name);
+            return Ok(result);
+        }
+        transcribe_sequentially(self, streams, language, prompt, progress, cancel)
+    }
 }
 
 /// Transcribes each Source's audio in turn, with progress across all of them.
@@ -457,6 +792,9 @@ fn transcribe_meeting_inner(
     let mut language = meeting_language(&metadata, request)?;
     let detected = language.is_none();
     let background = usable_background(&metadata, request, prompt, language, background);
+    let cached_local = background
+        .iter()
+        .any(|cache| cache.sources.iter().any(|source| source.committed_ms > 0));
     if language.is_none() {
         language = background.iter().find_map(|cache| cache.language);
     }
@@ -495,13 +833,19 @@ fn transcribe_meeting_inner(
                 .iter()
                 .find(|stream| engine.has_speech(&stream.samples_16k))
             {
-                language = Some(match engine.detect_language(&stream.samples_16k) {
-                    Ok(language) => language,
-                    Err(error) => {
-                        telemetry.whisper += whisper_started.elapsed();
-                        return Err(ProcessingError::Engine(error));
-                    }
-                });
+                language = Some(
+                    match engine.detect_language_with_cancel(&stream.samples_16k, cancel) {
+                        Ok(language) => language,
+                        Err(error) => {
+                            telemetry.whisper += whisper_started.elapsed();
+                            return Err(if cancel.load(Ordering::SeqCst) {
+                                ProcessingError::Cancelled
+                            } else {
+                                ProcessingError::Engine(error)
+                            });
+                        }
+                    },
+                );
             }
         }
         let group_ms: u64 = prepared
@@ -535,7 +879,9 @@ fn transcribe_meeting_inner(
             prompt,
             &mut |p| {
                 group_progress = group_progress.max(p.clamp(0.0, 1.0));
-                progress((offset + (done + group_progress * (1.0 - done)) * weight).clamp(0.0, 1.0));
+                progress(
+                    (offset + (done + group_progress * (1.0 - done)) * weight).clamp(0.0, 1.0),
+                );
             },
             cancel,
         );
@@ -628,7 +974,18 @@ fn transcribe_meeting_inner(
         schema_version: 1,
         revision,
         created_at: chrono::Local::now().to_rfc3339(),
-        model: request.model.into(),
+        model: {
+            let mut used = engine.engines_used();
+            if cached_local && !used.iter().any(|name| name == request.model) {
+                used.insert(0, request.model.into());
+            }
+            if used.is_empty() {
+                vec![request.model.into()]
+            } else {
+                used
+            }
+        },
+        fallback_reason: engine.fallback_reason().map(str::to_owned),
         language: language.unwrap_or(Language::En),
         language_detected: detected && language.is_some(),
         duration_ms: metadata.duration_ms,
@@ -749,6 +1106,9 @@ fn transcribe_meeting_inner(
         preparation_wall_time,
         whisper_wall_time,
     ));
+    if let Some((groq_ms, gemini_ms, local_ms)) = engine.engine_audio_ms() {
+        log_event(LogEvent::engine_usage(groq_ms, gemini_ms, local_ms, engine.fallback_reason()));
+    }
     Ok(transcript)
 }
 

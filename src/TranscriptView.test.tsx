@@ -5,7 +5,7 @@ import type { Transcript } from "./processing";
 import type { TimelinePlayer } from "./timeline";
 
 const transcript: Transcript = {
-  schema_version: 1, revision: 1, created_at: "2026-10-12T10:00:00Z", model: "small",
+  schema_version: 1, revision: 1, created_at: "2026-10-12T10:00:00Z", model: ["small"],
   language: "en", language_detected: false, duration_ms: 3000,
   segments: [
     { id: "s00001", start_ms: 100, end_ms: 900, text: "Hello", speaker: "me" },

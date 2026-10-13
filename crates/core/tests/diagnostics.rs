@@ -5,6 +5,35 @@ use meeting_minutes_core::processing::{PowerState, ProcessingError, ProcessingSt
 use std::time::Duration;
 
 #[test]
+fn diagnostics_keeps_cloud_audio_time_and_fallback_without_content() {
+    let event = LogEvent::cloud_span("Groq", 30_000, Duration::from_millis(420), Some("Groq daily limit reached"));
+    assert_eq!(event.to_string(), "cloud_span engine=groq audio_ms=30000 round_trip_ms=420 fallback=quota");
+    let report = build_diagnostics(&DiagnosticsInput {
+        version: "0.1.0".into(), windows_version: "Windows".into(), cpu: "CPU".into(), ram_mb: 1024,
+        audio_devices: Ok(vec![]), selected_model: None, provider: None, whisper_system_info: None,
+        transcription_backend: None,
+        recent_log_lines: vec![format!("[2026-10-13][10:47:02][meeting_minutes_events][INFO] {event}")],
+    });
+    assert!(report.contains("cloud_span engine=groq audio_ms=30000 round_trip_ms=420 fallback=quota"));
+    assert!(!report.contains("private words"));
+    assert!(!LogEvent::cloud_span("Groq", 0, Duration::ZERO, Some("private words")).to_string().contains("private words"));
+}
+
+#[test]
+fn diagnostics_keeps_engine_totals_after_many_spans() {
+    let span = LogEvent::cloud_span("Groq", 30_000, Duration::from_millis(420), None);
+    let summary = LogEvent::engine_usage(2_400_000, 0, 1_200_000, Some("Groq daily limit reached"));
+    let mut lines = vec![format!("[2026-10-13][10:47:02][meeting_minutes_events][INFO] {span}"); 120];
+    lines.push(format!("[2026-10-13][10:47:02][meeting_minutes_events][INFO] {summary}"));
+    let report = build_diagnostics(&DiagnosticsInput {
+        version: "0.1.0".into(), windows_version: "Windows".into(), cpu: "CPU".into(), ram_mb: 1024,
+        audio_devices: Ok(vec![]), selected_model: None, provider: None, whisper_system_info: None,
+        transcription_backend: None, recent_log_lines: lines,
+    });
+    assert!(report.contains("engine_usage groq_ms=2400000 gemini_ms=0 local_ms=1200000 fallback=quota"));
+}
+
+#[test]
 fn transcription_event_formats_timings_and_rtf_without_meeting_content() {
     let event = LogEvent::transcription_completed(
         "small",

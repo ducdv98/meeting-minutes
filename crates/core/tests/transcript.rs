@@ -7,6 +7,19 @@ use meeting_minutes_core::Library;
 use tempfile::TempDir;
 
 #[test]
+fn old_meeting_transcript_model_loads_as_one_engine() {
+    let old = r#"{"schema_version":1,"revision":1,"created_at":"2025-01-01","model":"small","language":"en","language_detected":false,"duration_ms":0,"segments":[]}"#;
+    let meeting_dir = TempDir::new().unwrap();
+    let path = meeting_dir.path().join("transcript.r1.json");
+    std::fs::write(&path, old).unwrap();
+    let transcript: Transcript = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    assert_eq!(transcript.model, vec!["small"]);
+    assert!(serde_json::to_string(&transcript)
+        .unwrap()
+        .contains("\"model\":[\"small\"]"));
+}
+
+#[test]
 fn sentence_punctuation_splits_one_source_at_word_timestamps() {
     let raw = RawSegment {
         start_ms: 0,
@@ -459,7 +472,8 @@ fn assigns_ordered_ids_clamps_duration_and_reload_keeps_ids() {
         schema_version: 1,
         revision: 1,
         created_at: "2026-10-12T10:00:00Z".into(),
-        model: "small".into(),
+        model: vec!["small".into()],
+        fallback_reason: None,
         language: Language::En,
         language_detected: false,
         duration_ms: 2000,
@@ -514,7 +528,11 @@ fn timed_words(words: &[(u64, u64, &str)]) -> RawSegment {
     RawSegment {
         start_ms: words[0].0,
         end_ms: words[words.len() - 1].1,
-        text: words.iter().map(|word| word.2).collect::<Vec<_>>().join(" "),
+        text: words
+            .iter()
+            .map(|word| word.2)
+            .collect::<Vec<_>>()
+            .join(" "),
         words: words
             .iter()
             .map(|&(start_ms, end_ms, text)| RawWord {

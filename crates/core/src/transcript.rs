@@ -41,11 +41,29 @@ pub struct Transcript {
     pub schema_version: u32,
     pub revision: u32,
     pub created_at: String,
-    pub model: String,
+    #[serde(deserialize_with = "deserialize_engines")]
+    pub model: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback_reason: Option<String>,
     pub language: Language,
     pub language_detected: bool,
     pub duration_ms: u64,
     pub segments: Vec<Segment>,
+}
+
+fn deserialize_engines<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<String>, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Engines {
+        Old(String),
+        Current(Vec<String>),
+    }
+    Ok(match Engines::deserialize(deserializer)? {
+        Engines::Old(name) => vec![name],
+        Engines::Current(names) => names,
+    })
 }
 
 impl Transcript {
@@ -330,7 +348,8 @@ pub fn render_markdown_named(
     };
     let mut result = format!(
         "# {title}\n\nTranscript revision {} · model {} · {language}\n",
-        transcript.revision, transcript.model
+        transcript.revision,
+        transcript.model.join(", ")
     );
     for s in &transcript.segments {
         let seconds = s.start_ms / 1000;

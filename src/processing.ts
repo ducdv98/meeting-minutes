@@ -7,7 +7,7 @@ export type Speaker = "me" | "remote" | "unknown";
 export interface Segment { id: string; start_ms: number; end_ms: number; text: string; speaker: Speaker }
 export type DraftSegment = Omit<Segment, "id">;
 export interface TranscriptDraftEvent { meeting_id: string; segments: DraftSegment[] }
-export interface Transcript { schema_version: number; revision: number; created_at: string; model: string; language: Language; language_detected: boolean; duration_ms: number; segments: Segment[] }
+export interface Transcript { schema_version: number; revision: number; created_at: string; model: string[]; fallback_reason?: string | null; language: Language; language_detected: boolean; duration_ms: number; segments: Segment[] }
 export interface ProcessingJob { meeting_id: string; model: string | null; stage: "queued" | "downloading" | "transcribing" | "failed"; progress: number; error: string | null }
 export interface ProcessingStatus { jobs: ProcessingJob[] }
 export function processingStageLabel(job: ProcessingJob): string {
