@@ -383,7 +383,9 @@ mod tests {
 
     #[test]
     fn flac_round_trips_a_span_with_a_partial_last_block() {
-        let samples: Vec<f32> = (0..10_000).map(|i| ((i % 200) as f32 / 200.0) - 0.5).collect();
+        let samples: Vec<f32> = (0..10_000)
+            .map(|i| ((i % 200) as f32 / 200.0) - 0.5)
+            .collect();
         let audio = encode_flac(&samples).unwrap();
         let mut reader = claxon::FlacReader::new(std::io::Cursor::new(audio)).unwrap();
         let decoded: Vec<i32> = reader.samples().map(Result::unwrap).collect();

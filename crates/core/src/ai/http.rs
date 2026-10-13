@@ -153,14 +153,20 @@ impl HttpProvider {
     }
     pub(super) fn endpoint(&self) -> String {
         if self.kind == ProviderKind::Gemini {
-            format!("{}/v1beta/models/{}:streamGenerateContent?alt=sse", self.base_url, self.model)
+            format!(
+                "{}/v1beta/models/{}:streamGenerateContent?alt=sse",
+                self.base_url, self.model
+            )
         } else {
             format!("{}{}", self.base_url, endpoint(self.kind))
         }
     }
     fn generate_endpoint(&self, structured: bool) -> String {
         if self.kind == ProviderKind::Gemini && structured {
-            format!("{}/v1beta/models/{}:generateContent", self.base_url, self.model)
+            format!(
+                "{}/v1beta/models/{}:generateContent",
+                self.base_url, self.model
+            )
         } else {
             self.endpoint()
         }
@@ -175,32 +181,54 @@ fn gemini_schema(schema: &Value) -> Value {
         match key.as_str() {
             "properties" => {
                 if let Some(properties) = value.as_object() {
-                    supported.insert(key.clone(), Value::Object(properties.iter().map(|(name, schema)| (name.clone(), gemini_schema(schema))).collect()));
+                    supported.insert(
+                        key.clone(),
+                        Value::Object(
+                            properties
+                                .iter()
+                                .map(|(name, schema)| (name.clone(), gemini_schema(schema)))
+                                .collect(),
+                        ),
+                    );
                 }
             }
-            "items" => { supported.insert(key.clone(), gemini_schema(value)); }
-            "type" | "description" | "format" | "enum" | "required" | "nullable" | "minimum" | "maximum" | "minItems" | "maxItems" => { supported.insert(key.clone(), value.clone()); }
+            "items" => {
+                supported.insert(key.clone(), gemini_schema(value));
+            }
+            "type" | "description" | "format" | "enum" | "required" | "nullable" | "minimum"
+            | "maximum" | "minItems" | "maxItems" => {
+                supported.insert(key.clone(), value.clone());
+            }
             _ => {}
         }
     }
     Value::Object(supported)
 }
 fn gemini_response_text(value: &Value) -> Result<String, AiError> {
-    if value.pointer("/error/code") == Some(&json!(429)) || value.pointer("/error/status") == Some(&json!("RESOURCE_EXHAUSTED")) {
+    if value.pointer("/error/code") == Some(&json!(429))
+        || value.pointer("/error/status") == Some(&json!("RESOURCE_EXHAUSTED"))
+    {
         return Err(AiError::GeminiLimit);
     }
     if value.get("error").is_some_and(|error| !error.is_null()) {
-        return Err(AiError::Http { status: 200, message: "Gemini could not generate a response".into() });
+        return Err(AiError::Http {
+            status: 200,
+            message: "Gemini could not generate a response".into(),
+        });
     }
-    match value.pointer("/candidates/0/finishReason").and_then(Value::as_str) {
+    match value
+        .pointer("/candidates/0/finishReason")
+        .and_then(Value::as_str)
+    {
         Some("MAX_TOKENS") => return Err(AiError::Truncated),
-        Some("STOP") | None => {},
+        Some("STOP") | None => {}
         Some(_) => return Err(AiError::Refused),
     }
     if value.pointer("/promptFeedback/blockReason").is_some() {
         return Err(AiError::Refused);
     }
-    Ok(value.pointer("/candidates/0/content/parts")
+    Ok(value
+        .pointer("/candidates/0/content/parts")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
@@ -268,7 +296,7 @@ fn checked_response(
         crate::diagnostics::log_provider_status(kind, status);
         let mut raw = String::new();
         response.body.take(64 * 1024).read_to_string(&mut raw)?;
-        if kind == ProviderKind::Gemini && (status == 429 || raw.to_ascii_lowercase().contains("quota")) {
+        if kind == ProviderKind::Gemini && (status == 429 || raw.contains("RESOURCE_EXHAUSTED")) {
             return Err(AiError::GeminiLimit);
         }
         return Err(AiError::Http {
@@ -358,9 +386,20 @@ pub fn list_models(
         .as_array()
         .ok_or_else(|| AiError::InvalidOutput("Missing models array".into()))?
         .iter()
-        .filter(|item| kind != ProviderKind::Gemini || item["supportedGenerationMethods"].as_array().is_some_and(|methods| methods.iter().any(|method| method == "generateContent")))
+        .filter(|item| {
+            kind != ProviderKind::Gemini
+                || item["supportedGenerationMethods"]
+                    .as_array()
+                    .is_some_and(|methods| methods.iter().any(|method| method == "generateContent"))
+        })
         .filter_map(|item| item[name].as_str())
-        .filter_map(|id| if kind == ProviderKind::Gemini { id.strip_prefix("models/") } else { Some(id) })
+        .filter_map(|id| {
+            if kind == ProviderKind::Gemini {
+                id.strip_prefix("models/")
+            } else {
+                Some(id)
+            }
+        })
         .filter(|id| {
             if kind != ProviderKind::Openai {
                 return true;
@@ -464,14 +503,23 @@ impl TextProvider for HttpProvider {
             })?;
         let mut response = checked_response(response, self.kind, self.key.as_ref())?;
         if self.kind == ProviderKind::Gemini && request.schema.is_some() {
-            if cancel.load(Ordering::SeqCst) { return Err(AiError::Cancelled); }
+            if cancel.load(Ordering::SeqCst) {
+                return Err(AiError::Cancelled);
+            }
             let mut raw = String::new();
             response.body.read_to_string(&mut raw)?;
-            if cancel.load(Ordering::SeqCst) { return Err(AiError::Cancelled); }
-            let value: Value = serde_json::from_str(&raw).map_err(|error| AiError::InvalidOutput(error.to_string()))?;
+            if cancel.load(Ordering::SeqCst) {
+                return Err(AiError::Cancelled);
+            }
+            let value: Value = serde_json::from_str(&raw)
+                .map_err(|error| AiError::InvalidOutput(error.to_string()))?;
             let output = gemini_response_text(&value)?;
-            if !output.is_empty() { on_delta(&output); }
-            if cancel.load(Ordering::SeqCst) { return Err(AiError::Cancelled); }
+            if !output.is_empty() {
+                on_delta(&output);
+            }
+            if cancel.load(Ordering::SeqCst) {
+                return Err(AiError::Cancelled);
+            }
             return Ok(output);
         }
         let mut output = String::new();
@@ -510,7 +558,10 @@ impl TextProvider for HttpProvider {
                 || event == "error"
                 || value["type"] == "error"
             {
-                if self.kind == ProviderKind::Gemini && (value.pointer("/error/code") == Some(&json!(429)) || value.pointer("/error/status") == Some(&json!("RESOURCE_EXHAUSTED"))) {
+                if self.kind == ProviderKind::Gemini
+                    && (value.pointer("/error/code") == Some(&json!(429))
+                        || value.pointer("/error/status") == Some(&json!("RESOURCE_EXHAUSTED")))
+                {
                     return Err(AiError::GeminiLimit);
                 }
                 return Err(AiError::Http {

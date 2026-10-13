@@ -55,7 +55,9 @@ impl AiSettings {
             ProviderKind::Anthropic => {
                 Some(self.anthropic_model.as_deref().unwrap_or("claude-opus-5-5"))
             }
-            ProviderKind::Gemini => Some(self.gemini_model.as_deref().unwrap_or("gemini-2.5-flash")),
+            ProviderKind::Gemini => {
+                Some(self.gemini_model.as_deref().unwrap_or("gemini-2.5-flash"))
+            }
             ProviderKind::Groq => None,
         }
     }

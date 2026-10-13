@@ -44,10 +44,26 @@ fn transcript(count: usize, language: Language) -> Transcript {
 fn summary_evidence_names_participants_and_identifies_the_user() {
     let mut transcript = transcript(2, Language::En);
     transcript.segments[1].speaker = Speaker::Remote;
-    let participants = Participants::new([("remote".into(), "Anna".into())].into(), None, Some("Duc"), false);
-    let request = &summary_requests(&transcript, &participants, &SummaryOptions { input_tokens: 4000, max_tokens: 512 })[0];
-    assert!(request.messages[0].content.contains("[s00001] Duc: Discussion"));
-    assert!(request.messages[0].content.contains("[s00002] Anna: Discussion"));
+    let participants = Participants::new(
+        [("remote".into(), "Anna".into())].into(),
+        None,
+        Some("Duc"),
+        false,
+    );
+    let request = &summary_requests(
+        &transcript,
+        &participants,
+        &SummaryOptions {
+            input_tokens: 4000,
+            max_tokens: 512,
+        },
+    )[0];
+    assert!(request.messages[0]
+        .content
+        .contains("[s00001] Duc: Discussion"));
+    assert!(request.messages[0]
+        .content
+        .contains("[s00002] Anna: Discussion"));
     assert!(request.system.contains("Duc is the user"));
 }
 
@@ -57,11 +73,24 @@ fn summary_tracks_resolved_participants_and_old_files_default_safely() {
     let defaults = Participants::new(Default::default(), None, None, false);
     let named = Participants::new([("me".into(), "Duc".into())].into(), None, None, false);
     let provider = FakeProvider::with(&[&raw(json!([]), json!([]))]);
-    let summary = summarize(&provider, &transcript, &defaults, &SummaryOptions { input_tokens: 4000, max_tokens: 512 }, &mut |_, _| {}, &AtomicBool::new(false)).unwrap();
+    let summary = summarize(
+        &provider,
+        &transcript,
+        &defaults,
+        &SummaryOptions {
+            input_tokens: 4000,
+            max_tokens: 512,
+        },
+        &mut |_, _| {},
+        &AtomicBool::new(false),
+    )
+    .unwrap();
     assert!(!summary.participants_changed(&transcript, &defaults));
     assert!(summary.participants_changed(&transcript, &named));
     let mut old = serde_json::to_value(&summary).unwrap();
-    old.as_object_mut().unwrap().remove("participants_fingerprint");
+    old.as_object_mut()
+        .unwrap()
+        .remove("participants_fingerprint");
     let old: meeting_minutes_core::summary::Summary = serde_json::from_value(old).unwrap();
     assert!(!old.participants_changed(&transcript, &defaults));
     assert!(old.participants_changed(&transcript, &named));
@@ -71,7 +100,14 @@ fn summary_tracks_resolved_participants_and_old_files_default_safely() {
 fn summary_requests_budget_3000_segments_quickly() {
     let transcript = transcript(3000, Language::En);
     let start = Instant::now();
-    let requests = summary_requests(&transcript, &Participants::new(Default::default(), None, None, false), &SummaryOptions { input_tokens: 100_000, max_tokens: 512 });
+    let requests = summary_requests(
+        &transcript,
+        &Participants::new(Default::default(), None, None, false),
+        &SummaryOptions {
+            input_tokens: 100_000,
+            max_tokens: 512,
+        },
+    );
     assert_eq!(requests.len(), 1);
     assert!(start.elapsed() < Duration::from_secs(1));
 }
@@ -161,10 +197,23 @@ fn citation_ids_are_checked_against_this_revision_and_sent_evidence() {
         ["s00098"]
     );
     assert_eq!(
-        evidence_line(&transcript.segments[0], &Participants::new(Default::default(), None, None, false), transcript.revision),
+        evidence_line(
+            &transcript.segments[0],
+            &Participants::new(Default::default(), None, None, false),
+            transcript.revision
+        ),
         "[s00001] Me: Discussion point 1 about launch schedule and budget."
     );
-    assert_eq!(evidence_text(&transcript.segments, &Participants::new(Default::default(), None, None, false), transcript.revision).lines().count(), 2);
+    assert_eq!(
+        evidence_text(
+            &transcript.segments,
+            &Participants::new(Default::default(), None, None, false),
+            transcript.revision
+        )
+        .lines()
+        .count(),
+        2
+    );
     assert_eq!(estimate_tokens("abcd"), 2);
 }
 #[test]
@@ -200,10 +249,21 @@ fn single_chunk_drops_unsupported_items_and_keeps_transcript_times() {
 }
 #[test]
 fn gemini_summary_keeps_only_citations_to_this_meeting() {
-    let output = raw(json!([{"text":"Decision","citations":["s00001"]},{"text":"Invented","citations":["s99999"]}]), json!([]));
+    let output = raw(
+        json!([{"text":"Decision","citations":["s00001"]},{"text":"Invented","citations":["s99999"]}]),
+        json!([]),
+    );
     let provider = FakeProvider::with(&[&output]);
     let provider = GeminiProvider(provider);
-    let result = summarize(&provider, &transcript(2, Language::En), &Participants::new(Default::default(), None, None, false), &SummaryOptions::for_provider(ProviderKind::Gemini), &mut |_, _| {}, &AtomicBool::new(false)).unwrap();
+    let result = summarize(
+        &provider,
+        &transcript(2, Language::En),
+        &Participants::new(Default::default(), None, None, false),
+        &SummaryOptions::for_provider(ProviderKind::Gemini),
+        &mut |_, _| {},
+        &AtomicBool::new(false),
+    )
+    .unwrap();
     assert_eq!(result.provider, ProviderKind::Gemini);
     assert_eq!(result.overview.len(), 1);
     assert_eq!(result.overview[0].citations[0].start_ms, 65_000);
@@ -212,9 +272,20 @@ fn gemini_summary_keeps_only_citations_to_this_meeting() {
 
 struct GeminiProvider(FakeProvider);
 impl TextProvider for GeminiProvider {
-    fn kind(&self) -> ProviderKind { ProviderKind::Gemini }
-    fn model(&self) -> &str { "gemini-2.5-flash" }
-    fn generate(&self, request: &GenerateRequest, on_delta: &mut dyn FnMut(&str), cancel: &AtomicBool) -> Result<String, AiError> { self.0.generate(request, on_delta, cancel) }
+    fn kind(&self) -> ProviderKind {
+        ProviderKind::Gemini
+    }
+    fn model(&self) -> &str {
+        "gemini-2.5-flash"
+    }
+    fn generate(
+        &self,
+        request: &GenerateRequest,
+        on_delta: &mut dyn FnMut(&str),
+        cancel: &AtomicBool,
+    ) -> Result<String, AiError> {
+        self.0.generate(request, on_delta, cancel)
+    }
 }
 #[test]
 fn long_transcript_is_chunked_without_losing_late_segments_and_reduced() {
@@ -223,7 +294,11 @@ fn long_transcript_is_chunked_without_losing_late_segments_and_reduced() {
         input_tokens: 750,
         max_tokens: 200,
     };
-    let maps = summary_requests(&transcript, &Participants::new(Default::default(), None, None, false), &options);
+    let maps = summary_requests(
+        &transcript,
+        &Participants::new(Default::default(), None, None, false),
+        &options,
+    );
     assert!(maps.len() > 1);
     for segment in &transcript.segments {
         assert_eq!(
@@ -292,7 +367,15 @@ fn cancel_between_map_calls_stops_before_another_request() {
         input_tokens: 500,
         max_tokens: 100,
     };
-    assert!(summary_requests(&transcript, &Participants::new(Default::default(), None, None, false), &options).len() > 1);
+    assert!(
+        summary_requests(
+            &transcript,
+            &Participants::new(Default::default(), None, None, false),
+            &options
+        )
+        .len()
+            > 1
+    );
     let output = raw(json!([]), json!([]));
     let provider = FakeProvider::with(&[&output]);
     let cancel = AtomicBool::new(false);
@@ -345,9 +428,16 @@ fn summary_round_trip_and_markdown_sections() {
 #[test]
 fn renaming_the_user_changes_the_fingerprint_even_without_their_segments() {
     let mut remote_only = transcript(2, Language::En);
-    for segment in &mut remote_only.segments { segment.speaker = Speaker::Remote; }
+    for segment in &mut remote_only.segments {
+        segment.speaker = Speaker::Remote;
+    }
     let before = Participants::new(Default::default(), None, Some("Duc"), false);
-    let after = Participants::new([("me".into(), "Alex".into())].into(), None, Some("Duc"), false);
+    let after = Participants::new(
+        [("me".into(), "Alex".into())].into(),
+        None,
+        Some("Duc"),
+        false,
+    );
     assert_ne!(
         meeting_minutes_core::summary::participants_fingerprint(&remote_only, &before),
         meeting_minutes_core::summary::participants_fingerprint(&remote_only, &after)

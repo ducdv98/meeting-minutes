@@ -11,8 +11,8 @@ use serde_json::Value;
 mod http;
 pub use http::OLLAMA_CONTEXT_TOKENS;
 pub use http::{
-    list_models, test_cloud_key, HttpBody, HttpClient, HttpProvider, HttpRequest, HttpResponse, Method,
-    UreqClient,
+    list_models, test_cloud_key, HttpBody, HttpClient, HttpProvider, HttpRequest, HttpResponse,
+    Method, UreqClient,
 };
 
 pub fn context_tokens(kind: ProviderKind) -> usize {
@@ -113,7 +113,9 @@ impl fmt::Display for AiError {
             Self::Unreachable(message) => f.write_str(message),
             Self::KeyStore(message) => write!(f, "Could not read the API key: {message}"),
             Self::Auth(kind) => write!(f, "{} rejected the API key", kind.label()),
-            Self::GeminiLimit => f.write_str("Gemini free limit reached, try later or pick another provider"),
+            Self::GeminiLimit => {
+                f.write_str("Gemini free limit reached, try later or pick another provider")
+            }
             Self::Http { status, message } => write!(f, "AI provider error ({status}): {message}"),
             Self::Refused => f.write_str("The model declined to answer"),
             Self::Truncated => f.write_str("The response was cut off (output limit reached)"),
