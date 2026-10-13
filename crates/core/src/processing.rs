@@ -56,27 +56,40 @@ pub trait SpeechEngine {
         progress: &mut dyn FnMut(f32),
         cancel: &AtomicBool,
     ) -> Result<Vec<StreamTranscription>, ProcessingError> {
-        let total: usize = streams.iter().map(|samples| samples.len()).sum();
-        let mut completed = 0usize;
-        let mut results = Vec::with_capacity(streams.len());
-        for samples in streams {
-            let base = completed as f32 / total.max(1) as f32;
-            let weight = samples.len() as f32 / total.max(1) as f32;
-            let segments = self.transcribe(
-                samples,
-                language,
-                initial_prompt,
-                &mut |fraction| progress(base + fraction.clamp(0.0, 1.0) * weight),
-                cancel,
-            )?;
-            results.push(StreamTranscription {
-                segments,
-                audio_after_vad_ms: self.audio_after_vad_ms(),
-            });
-            completed += samples.len();
-        }
-        Ok(results)
+        transcribe_sequentially(self, streams, language, initial_prompt, progress, cancel)
     }
+
+}
+
+/// Transcribes each Source's audio in turn, with progress across all of them.
+pub fn transcribe_sequentially<E: SpeechEngine + ?Sized>(
+    engine: &mut E,
+    streams: &[&[f32]],
+    language: Language,
+    initial_prompt: Option<&str>,
+    progress: &mut dyn FnMut(f32),
+    cancel: &AtomicBool,
+) -> Result<Vec<StreamTranscription>, ProcessingError> {
+    let total: usize = streams.iter().map(|samples| samples.len()).sum();
+    let mut completed = 0usize;
+    let mut results = Vec::with_capacity(streams.len());
+    for samples in streams {
+        let base = completed as f32 / total.max(1) as f32;
+        let weight = samples.len() as f32 / total.max(1) as f32;
+        let segments = engine.transcribe(
+            samples,
+            language,
+            initial_prompt,
+            &mut |fraction| progress(base + fraction.clamp(0.0, 1.0) * weight),
+            cancel,
+        )?;
+        results.push(StreamTranscription {
+            segments,
+            audio_after_vad_ms: engine.audio_after_vad_ms(),
+        });
+        completed += samples.len();
+    }
+    Ok(results)
 }
 
 pub struct StreamTranscription {
@@ -214,6 +227,71 @@ pub fn initial_prompt(vocabulary: &[String]) -> Option<String> {
         .collect::<Vec<_>>()
         .join(", ");
     (!prompt.is_empty()).then_some(prompt)
+}
+
+fn meeting_language(
+    metadata: &MeetingFile,
+    request: &TranscribeRequest,
+) -> Result<Option<Language>, ProcessingError> {
+    match metadata.language.as_deref() {
+        None => Ok(request.default_language),
+        Some(code) => Language::from_code(code).map(Some).ok_or_else(|| {
+            ProcessingError::Engine(format!("Unsupported Meeting language: {code}"))
+        }),
+    }
+}
+
+/// The background results a transcription may reuse: a cache made with another model, prompt
+/// or language would not match a fresh transcription, and an Import has no Recordings.
+fn usable_background<'b>(
+    metadata: &MeetingFile,
+    request: &TranscribeRequest,
+    prompt: Option<&str>,
+    language: Option<Language>,
+    background: &'b [BackgroundResult],
+) -> Vec<&'b BackgroundResult> {
+    background
+        .iter()
+        .filter(|cache| {
+            metadata.import.is_none()
+                && cache.model == request.model
+                && cache.initial_prompt.as_deref() == prompt
+                && (language.is_none() || cache.language.is_none() || cache.language == language)
+        })
+        .collect()
+}
+
+/// The Draft that background results give a Meeting before any audio is transcribed, so it can
+/// be shown at once after Stop (ADR 0010).
+pub fn background_draft(
+    request: &TranscribeRequest,
+    background: &[BackgroundResult],
+) -> Result<Vec<PlacedSegment>, ProcessingError> {
+    let metadata: MeetingFile =
+        serde_json::from_slice(&fs::read(request.meeting_dir.join("meeting.json"))?)?;
+    let prompt = initial_prompt(request.vocabulary);
+    let language = meeting_language(&metadata, request)?;
+    let background = usable_background(&metadata, request, prompt.as_deref(), language, background);
+    let mut draft = Vec::new();
+    for recording in metadata.recordings.iter().filter_map(|entry| match entry {
+        RecordingEntry::Known(recording) => Some(recording),
+        _ => None,
+    }) {
+        let Some(cache) = background
+            .iter()
+            .find(|cache| cache.recording == recording.number)
+        else {
+            continue;
+        };
+        for source in &cache.sources {
+            draft.extend(segment_sentences(shifted(
+                &source.segments,
+                recording.timeline_start_ms,
+            )));
+        }
+    }
+    draft.sort_by_key(|segment| (segment.start_ms, segment.end_ms));
+    Ok(draft)
 }
 
 /// Moves Segments from a Recording's own timeline onto the Meeting timeline.
@@ -376,27 +454,9 @@ fn transcribe_meeting_inner(
     telemetry.total_ms = total;
     let prompt = initial_prompt(request.vocabulary);
     let prompt = prompt.as_deref();
-    let mut language = match metadata.language.as_deref() {
-        Some("en") => Some(Language::En),
-        Some("vi") => Some(Language::Vi),
-        None => request.default_language,
-        Some(other) => {
-            return Err(ProcessingError::Engine(format!(
-                "Unsupported Meeting language: {other}"
-            )))
-        }
-    };
+    let mut language = meeting_language(&metadata, request)?;
     let detected = language.is_none();
-    // A cache made with another model, prompt or language would not match a fresh transcription.
-    let background = background
-        .iter()
-        .filter(|cache| {
-            metadata.import.is_none()
-                && cache.model == request.model
-                && cache.initial_prompt.as_deref() == prompt
-                && (language.is_none() || cache.language.is_none() || cache.language == language)
-        })
-        .collect::<Vec<_>>();
+    let background = usable_background(&metadata, request, prompt, language, background);
     if language.is_none() {
         language = background.iter().find_map(|cache| cache.language);
     }
@@ -406,19 +466,6 @@ fn transcribe_meeting_inner(
             .copied()
             .find(|cache| cache.recording == recording.number)
     };
-    if let Some(callback) = draft.as_deref_mut() {
-        for recording in &recordings {
-            let Some(cache) = cached(recording) else {
-                continue;
-            };
-            for source in &cache.sources {
-                let sentences = segment_sentences(shifted(&source.segments, recording.timeline_start_ms));
-                if !sentences.is_empty() {
-                    callback(&sentences);
-                }
-            }
-        }
-    }
     let mut per_source: [Vec<PlacedSegment>; 3] = std::array::from_fn(|_| Vec::new());
     let mut elapsed = 0u64;
     let mut preparation_wall_time = Duration::ZERO;

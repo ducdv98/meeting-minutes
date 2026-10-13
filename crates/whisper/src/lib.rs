@@ -1,6 +1,8 @@
 use meeting_minutes_core::{
     diagnostics::{log_event, LogEvent},
-    processing::{PowerState, ProcessingError, SpeechEngine, StreamTranscription},
+    processing::{
+        transcribe_sequentially, PowerState, ProcessingError, SpeechEngine, StreamTranscription,
+    },
     transcript::{Language, RawSegment, RawWord},
 };
 pub mod benchmark;
@@ -373,17 +375,13 @@ impl WhisperEngine {
         Vec::new()
     }
 
-    /// Whether transcription started now would run on a discrete GPU on AC power, so it may run
-    /// in the background during a Recording (ADR 0010).
-    pub fn discrete_gpu_on_ac_power() -> bool {
+    /// Whether transcription on AC power would run on a discrete GPU, the only device background
+    /// transcription during a Recording uses (ADR 0010). The power state is the caller's to check.
+    pub fn discrete_gpu_available() -> bool {
         #[cfg(windows)]
         {
-            let power = PowerState::current();
-            if power == PowerState::Battery {
-                return false;
-            }
             let ranked = ranked_devices(&available_devices());
-            return runs_on_discrete_gpu(&plan_backend(&ranked, power), &ranked);
+            return runs_on_discrete_gpu(&plan_backend(&ranked, PowerState::Ac), &ranked);
         }
         #[cfg(not(windows))]
         false
@@ -715,34 +713,8 @@ impl SpeechEngine for WhisperEngine {
         if cancel.load(Ordering::SeqCst) {
             return Err(ProcessingError::Cancelled);
         }
-        let sequential = |engine: &mut Self, progress: &mut dyn FnMut(f32)| {
-            let total = streams
-                .iter()
-                .map(|stream| stream.len())
-                .sum::<usize>()
-                .max(1);
-            let mut completed = 0usize;
-            let mut results = Vec::with_capacity(streams.len());
-            for stream in streams {
-                let base = completed as f32 / total as f32;
-                let weight = stream.len() as f32 / total as f32;
-                let segments = engine.transcribe(
-                    stream,
-                    language,
-                    initial_prompt,
-                    &mut |fraction| progress(base + fraction.clamp(0.0, 1.0) * weight),
-                    cancel,
-                )?;
-                results.push(StreamTranscription {
-                    segments,
-                    audio_after_vad_ms: engine.audio_after_vad_ms,
-                });
-                completed += stream.len();
-            }
-            Ok(results)
-        };
         if streams.len() != 2 || self.backend != "Vulkan" {
-            return sequential(self, progress);
+            return transcribe_sequentially(self, streams, language, initial_prompt, progress, cancel);
         }
         let first_state = self
             .context
@@ -750,7 +722,7 @@ impl SpeechEngine for WhisperEngine {
             .map_err(|e| ProcessingError::Engine(e.to_string()))?;
         let Ok(second_state) = self.context.create_state() else {
             drop(first_state);
-            return sequential(self, progress);
+            return transcribe_sequentially(self, streams, language, initial_prompt, progress, cancel);
         };
         let first_speech = self.speech_only(streams[0]);
         let second_speech = self.speech_only(streams[1]);

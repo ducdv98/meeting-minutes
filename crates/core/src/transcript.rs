@@ -16,6 +16,17 @@ pub enum Language {
     Vi,
 }
 
+impl Language {
+    /// The language a Meeting's `language` code names, if it is one the app transcribes.
+    pub fn from_code(code: &str) -> Option<Self> {
+        match code {
+            "en" => Some(Self::En),
+            "vi" => Some(Self::Vi),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Segment {
     pub id: String,

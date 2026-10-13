@@ -53,6 +53,8 @@ type ProcessorState = Mutex<Processor>;
 #[derive(Default)]
 struct BackgroundTranscription {
     runs: Vec<BackgroundRun>,
+    /// Results of stopped runs, by Meeting ID, waiting for that Meeting's Processing.
+    results: Vec<(String, background::BackgroundResult)>,
 }
 
 struct BackgroundRun {
@@ -1236,10 +1238,11 @@ fn meeting_vocabulary(
     Ok(vocabulary)
 }
 
-/// Starts transcribing the new Recording's Chunks in the background when it would run on a
-/// discrete GPU on AC power and the model is already installed; otherwise it waits for Stop.
+/// Starts transcribing the new Recording's Chunks in the background when the PC has a discrete
+/// GPU and the model is already installed. Spans run only on AC power; otherwise all of the audio
+/// is transcribed after Stop.
 fn start_background(app: &AppHandle) {
-    if !WhisperEngine::discrete_gpu_on_ac_power() {
+    if !WhisperEngine::discrete_gpu_available() {
         return;
     }
     let Some(job) = lock_recorder(app)
@@ -1266,11 +1269,7 @@ fn start_background(app: &AppHandle) {
     let language = fs::read(job.meeting_dir.join("meeting.json"))
         .ok()
         .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
-        .and_then(|meeting| match meeting["language"].as_str() {
-            Some("en") => Some(Language::En),
-            Some("vi") => Some(Language::Vi),
-            _ => None,
-        })
+        .and_then(|meeting| meeting["language"].as_str().and_then(Language::from_code))
         .or(settings.language);
     let chunk_dir = job
         .meeting_dir
@@ -1281,17 +1280,6 @@ fn start_background(app: &AppHandle) {
         let stop = Arc::clone(&stop);
         let model_path = models::model_path(&models_dir, model);
         thread::spawn(move || {
-            // Never load a second model while Processing has one on the GPU.
-            while lock_processor(&app).map(|p| p.is_running()).unwrap_or(true) {
-                if stop.load(Ordering::SeqCst) {
-                    return None;
-                }
-                thread::sleep(Duration::from_secs(1));
-            }
-            let mut engine = WhisperEngine::load_with_vad(&model_path, vad_path.as_deref()).ok()?;
-            if engine.backend() != "Vulkan" {
-                return None;
-            }
             let mut transcriber = background::BackgroundTranscriber::new(
                 job.number,
                 model.name,
@@ -1300,11 +1288,19 @@ fn start_background(app: &AppHandle) {
             );
             let _ = background::run(
                 &mut transcriber,
-                &mut engine,
+                &mut || {
+                    // Never load a second model while Processing has one on the GPU.
+                    if lock_processor(&app).map(|p| p.is_running()).unwrap_or(true) {
+                        return None;
+                    }
+                    WhisperEngine::load_with_vad(&model_path, vad_path.as_deref())
+                        .ok()
+                        .filter(|engine| engine.backend() == "Vulkan")
+                },
                 &chunk_dir,
                 background::BackgroundControl {
                     stop: &stop,
-                    // On battery, stop after the current span and keep the results; resume on AC.
+                    // On battery the engine is unloaded and the results kept; work resumes on AC.
                     allowed: &mut || processing::PowerState::current() != processing::PowerState::Battery,
                     wait: &mut || thread::sleep(Duration::from_secs(2)),
                 },
@@ -1333,22 +1329,25 @@ fn stop_background(app: &AppHandle, meeting_id: Option<&str>) {
     }
 }
 
-/// Takes what background transcription finished for a Meeting, waiting for its runs to stop.
+/// Takes what background transcription finished for a Meeting. Processing starts only while no
+/// Recording runs, so every run is stopped here and joined, and no background model is left on
+/// the GPU when Processing loads its own.
 fn take_background_results(app: &AppHandle, meeting_id: &str) -> Vec<background::BackgroundResult> {
-    stop_background(app, Some(meeting_id));
-    let runs = match app.state::<BackgroundState>().lock() {
-        Ok(mut state) => {
-            let (taken, kept) = std::mem::take(&mut state.runs)
-                .into_iter()
-                .partition::<Vec<_>, _>(|run| run.meeting_id == meeting_id);
-            state.runs = kept;
-            taken
-        }
-        Err(_) => Vec::new(),
+    stop_background(app, None);
+    let background = app.state::<BackgroundState>();
+    let Ok(mut state) = background.lock() else {
+        return Vec::new();
     };
-    runs.into_iter()
-        .filter_map(|run| run.handle.join().ok().flatten())
-        .collect()
+    for run in std::mem::take(&mut state.runs) {
+        if let Ok(Some(result)) = run.handle.join() {
+            state.results.push((run.meeting_id, result));
+        }
+    }
+    let (taken, kept) = std::mem::take(&mut state.results)
+        .into_iter()
+        .partition::<Vec<_>, _>(|(id, _)| id == meeting_id);
+    state.results = kept;
+    taken.into_iter().map(|(_, result)| result).collect()
 }
 
 fn processing_worker(app: AppHandle) {
@@ -1482,17 +1481,23 @@ fn processing_worker(app: AppHandle) {
             let vocabulary = meeting_vocabulary(&app, &id, &settings)?;
             // Joined before the engine loads, so two models never share the GPU.
             let cached = take_background_results(&app, &id);
+            let request = TranscribeRequest {
+                meeting_dir: &meeting_dir,
+                model: model.name,
+                vocabulary: &vocabulary,
+                default_language: settings.language,
+            };
+            // What the Recording already transcribed is shown before the model loads.
+            let early_draft = processing::background_draft(&request, &cached)?;
+            if !early_draft.is_empty() {
+                emit_draft(&app, &id, &early_draft);
+            }
             let mut engine = WhisperEngine::load_with_vad(&model_path, vad_path.as_deref())
                 .map_err(processing::ProcessingError::Engine)?;
             let mut last = 0u32;
             transcription_started = true;
             processing::transcribe_meeting_resuming(
-                &TranscribeRequest {
-                    meeting_dir: &meeting_dir,
-                    model: model.name,
-                    vocabulary: &vocabulary,
-                    default_language: settings.language,
-                },
+                &request,
                 &mut engine,
                 &mut |fraction| {
                     let percent = (fraction * 100.0) as u32;

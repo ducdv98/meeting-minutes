@@ -60,6 +60,8 @@ struct SourceStream {
     decimator: Decimator,
     /// 16 kHz samples before this index are committed and dropped from the decimator output.
     committed: usize,
+    /// Pending audio at the last span that found no sentence end; the next span waits for more.
+    tried_ms: u64,
     segments: Vec<PlacedSegment>,
 }
 
@@ -71,6 +73,7 @@ impl SourceStream {
             next_chunk: 0,
             decimator: Decimator::new(),
             committed: 0,
+            tried_ms: 0,
             segments: Vec::new(),
         }
     }
@@ -81,6 +84,19 @@ impl SourceStream {
 
     fn committed_ms(&self) -> u64 {
         self.committed as u64 / SAMPLES_PER_MS
+    }
+
+    fn ready(&self) -> bool {
+        self.pending_ms() >= self.tried_ms + MIN_SPAN_MS
+    }
+
+    /// Drops pending audio up to `commit_ms` on the Recording's timeline.
+    fn commit(&mut self, commit_ms: u64) {
+        let drop = ((commit_ms - self.committed_ms()) * SAMPLES_PER_MS) as usize;
+        let drop = drop.min(self.decimator.output.len());
+        self.decimator.output.drain(..drop);
+        self.committed += drop;
+        self.tried_ms = 0;
     }
 
     fn push(&mut self, samples_48k: &[f32]) {
@@ -150,13 +166,13 @@ impl SourceStream {
             None if words.is_empty() || pending_ms >= MAX_HELD_MS => {
                 (words.len(), start_ms + pending_ms)
             }
-            None => return Ok(Vec::new()),
+            None => {
+                self.tried_ms = pending_ms;
+                return Ok(Vec::new());
+            }
         };
         let committed_words = words.drain(..keep).collect::<Vec<_>>();
-        let drop = ((commit_ms - start_ms) * SAMPLES_PER_MS) as usize;
-        let drop = drop.min(self.decimator.output.len());
-        self.decimator.output.drain(..drop);
-        self.committed += drop;
+        self.commit(commit_ms);
         let finished = words_segment(committed_words, self.speaker)
             .into_iter()
             .collect::<Vec<_>>();
@@ -226,9 +242,7 @@ impl BackgroundTranscriber {
 
     /// Whether a Source has enough new audio for a span.
     pub fn span_ready(&self) -> bool {
-        self.streams
-            .iter()
-            .any(|stream| stream.pending_ms() >= MIN_SPAN_MS)
+        self.streams.iter().any(SourceStream::ready)
     }
 
     /// Transcribes one span of every Source with enough pending audio, in Source order. A
@@ -240,16 +254,20 @@ impl BackgroundTranscriber {
     ) -> Result<Vec<PlacedSegment>, ProcessingError> {
         let mut finished = Vec::new();
         for index in 0..self.streams.len() {
-            if self.streams[index].pending_ms() < MIN_SPAN_MS {
+            if !self.streams[index].ready() {
                 continue;
             }
             let language = match self.language {
                 Some(language) => language,
                 None => {
-                    let pending = &self.streams[index].decimator.output;
-                    if !engine.has_speech(pending) {
+                    let stream = &mut self.streams[index];
+                    if !engine.has_speech(&stream.decimator.output) {
+                        // Silence is skipped, so it is not scanned again for a language.
+                        let end = stream.committed_ms() + stream.pending_ms();
+                        stream.commit(end);
                         continue;
                     }
+                    let pending = &stream.decimator.output;
                     let language = engine
                         .detect_language(pending)
                         .map_err(ProcessingError::Engine)?;
@@ -297,30 +315,44 @@ pub struct BackgroundControl<'a> {
     pub wait: &'a mut dyn FnMut(),
 }
 
-/// Transcribes a Recording's Chunks as they are completed, until told to stop. Work that is not
-/// allowed (on battery) waits, and resumes with the audio captured meanwhile once it is allowed.
-pub fn run(
+/// Transcribes a Recording's Chunks as they are completed, until told to stop. The engine is
+/// loaded only when a span may run and is dropped while work is not allowed (on battery), so the
+/// GPU is free; work resumes with the audio captured meanwhile once it is allowed again.
+pub fn run<E: SpeechEngine>(
     transcriber: &mut BackgroundTranscriber,
-    engine: &mut dyn SpeechEngine,
+    load: &mut dyn FnMut() -> Option<E>,
     chunk_dir: &Path,
     control: BackgroundControl<'_>,
     finished: &mut dyn FnMut(&[PlacedSegment]),
 ) -> Result<(), ProcessingError> {
     use std::sync::atomic::Ordering;
+    let mut engine = None;
     loop {
         if control.stop.load(Ordering::SeqCst) {
             return Ok(());
         }
         // A missing Chunk reads as not yet written, so saving the Recording (which removes them) is harmless.
         transcriber.read_chunks(chunk_dir)?;
-        if transcriber.span_ready() && (control.allowed)() {
-            match transcriber.transcribe_ready(engine, control.stop) {
-                Ok(segments) => finished(&segments),
-                Err(ProcessingError::Cancelled) => return Ok(()),
-                Err(error) => return Err(error),
-            }
-        } else {
+        if !(control.allowed)() {
+            engine = None;
             (control.wait)();
+            continue;
+        }
+        if !transcriber.span_ready() {
+            (control.wait)();
+            continue;
+        }
+        if engine.is_none() {
+            engine = load();
+        }
+        let Some(engine) = engine.as_mut() else {
+            (control.wait)();
+            continue;
+        };
+        match transcriber.transcribe_ready(engine, control.stop) {
+            Ok(segments) => finished(&segments),
+            Err(ProcessingError::Cancelled) => return Ok(()),
+            Err(error) => return Err(error),
         }
     }
 }
