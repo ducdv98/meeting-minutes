@@ -29,6 +29,14 @@ Someone who finds `meeting-minutes.tech` downloads the beta, gets past SmartScre
 - Rolling local log file in app data (size-capped). Never logs Transcript text, Summary or Ask content, or API keys.
 - Help → Copy diagnostics: app version, Windows version, CPU/RAM, audio devices, selected model and provider kind, recent log lines. The user pastes it into an email or GitHub issue.
 
+### Transcription speed (ADR 0008)
+- Local transcription uses the GPU through Vulkan when one is available, and falls back to CPU. Release builds pin the CPU instruction set (AVX2, not the build machine's).
+- Silero VAD skips silence.
+- Models: Base, Small, and Large v3 turbo `q5_0`. Medium is removed.
+- Copy diagnostics also shows the backend, whisper.cpp's system info and the last real-time factor.
+- Target on the owner's laptop (Ryzen 7 8745H, Radeon 780M): a 16-minute Meeting transcribes in about 5 minutes or less with Large v3 turbo.
+- Cloud transcription stays out of the Beta.
+
 ### App UI
 - Visual identity: `docs/design/visual-identity.md`, shared by the app and the website. Calm, in the spirit of Linear and Notion: ink on paper from the brand pack, one ink-blue accent (actions, selection, links, Citations), red only for recording and destructive actions. Fonts Be Vietnam Pro and Inter, bundled.
 - Built on Tailwind with Radix-based (shadcn/ui-style) components. Light and dark themes follow Windows.
