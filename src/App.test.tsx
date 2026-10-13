@@ -2,12 +2,12 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import App from "./App";
 import { pickAudioFiles, importStatus, dismissImportErrors, onImportStatus, onImportHover } from "./importing";
-import { deleteMeeting, meetingDetail, rescanLibrary, searchLibrary } from "./library";
+import { deleteMeeting, meetingDetail, renameMeeting, rescanLibrary, searchLibrary } from "./library";
 import { cancelProcessing, onProcessingStatus, processingStatus, type ProcessingStatus } from "./processing";
 import { onRecordingStatus, recordingStatus } from "./recording";
 
 vi.mock("./importing", () => ({ pickAudioFiles: vi.fn(), importStatus: vi.fn(), dismissImportErrors: vi.fn(), onImportStatus: vi.fn(), onImportHover: vi.fn() }));
-vi.mock("./library", async (original) => ({ ...(await original<typeof import("./library")>()), rescanLibrary: vi.fn(), searchLibrary: vi.fn(), deleteMeeting: vi.fn(), meetingDetail: vi.fn() }));
+vi.mock("./library", async (original) => ({ ...(await original<typeof import("./library")>()), rescanLibrary: vi.fn(), searchLibrary: vi.fn(), deleteMeeting: vi.fn(), renameMeeting: vi.fn(), meetingDetail: vi.fn() }));
 vi.mock("./RecordingBar", () => ({ default: () => null }));
 vi.mock("./SettingsView", () => ({ default: () => <section><h1>Settings pane</h1></section> }));
 vi.mock("./HelpView", () => ({ default: () => <section><h1>Help pane</h1></section> }));
@@ -83,6 +83,53 @@ it("disables Delete for the Meeting being recorded", async () => {
   await screen.findByRole("button", { name: "Planning" });
   openRowMenu("Planning");
   const item = await screen.findByRole("menuitem", { name: "Delete Planning" });
+  expect(item.getAttribute("data-disabled")).toBe("");
+});
+
+it("renames a Meeting inline from its row menu and follows the new id", async () => {
+  const planning = { id: "one", title: "Planning", started_at: "2026-10-12T09:00:00Z", duration_ms: 0 };
+  const review = { ...planning, id: "two", title: "Review" };
+  vi.mocked(rescanLibrary).mockResolvedValueOnce({ meetings: [planning], malformed: [] }).mockResolvedValue({ meetings: [review], malformed: [] });
+  vi.mocked(renameMeeting).mockResolvedValue(review);
+  render(<App />);
+  fireEvent.click(await screen.findByRole("button", { name: "Planning" }));
+  expect(screen.getByRole("heading", { name: "Meeting one" })).toBeTruthy();
+  openRowMenu("Planning");
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Rename Planning" }));
+  const field = screen.getByRole("textbox", { name: "Title for Planning" }) as HTMLInputElement;
+  expect(field.value).toBe("Planning");
+  fireEvent.change(field, { target: { value: " Review " } });
+  fireEvent.keyDown(field, { key: "Enter" });
+  await waitFor(() => expect(renameMeeting).toHaveBeenCalledWith("one", "Review"));
+  expect(await screen.findByRole("heading", { name: "Meeting two" })).toBeTruthy();
+  expect(await screen.findByRole("button", { name: "Review" })).toBeTruthy();
+  expect(screen.queryByRole("textbox", { name: /Title for/ })).toBeNull();
+});
+
+it("keeps the inline rename open on failure and cancels with Escape", async () => {
+  vi.mocked(rescanLibrary).mockResolvedValue({ meetings: [{ id: "one", title: "Planning", started_at: "2026-10-12T09:00:00Z", duration_ms: 0 }], malformed: [] });
+  vi.mocked(renameMeeting).mockRejectedValue("Folder is busy");
+  render(<App />);
+  await screen.findByRole("button", { name: "Planning" });
+  openRowMenu("Planning");
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Rename Planning" }));
+  const field = screen.getByRole("textbox", { name: "Title for Planning" });
+  fireEvent.change(field, { target: { value: "Review" } });
+  fireEvent.keyDown(field, { key: "Enter" });
+  expect((await screen.findByRole("alert")).textContent).toContain("Folder is busy");
+  expect(screen.getByRole("textbox", { name: "Title for Planning" })).toBeTruthy();
+  fireEvent.keyDown(screen.getByRole("textbox", { name: "Title for Planning" }), { key: "Escape" });
+  expect(screen.queryByRole("textbox", { name: "Title for Planning" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Planning" })).toBeTruthy();
+});
+
+it("disables Rename for the Meeting being recorded", async () => {
+  vi.mocked(rescanLibrary).mockResolvedValue({ meetings: [{ id: "one", title: "Planning", started_at: "2026-10-12T09:00:00Z", duration_ms: 0 }], malformed: [] });
+  vi.mocked(recordingStatus).mockResolvedValue({ phase: "recording", meeting_id: "one", elapsed_ms: 1000, notice_acknowledged: true, saves: [], continue_offers: [], device_switches: [] });
+  render(<App />);
+  await screen.findByRole("button", { name: "Planning" });
+  openRowMenu("Planning");
+  const item = await screen.findByRole("menuitem", { name: "Rename Planning" });
   expect(item.getAttribute("data-disabled")).toBe("");
 });
 

@@ -72,12 +72,15 @@
   --text-display: var(--display); --text-display--line-height: var(--display-line-height); --text-display--font-weight: var(--display-weight); --text-display--letter-spacing: var(--display-tracking);
 }
 
-* { box-sizing: border-box; }
-body { margin: 0; background: var(--canvas); color: var(--ink); font: 400 14px/22px var(--app-font-text); -webkit-font-smoothing: antialiased; }
-button, input, textarea, select { font: inherit; color: inherit; }
-:focus-visible { outline: var(--focus-width) solid var(--accent); outline-offset: var(--focus-offset); }
-button:not(:disabled) { cursor: pointer; }
-button:disabled { cursor: not-allowed; }
+/* Base rules live in the base layer so Tailwind utilities can override them. */
+@layer base {
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--canvas); color: var(--ink); font: 400 14px/22px var(--app-font-text); -webkit-font-smoothing: antialiased; }
+  button, input, textarea, select { font: inherit; color: inherit; }
+  :focus-visible { outline: var(--focus-width) solid var(--accent); outline-offset: var(--focus-offset); }
+  button:not(:disabled) { cursor: pointer; }
+  button:disabled { cursor: not-allowed; }
+}
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; transition-duration: 0.01ms !important; }

@@ -13,6 +13,7 @@ export const buttonVariants = cva(
         ghost: "text-ink-muted hover:bg-hover hover:text-ink",
         accent: "bg-accent text-accent-ink hover:bg-[color-mix(in_srgb,var(--accent)_88%,var(--ink))]",
         record: "bg-record text-canvas hover:bg-[color-mix(in_srgb,var(--record)_88%,var(--ink))]",
+        recordSoft: "bg-record-soft text-record hover:bg-record hover:text-canvas",
       },
       size: {
         default: "h-8 px-3",

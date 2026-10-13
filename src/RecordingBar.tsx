@@ -126,7 +126,7 @@ export default function RecordingBar({ recordRequest = 0, hideIdleButton = false
       <p className="m-0 min-w-0 flex-1"><span className="font-medium">{latestSwitch.source === "microphone" ? "Microphone" : "System audio"} switched to {latestSwitch.device}</span><br /><span className="text-ink-muted">Recording continued. The switch is marked on the Timeline at {formatElapsed(latestSwitch.at_ms)}.</span></p>
       <Button variant="ghost" size="icon" className="size-6" aria-label="Dismiss" onClick={() => setDismissedSwitches(status.device_switches.length)}><X size={16} strokeWidth={1.5} /></Button>
     </div>}
-    {!capturing && !hideIdleButton && <div className="px-5 py-3"><Button variant="record" title={`Record (${recordHotkey})`} onClick={() => record(startRecording)}><span aria-hidden="true" className="size-2 rounded-full bg-current" />Record</Button></div>}
+    {!capturing && !hideIdleButton && <div className="px-5 py-3"><Button variant="recordSoft" title={`Record (${recordHotkey})`} onClick={() => record(startRecording)}><span aria-hidden="true" className="size-2 rounded-full bg-current shadow-[0_0_0_3px_color-mix(in_srgb,currentColor_25%,transparent)]" />Record</Button></div>}
     {error && <div className="mx-5 my-3"><ErrorState title="Couldn't update the Recording" guidance={`${error}. Try again.`} /></div>}
     {status.saves.map((save) => <div key={save.meeting_id} className="mx-5 my-3 rounded-md border border-line bg-raised px-3 py-2 text-sm" aria-live="polite">
       {save.state === "saving" ? <>{save.recovered ? "Recovering" : "Saving"} {save.meeting_id}…</> : <>

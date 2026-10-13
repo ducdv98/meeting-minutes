@@ -12,7 +12,7 @@ import { ErrorState } from "./components/states/ErrorState";
 import { Loading } from "./components/states/Loading";
 import { FormSection } from "./components/FormSection";
 
-const selectClass = "h-[34px] w-full rounded-sm border border-line-strong bg-raised px-2.5 text-base focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-soft)] disabled:opacity-50";
+const selectClass = "h-[34px] w-full rounded-sm border border-line-strong bg-raised px-2.5 text-base outline-none focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-soft)] disabled:opacity-50";
 
 const PROVIDER_NOTES: Record<ProviderKind, string> = {
   ollama: "On this PC",
