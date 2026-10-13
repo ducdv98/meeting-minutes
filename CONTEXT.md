@@ -10,6 +10,10 @@ A single-user, local-first Windows app (no accounts, sharing or sync) that recor
 One conversation the user wants to keep, holding one or more Recordings played back as a single timeline.
 _Avoid_: Session, call, note
 
+**Title**:
+The user-chosen name of a Meeting. It can be changed at any time, including while the Meeting is recording or being processed, and changing it never moves the Meeting's folder or changes its identity.
+_Avoid_: Label, tag, folder name
+
 **Recording**:
 One continuous capture run belonging to a Meeting. Pausing continues the same Recording; a restart after a crash adds a new Recording to the same Meeting.
 _Avoid_: Take, file, clip
@@ -52,14 +56,18 @@ Turning a Meeting's audio into a Transcript, then a Summary and Action items. Lo
 The ordered list of Segments for a Meeting. Re-transcribing produces a new **Revision**; it never silently rewrites the old one. Editing a Segment's text keeps its ID and Revision.
 
 **Vocabulary**:
-The user's list of names and terms given to transcription as a hint.
+The user's list of names and terms given to transcription as a hint. A Meeting's Participant names are added to it for that Meeting only.
 
 **Segment**:
 A span of transcribed speech with an app-assigned stable ID and a millisecond range on the Meeting timeline.
 _Avoid_: Line, utterance, chunk
 
 **Speaker label**:
-Who a Segment is attributed to: **Me** (Microphone only), **Remote** (System audio only), or **Unknown** (overlap or bleed).
+Which Source a Segment's speech was detected on: **Me** (Microphone only), **Remote** (System audio only), or **Unknown** (overlap, bleed, or a Meeting without both Sources). Detected by the app, never edited by the user.
+
+**Participant**:
+A named person in one Meeting, chosen by the user. Each Speaker label starts with a default Participant: Me is the user's name from Settings (overridable per Meeting), Remote is "Remote" until named, and in a Voice note every Segment belongs to the user. The user may move any Segment to another Participant. Names are unique within a Meeting; giving a Participant an existing name merges them. There is no Library-wide person: "Anna" in two Meetings is two Participants with the same name. A new Revision keeps the Participants, and each new Segment goes to whichever Participant covered most of its time in the previous Revision. Participant names appear wherever the Transcript does: the Library files, Summaries, Asks and Library search.
+_Avoid_: Speaker name, attendee, person
 
 **Summary**:
 A generated overview of a Meeting with fixed sections (Overview, Key points, Decisions, Action items). Every item has a Citation; an item without one is dropped.
@@ -88,6 +96,8 @@ A reference from an Answer, Summary or Action item to a Segment ID in the same M
 - A **Recording** has one or two **Sources**, each made of **Chunks**
 - A **Meeting** has at most one current **Transcript**, made of **Segments**
 - A **Segment** has exactly one **Speaker label** and belongs to one **Revision**
+- A **Segment** is attributed to exactly one **Participant**; by default the one for its **Speaker label**
+- A **Participant** belongs to exactly one **Meeting**
 - A **Citation** points to a Segment in a specific **Revision**
 - An **Ask** belongs to exactly one **Meeting**; its **Citations** point only to that Meeting's **Segments**
 
@@ -95,6 +105,9 @@ A reference from an Answer, Summary or Action item to a Segment ID in the same M
 
 > **Dev:** "The app crashed 20 minutes into the call and I hit Record again — is that a new **Meeting**?"
 > **Domain expert:** "No. The surviving **Chunks** become the first **Recording**, the restart is a second **Recording**, and both play back as one **Meeting** timeline."
+
+> **Dev:** "Three people joined from the other side. Are they three **Speaker labels**?"
+> **Domain expert:** "No. They are all **Remote**, because they came through System audio. The user names them as three **Participants** and moves Segments between them; the **Speaker label** stays Remote."
 
 ## Flagged ambiguities
 
