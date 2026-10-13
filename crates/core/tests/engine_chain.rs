@@ -134,7 +134,8 @@ fn quota_midway_skips_groq_for_remaining_spans() {
         )],
         loads.clone(),
     );
-    run(&mut engine, &vec![0.0; 3 * 30 * 16_000]).unwrap();
+    // Three cloud spans of up to 10 minutes each.
+    run(&mut engine, &vec![0.0; 21 * 60 * 16_000]).unwrap();
     assert_eq!(calls.load(Ordering::SeqCst), 2);
     assert_eq!(loads.load(Ordering::SeqCst), 1);
     assert_eq!(engine.engines_used(), vec!["Groq", "small"]);
@@ -196,4 +197,41 @@ fn cancellation_during_retry_wait_stops_before_fallback() {
     ));
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     assert_eq!(loads.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn cloud_spans_end_at_the_quietest_point_before_the_target_length() {
+    let rate = 16_000;
+    let mut samples = vec![0.5f32; 70 * rate];
+    // A pause at 25.0–25.2 s and another at 53.0–53.2 s.
+    samples[25 * rate..25 * rate + rate / 5].fill(0.0);
+    samples[53 * rate..53 * rate + rate / 5].fill(0.0);
+    let spans = meeting_minutes_core::processing::cloud_span_bounds(&samples, 30 * rate, 10 * rate);
+    assert_eq!(spans.first().unwrap().start, 0);
+    assert_eq!(spans.last().unwrap().end, samples.len());
+    assert!(spans.windows(2).all(|pair| pair[0].end == pair[1].start));
+    let first_cut = spans[0].end;
+    assert!(
+        (25 * rate..25 * rate + rate / 5).contains(&first_cut),
+        "cut at {first_cut}"
+    );
+    let second_cut = spans[1].end;
+    assert!(
+        (53 * rate..53 * rate + rate / 5).contains(&second_cut),
+        "cut at {second_cut}"
+    );
+}
+
+#[test]
+fn cloud_spans_cut_at_the_target_when_audio_is_uniform_and_cover_short_input_whole() {
+    let samples = vec![0.5f32; 65 * 16_000];
+    let spans =
+        meeting_minutes_core::processing::cloud_span_bounds(&samples, 30 * 16_000, 10 * 16_000);
+    assert_eq!(spans.len(), 3);
+    assert!(spans.iter().all(|span| span.len() <= 30 * 16_000));
+    let short = vec![0.5f32; 1000];
+    assert_eq!(
+        meeting_minutes_core::processing::cloud_span_bounds(&short, 30 * 16_000, 10 * 16_000),
+        vec![0..1000]
+    );
 }

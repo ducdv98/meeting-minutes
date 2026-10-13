@@ -16,6 +16,7 @@ use std::{
     fmt,
     fs::{self, OpenOptions},
     io::{self, Write},
+    ops::Range,
     path::Path,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -79,7 +80,40 @@ pub trait SpeechEngine {
     }
 }
 
-const CHAIN_SPAN_SAMPLES: usize = 30 * 16_000;
+/// Cloud spans are long so a one-hour Meeting stays within Groq's per-minute request limit.
+const CHAIN_SPAN_SAMPLES: usize = 10 * 60 * 16_000;
+/// How far before the target length a span may end, to land on a pause instead of a word.
+const CHAIN_CUT_SEARCH_SAMPLES: usize = 10 * 16_000;
+const QUIET_WINDOW_SAMPLES: usize = 1_600;
+
+/// Splits audio into spans of at most `target` samples, each ending at the quietest
+/// 100 ms window within `search` samples before the target length.
+pub fn cloud_span_bounds(samples: &[f32], target: usize, search: usize) -> Vec<Range<usize>> {
+    let mut spans = Vec::new();
+    let mut start = 0;
+    while samples.len() - start > target {
+        let latest = start + target;
+        let earliest = latest - search.min(target / 2);
+        let mut cut = latest;
+        let mut quietest = f32::INFINITY;
+        let mut window = earliest;
+        while window + QUIET_WINDOW_SAMPLES <= latest {
+            let energy: f32 = samples[window..window + QUIET_WINDOW_SAMPLES]
+                .iter()
+                .map(|sample| sample * sample)
+                .sum();
+            if energy < quietest {
+                quietest = energy;
+                cut = window + QUIET_WINDOW_SAMPLES / 2;
+            }
+            window += QUIET_WINDOW_SAMPLES / 2;
+        }
+        spans.push(start..cut);
+        start = cut;
+    }
+    spans.push(start..samples.len());
+    spans
+}
 type LocalFactory<'a> = Box<dyn FnMut() -> Result<Box<dyn SpeechEngine>, ProcessingError> + 'a>;
 type RetrySleeper<'a> = Box<dyn FnMut(Duration, &AtomicBool) -> bool + 'a>;
 
@@ -361,9 +395,10 @@ impl SpeechEngine for EngineChain<'_> {
             return Ok(result);
         }
         let mut all = Vec::new();
-        for (index, span) in samples.chunks(CHAIN_SPAN_SAMPLES).enumerate() {
-            let offset = index as u64 * CHAIN_SPAN_SAMPLES as u64 / 16;
-            let mut segments = self.transcribe_span(span, language, prompt, cancel)?;
+        for span in cloud_span_bounds(samples, CHAIN_SPAN_SAMPLES, CHAIN_CUT_SEARCH_SAMPLES) {
+            let offset = span.start as u64 / 16;
+            let end = span.end;
+            let mut segments = self.transcribe_span(&samples[span], language, prompt, cancel)?;
             for segment in &mut segments {
                 segment.start_ms += offset;
                 segment.end_ms += offset;
@@ -373,10 +408,7 @@ impl SpeechEngine for EngineChain<'_> {
                 }
             }
             all.extend(segments);
-            progress(
-                ((index + 1) * CHAIN_SPAN_SAMPLES).min(samples.len()) as f32
-                    / samples.len().max(1) as f32,
-            );
+            progress(end as f32 / samples.len().max(1) as f32);
         }
         Ok(all)
     }

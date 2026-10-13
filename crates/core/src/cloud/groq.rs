@@ -25,7 +25,8 @@ use std::{
 const URL: &str = "https://api.groq.com/openai/v1/audio/transcriptions";
 const MODEL: &str = "whisper-large-v3";
 const MAX_FILE_BYTES: usize = 25 * 1024 * 1024;
-const MAX_SPAN_SAMPLES: usize = 5 * 60 * 16_000;
+/// Matches the engine chain's longest span, so spans it cut at a pause are not cut again.
+const MAX_SPAN_SAMPLES: usize = 10 * 60 * 16_000;
 static BOUNDARY_ID: AtomicU64 = AtomicU64::new(0);
 
 pub use crate::cloud::EngineError;
