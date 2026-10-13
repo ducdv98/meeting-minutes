@@ -1,0 +1,150 @@
+#!/usr/bin/env python3
+"""Download a small FLEURS test set and run the real Meeting transcription path."""
+
+import argparse
+import csv
+import io
+import json
+import os
+import shutil
+import subprocess
+import tarfile
+import wave
+from pathlib import Path
+from urllib.request import urlopen
+
+
+ROOT = Path(__file__).resolve().parents[1]
+DATA = ROOT / "benchmarks" / "data"
+FLEURS_REVISION = "70bb2e84b976b7e960aa89f1c648e09c59f894dd"
+FLEURS = f"https://huggingface.co/datasets/google/fleurs/resolve/{FLEURS_REVISION}/data"
+LANGUAGES = {"en": "en_us", "vi": "vi_vn"}
+SILENCE_SECONDS = 2
+
+
+def fetch_clips():
+    clips = []
+    for language, locale in LANGUAGES.items():
+        tsv_url = f"{FLEURS}/{locale}/test.tsv"
+        rows = csv.reader(io.StringIO(urlopen(tsv_url).read().decode("utf-8")), delimiter="\t")
+        selected = []
+        seen = set()
+        for row in rows:
+            if len(row) < 4 or row[3] in seen:
+                continue
+            selected.append((row[1], row[2]))
+            seen.add(row[3])
+            if len(selected) == 10:
+                break
+        if len(selected) != 10:
+            raise RuntimeError(f"Only {len(selected)} unique {language} references found")
+
+        destination = DATA / locale
+        destination.mkdir(parents=True, exist_ok=True)
+        missing = {name for name, _ in selected if not (destination / name).is_file()}
+        if missing:
+            archive_url = f"{FLEURS}/{locale}/audio/test.tar.gz"
+            print(f"Downloading selected {locale} test clips from {archive_url}", flush=True)
+            process = subprocess.Popen(
+                ["curl", "--fail", "--location", "--retry", "3", "--silent", "--show-error", archive_url],
+                stdout=subprocess.PIPE,
+            )
+            try:
+                with tarfile.open(fileobj=process.stdout, mode="r|gz") as archive:
+                    for member in archive:
+                        name = Path(member.name).name
+                        if not member.isfile() or name not in missing:
+                            continue
+                        source = archive.extractfile(member)
+                        if source is None:
+                            raise RuntimeError(f"Cannot read {name} from FLEURS archive")
+                        temporary = destination / f"{name}.part"
+                        with temporary.open("wb") as output:
+                            while block := source.read(1024 * 1024):
+                                output.write(block)
+                        temporary.replace(destination / name)
+                        missing.remove(name)
+                        if not missing:
+                            break
+            finally:
+                if missing:
+                    process.kill()
+                else:
+                    process.terminate()
+                process.wait()
+            if missing:
+                raise RuntimeError(f"Missing {locale} clips in FLEURS archive: {sorted(missing)}")
+        for index, (name, reference) in enumerate(selected, 1):
+            clips.append({
+                "id": f"{language}-{index:02d}",
+                "language": language,
+                "path": str((destination / name).relative_to(DATA)),
+                "reference": reference,
+                "long": False,
+            })
+    return clips
+
+
+def stitch_long_clip(clips):
+    destination = DATA / "stitched-en.wav"
+    references = []
+    frames = 0
+    target_frames = 600 * 16_000
+    with wave.open(str(destination), "wb") as output:
+        output.setnchannels(1)
+        output.setsampwidth(2)
+        output.setframerate(16_000)
+        english = [clip for clip in clips if clip["language"] == "en"]
+        while frames < target_frames:
+            for clip in english:
+                converted = subprocess.check_output([
+                    "ffmpeg", "-v", "error", "-i", str(DATA / clip["path"]),
+                    "-f", "s16le", "-ac", "1", "-ar", "16000", "-",
+                ])
+                output.writeframes(converted)
+                output.writeframes(b"\0\0" * (SILENCE_SECONDS * 16_000))
+                frames += len(converted) // 2 + SILENCE_SECONDS * 16_000
+                references.append(clip["reference"])
+                if frames >= target_frames:
+                    break
+    return {
+        "id": "en-stitched-10m",
+        "language": "en",
+        "path": destination.name,
+        "reference": " ".join(references),
+        "long": True,
+    }
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("command", choices=["download", "run", "list-devices"])
+    parser.add_argument("--model", action="append", metavar="NAME=PATH", help="repeat for each model")
+    parser.add_argument("--device", action="append", metavar="cpu|auto|VULKAN_ID", help="repeat for each device")
+    parser.add_argument("--vad", type=Path, help="path to ggml-silero-v6.2.0.bin")
+    args = parser.parse_args()
+    cargo = shutil.which("cargo") or str(Path.home() / ".cargo" / "bin" / ("cargo.exe" if os.name == "nt" else "cargo"))
+    if args.command == "list-devices":
+        raise SystemExit(subprocess.call([cargo, "run", "--release", "-p", "meeting_minutes_whisper", "--bin", "benchmark-transcription", "--", "--list-devices"], cwd=ROOT))
+    DATA.mkdir(parents=True, exist_ok=True)
+    manifest = DATA / "manifest.json"
+    if args.command == "download" or not manifest.exists():
+        clips = fetch_clips()
+        clips.append(stitch_long_clip(clips))
+        manifest.write_text(json.dumps(clips, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        print(f"Wrote {manifest} with {len(clips)} clips")
+    if args.command == "run":
+        if not args.model:
+            parser.error("run needs at least one --model NAME=PATH")
+        command = [cargo, "run", "--release", "-p", "meeting_minutes_whisper", "--bin", "benchmark-transcription", "--", "--manifest", str(manifest)]
+        for model in args.model:
+            command.extend(["--model", model])
+        for device in args.device or ["cpu"]:
+            command.extend(["--device", device])
+        if args.vad:
+            command.extend(["--vad", str(args.vad)])
+        raise SystemExit(subprocess.call(command, cwd=ROOT))
+
+
+if __name__ == "__main__":
+    main()
