@@ -1,6 +1,6 @@
 # Transcribe each Source separately
 
-Status: ready-for-agent
+Status: ready-for-human
 Spec: ../spec.md
 Blocked by: 01
 
@@ -23,3 +23,4 @@ Today `prepare_recording` mixes the Microphone and System audio into one 16 kHz 
 - [ ] An Import still gives Unknown. A Voice note gives Me.
 - [ ] Timeline placement across multiple Recordings is unchanged (the existing tests pass).
 - [ ] `transcription_completed` reports the summed audio and VAD durations for both streams.
+- Laptop check: Record a call with a headset: your speech is Me, the other side is Remote, talking over each other gives one Segment per Source, and a Voice note is all Me.

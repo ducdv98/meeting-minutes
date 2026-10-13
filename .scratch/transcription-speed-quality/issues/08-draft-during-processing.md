@@ -1,6 +1,6 @@
 # Show a Draft during Processing
 
-Status: ready-for-agent
+Status: ready-for-human
 Spec: ../spec.md
 Blocked by: 07
 
@@ -20,3 +20,4 @@ Blocked by: 07
 - [ ] Frontend tests: Draft Segments render as they arrive, Ask and Citations are disabled, and the Draft is swapped for the Revision on completion and cleared on failure.
 - [ ] Core test: the progress callback delivers Segments in order and never reports more audio than the total.
 - [ ] Re-transcribing a Meeting that already has a Revision shows the Draft in place of the old Revision, and restores the old one on cancel.
+- Laptop check: Re-transcribe a Meeting: the Draft replaces the old Revision with "Draft · Transcribing…", Ask and Summary are hidden, closing and reopening the Meeting shows the Draft so far, and Cancel restores the old Revision.

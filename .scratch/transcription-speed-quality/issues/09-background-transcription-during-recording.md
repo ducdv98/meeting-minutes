@@ -1,6 +1,6 @@
 # Background transcription during a Recording
 
-Status: ready-for-agent
+Status: ready-for-human
 Spec: ../spec.md
 Blocked by: 01, 06, 07, 08
 
@@ -33,3 +33,4 @@ Implement ADR 0010:
 - [ ] Power switch to battery stops background work, and the remainder is done after Stop. A switch back to AC resumes it.
 - [ ] Simulated crash: no background state survives, and the Meeting transcribes normally after restart.
 - [ ] On the RTX 4050, a one-hour Meeting shows the Draft within 5 s of Stop and publishes its Revision within about a minute (record in `## Comments`).
+- Laptop check: On AC with the RTX 4050, record a one-hour call: after Stop the Draft appears within 5 s and the Revision publishes within about a minute (record the times below). Unplug for part of the call and Pause once: the remainder is transcribed after Stop and the Transcript reads the same.

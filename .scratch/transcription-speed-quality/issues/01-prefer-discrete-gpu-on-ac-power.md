@@ -1,6 +1,6 @@
 # Prefer the discrete GPU on AC power
 
-Status: ready-for-agent
+Status: ready-for-human
 Spec: ../spec.md
 
 ## What
@@ -19,3 +19,4 @@ Today `plan_backend` (`crates/whisper/src/lib.rs`) picks the Vulkan device with 
 - [ ] Existing tie and empty-list tests still pass.
 - [ ] Diagnostics show the device and power state. The diagnostics parsing tests are updated.
 - [ ] `main.rs` builds for Windows (see the memory note on Windows clippy).
+- Laptop check: On AC power, transcribe a Meeting and Copy diagnostics: `transcription_completed` and the Transcription backend name the RTX 4050 with `power=ac`. Unplug and transcribe again: the Radeon 780M is used with `power=battery`.
