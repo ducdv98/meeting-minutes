@@ -26,7 +26,7 @@ use meeting_minutes_core::{
     recorder::{Phase, Recorder, RecorderError, RecorderStatus, SaveJob, SaveState},
     settings::Settings,
     summary::{self, Summary, SummaryOptions},
-    transcript::{Language, Transcript},
+    transcript::{Language, Speaker, Transcript},
     window_fit::{fit_window, Rect},
     Library, LibraryError, MeetingDetail, MeetingSummary, ScanReport, SearchHit,
 };
@@ -564,18 +564,24 @@ fn get_settings(path: State<'_, SettingsPath>) -> Settings {
 
 #[tauri::command]
 fn update_settings(
+    app: AppHandle,
     path: State<'_, SettingsPath>,
     auto_process: bool,
     model: String,
     vocabulary: Vec<String>,
     language: Option<Language>,
+    your_name: Option<String>,
 ) -> Result<Settings, String> {
     let mut settings = Settings::load(&path.0);
     settings.auto_process = auto_process;
     settings.model = model;
     settings.vocabulary = vocabulary;
     settings.language = language;
+    settings.your_name = your_name.map(|name| name.trim().to_owned()).filter(|name| !name.is_empty());
     settings.save(&path.0).map_err(|e| e.to_string())?;
+    if let Ok(mut guard) = app.state::<LibraryState>().lock() {
+        if let Ok(library) = guard.as_mut() { library.set_your_name(settings.your_name.as_deref()); }
+    }
     Ok(settings)
 }
 
@@ -1244,7 +1250,7 @@ fn processing_worker(app: AppHandle) {
             let mut engine = WhisperEngine::load_with_vad(&model_path, vad_path.as_deref())
                 .map_err(processing::ProcessingError::Engine)?;
             let mut last = 0u32;
-            processing::transcribe_meeting(
+            processing::transcribe_meeting_named(
                 &TranscribeRequest {
                     meeting_dir: &meeting_dir,
                     model: model.name,
@@ -1260,6 +1266,7 @@ fn processing_worker(app: AppHandle) {
                     }
                 },
                 &cancel,
+                settings.your_name.as_deref(),
             )?;
             Ok(())
         })();
@@ -1456,6 +1463,25 @@ fn rename_meeting(
     let _ = app.emit("library-changed", ());
     let _ = publish(&app);
     Ok(summary)
+}
+
+#[tauri::command]
+fn set_participant_name(app: AppHandle, meeting_id: String, label: Speaker, name: Option<String>) -> Result<(), String> {
+    let settings = Settings::load(&app.state::<SettingsPath>().0);
+    let state = app.state::<LibraryState>();
+    let mut guard = state.lock().map_err(|error| error.to_string())?;
+    let library = guard.as_mut().map_err(|error| error.clone())?;
+    library.set_your_name(settings.your_name.as_deref());
+    library.set_participant_name(&meeting_id, label, name.as_deref()).map_err(|error| error.to_string())?;
+    drop(guard);
+    let _ = app.emit("library-changed", ());
+    Ok(())
+}
+
+#[tauri::command]
+fn list_participant_names(state: State<'_, LibraryState>) -> Result<Vec<String>, String> {
+    let guard = state.lock().map_err(|error| error.to_string())?;
+    guard.as_ref().map_err(Clone::clone)?.participant_names().map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -2159,7 +2185,7 @@ fn main() {
                 keep_window_on_screen(&window)?;
             }
             log_event(LogEvent::Startup);
-            let library = (|| -> Result<Library, String> {
+            let mut library = (|| -> Result<Library, String> {
                 let root = app
                     .path()
                     .document_dir()
@@ -2172,10 +2198,10 @@ fn main() {
                     .join("index.sqlite3");
                 Library::open(root, index).map_err(|error| error.to_string())
             })();
-            app.manage(Mutex::new(library));
-
             let settings_path = app.path().app_data_dir()?.join("settings.json");
             let settings = Settings::load(&settings_path);
+            if let Ok(library) = library.as_mut() { library.set_your_name(settings.your_name.as_deref()); }
+            app.manage(Mutex::new(library));
             app.manage(SettingsPath(settings_path));
             #[cfg(windows)]
             app.manage(Secrets(Box::new(KeyringStore)));
@@ -2308,6 +2334,8 @@ fn main() {
             open_meeting_folder,
             open_link,
             rename_meeting,
+            set_participant_name,
+            list_participant_names,
             delete_meeting,
             recording_status,
             start_recording,

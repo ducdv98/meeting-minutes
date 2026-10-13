@@ -13,6 +13,8 @@ pub struct Settings {
     pub auto_process: bool,
     pub model: String,
     pub vocabulary: Vec<String>,
+    #[serde(default)]
+    pub your_name: Option<String>,
     /// Default Meeting language; `None` detects it.
     pub language: Option<Language>,
     pub ai: AiSettings,
@@ -25,6 +27,7 @@ impl Default for Settings {
             auto_process: true,
             model: "small".into(),
             vocabulary: Vec::new(),
+            your_name: None,
             language: None,
             ai: AiSettings::default(),
         }

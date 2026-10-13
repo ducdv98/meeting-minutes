@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { Speaker } from "./processing";
 
 export interface MeetingSummary {
   id: string;
@@ -29,6 +30,8 @@ export interface MeetingDetail extends MeetingSummary {
   markers: Marker[];
   imported: boolean;
   sources?: ("microphone" | "system_audio")[];
+  voice_note: boolean;
+  participants: Partial<Record<Speaker, string>>;
 }
 
 export interface MalformedFolder {
@@ -59,6 +62,14 @@ export function openMeetingFolder(id: string): Promise<void> {
 
 export function renameMeeting(id: string, title: string): Promise<MeetingSummary> {
   return invoke<MeetingSummary>("rename_meeting", { meetingId: id, title });
+}
+
+export function setParticipantName(id: string, label: Speaker, name: string | null): Promise<void> {
+  return invoke<void>("set_participant_name", { meetingId: id, label, name });
+}
+
+export function participantNames(): Promise<string[]> {
+  return invoke<string[]>("list_participant_names");
 }
 
 export function searchLibrary(query: string): Promise<SearchHit[]> {

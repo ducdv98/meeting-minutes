@@ -24,6 +24,17 @@ it("plays the chosen Segment and highlights the current one", () => {
   expect(screen.getByText("World").closest("li")?.className).toContain("current");
 });
 
+it("shows Participant names, keeps the detected Speaker label, and clears named Unknown styling", () => {
+  const named = { ...transcript, segments: [...transcript.segments, { id: "s00003", start_ms: 2100, end_ms: 2900, text: "Maybe", speaker: "unknown" as const }] };
+  const { rerender } = render(<TranscriptView transcript={named} positionMs={0} player={null} editable onEdit={vi.fn()} participants={{ remote: "Anna", unknown: "Anna" }} yourName="Duc" />);
+  expect(screen.getByText("Duc").getAttribute("title")).toBe("Speaker label: Me");
+  expect(screen.getAllByText("Anna")).toHaveLength(2);
+  expect(screen.getByText("Maybe").className).not.toContain("text-ink-muted");
+  rerender(<TranscriptView transcript={named} positionMs={0} player={null} editable onEdit={vi.fn()} participants={{}} yourName="Duc" isVoiceNote />);
+  expect(screen.getAllByText("Duc")).toHaveLength(3);
+  expect(screen.getByText("Maybe").className).not.toContain("text-ink-muted");
+});
+
 it("saves edited text and keeps the editor open on error", async () => {
   const onEdit = vi.fn().mockRejectedValueOnce("Save failed").mockResolvedValueOnce(undefined);
   render(<TranscriptView transcript={transcript} positionMs={0} player={player} editable onEdit={onEdit} />);

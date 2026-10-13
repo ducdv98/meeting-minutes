@@ -1,10 +1,10 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import MeetingView from "./MeetingView";
-import { deleteMeeting, meetingDetail, openMeetingFolder, renameMeeting, type MeetingDetail } from "./library";
+import { deleteMeeting, meetingDetail, openMeetingFolder, renameMeeting, setParticipantName, participantNames, type MeetingDetail } from "./library";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { onLibraryChanged } from "./recording";
-import { processingStatus, meetingTranscript, enqueueTranscription, cancelProcessing, onProcessingStatus, setMeetingLanguage, type ProcessingStatus } from "./processing";
+import { processingStatus, meetingTranscript, enqueueTranscription, cancelProcessing, onProcessingStatus, setMeetingLanguage, getSettings, type ProcessingStatus } from "./processing";
 import { editSegment } from "./transcript";
 import { aiStatus } from "./ai";
 import { meetingSummary, summaryStatus } from "./summary";
@@ -13,8 +13,8 @@ import { meetingAsks } from "./ask";
 vi.mock("./ai", async (original) => ({ ...(await original<typeof import("./ai")>()), aiStatus: vi.fn() }));
 vi.mock("./summary", () => ({ meetingSummary: vi.fn(), summaryStatus: vi.fn(), onSummaryStatus: vi.fn(() => Promise.resolve(() => {})) }));
 vi.mock("./ask", () => ({ meetingAsks: vi.fn(), onAskDelta: vi.fn(() => Promise.resolve(() => {})), onAsksChanged: vi.fn(() => Promise.resolve(() => {})), answerLabel: () => "" }));
-vi.mock("./library", () => ({ meetingDetail: vi.fn(), openMeetingFolder: vi.fn(), renameMeeting: vi.fn(), deleteMeeting: vi.fn() }));
-vi.mock("./processing", async (importOriginal) => ({ ...(await importOriginal<typeof import("./processing")>()), processingStatus: vi.fn(), meetingTranscript: vi.fn(), enqueueTranscription: vi.fn(), cancelProcessing: vi.fn(), dismissProcessing: vi.fn(), setMeetingLanguage: vi.fn(), onProcessingStatus: vi.fn(() => Promise.resolve(() => {})) }));
+vi.mock("./library", () => ({ meetingDetail: vi.fn(), openMeetingFolder: vi.fn(), renameMeeting: vi.fn(), deleteMeeting: vi.fn(), setParticipantName: vi.fn(), participantNames: vi.fn() }));
+vi.mock("./processing", async (importOriginal) => ({ ...(await importOriginal<typeof import("./processing")>()), processingStatus: vi.fn(), meetingTranscript: vi.fn(), enqueueTranscription: vi.fn(), cancelProcessing: vi.fn(), dismissProcessing: vi.fn(), setMeetingLanguage: vi.fn(), getSettings: vi.fn(), onProcessingStatus: vi.fn(() => Promise.resolve(() => {})) }));
 vi.mock("./recording", async (importOriginal) => ({ ...(await importOriginal<typeof import("./recording")>()), onLibraryChanged: vi.fn(() => Promise.resolve(() => {})) }));
 vi.mock("./transcript", async (importOriginal) => ({ ...(await importOriginal<typeof import("./transcript")>()), editSegment: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ convertFileSrc: vi.fn((path: string) => `asset:${path}`) }));
@@ -23,6 +23,8 @@ const detail: MeetingDetail = {
   id: "old", title: "Planning", started_at: "2026-10-12T09:30:00Z",
   duration_ms: 125_000, language: "vi", audio_path: "C:\\Meetings\\meeting.mp3",
   imported: false,
+  voice_note: false,
+  participants: {},
   markers: [
     { kind: "pause", at_ms: 10_000, paused_ms: 125_000 },
     { kind: "gap", at_ms: 20_000 },
@@ -36,6 +38,9 @@ beforeEach(() => {
   vi.mocked(meetingAsks).mockResolvedValue({ asks: [], active: null, retryable_id: null });
   vi.mocked(aiStatus).mockResolvedValue({ provider: null, model: null, configured: false, has_openai_key: false, has_anthropic_key: false });
   vi.mocked(meetingDetail).mockResolvedValue(detail);
+  vi.mocked(participantNames).mockResolvedValue(["Anna"]);
+  vi.mocked(setParticipantName).mockResolvedValue();
+  vi.mocked(getSettings).mockResolvedValue({ recording_notice_acknowledged: true, auto_process: true, model: "small", vocabulary: [], language: null, your_name: "Duc", ai: { provider: null, ollama_model: null, openai_model: null, anthropic_model: null } });
   vi.mocked(processingStatus).mockResolvedValue({ jobs: [] });
   vi.mocked(meetingTranscript).mockResolvedValue(null);
   vi.mocked(enqueueTranscription).mockResolvedValue({ jobs: [{ meeting_id: "old", model: null, stage: "queued", progress: 0, error: null }] });
@@ -48,6 +53,36 @@ beforeEach(() => {
   vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => {});
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.resetAllMocks(); });
+
+it("names Participants for present Speaker labels while Processing is busy", async () => {
+  vi.mocked(processingStatus).mockResolvedValue({ jobs: [{ meeting_id: "old", model: "small", stage: "transcribing", progress: 0.5, error: null }] });
+  vi.mocked(meetingTranscript).mockResolvedValue({ schema_version: 1, revision: 1, created_at: "2026-10-12T10:00:00Z", model: "small", language: "en", language_detected: false, duration_ms: 2000, segments: [
+    { id: "s00001", start_ms: 0, end_ms: 500, text: "Hello", speaker: "me" },
+    { id: "s00002", start_ms: 600, end_ms: 1000, text: "Hi", speaker: "remote" },
+  ] });
+  render(<MeetingView id="old" onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
+  await screen.findByText("Participants");
+  const remote = await screen.findByRole("combobox", { name: "Remote Participant" });
+  expect((remote as HTMLInputElement).disabled).toBe(false);
+  fireEvent.change(remote, { target: { value: "Anna" } });
+  fireEvent.blur(remote);
+  await waitFor(() => expect(setParticipantName).toHaveBeenCalledWith("old", "remote", "Anna"));
+  expect(await screen.findByText("Anna")).toBeTruthy();
+  expect(screen.queryByRole("combobox", { name: "Unknown Participant" })).toBeNull();
+});
+
+it("names only the user in a Voice note with Unknown Segments", async () => {
+  vi.mocked(meetingDetail).mockResolvedValue({ ...detail, sources: ["microphone"], voice_note: true });
+  vi.mocked(getSettings).mockResolvedValue({ recording_notice_acknowledged: true, auto_process: true, model: "small", vocabulary: [], language: null, your_name: "Duc", ai: { provider: null, ollama_model: null, openai_model: null, anthropic_model: null } });
+  vi.mocked(meetingTranscript).mockResolvedValue({ schema_version: 1, revision: 1, created_at: "2026-10-12T10:00:00Z", model: "small", language: "en", language_detected: false, duration_ms: 1000, segments: [{ id: "s00001", start_ms: 0, end_ms: 500, text: "Note to self", speaker: "unknown" }] });
+  render(<MeetingView id="old" onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
+  const me = await screen.findByRole("combobox", { name: "Me Participant" });
+  await waitFor(() => expect((me as HTMLInputElement).value).toBe("Duc"));
+  expect(screen.queryByRole("combobox", { name: "Unknown Participant" })).toBeNull();
+  fireEvent.change(me, { target: { value: "Duc D" } });
+  fireEvent.blur(me);
+  await waitFor(() => expect(setParticipantName).toHaveBeenCalledWith("old", "me", "Duc D"));
+});
 
 it("plays and highlights a search result once the Transcript and player load", async () => {
   vi.mocked(meetingTranscript).mockResolvedValue({ schema_version: 1, revision: 1, created_at: "2026-10-12T10:00:00Z", model: "small", language: "en", language_detected: false, duration_ms: 125000, segments: [{ id: "s00001", start_ms: 1000, end_ms: 2000, text: "Budget", speaker: "me" }] });

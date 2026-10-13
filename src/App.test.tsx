@@ -42,7 +42,7 @@ beforeEach(() => {
   vi.mocked(onRecordingStatus).mockResolvedValue(() => {});
   vi.mocked(searchLibrary).mockResolvedValue([]);
   vi.mocked(deleteMeeting).mockResolvedValue();
-  vi.mocked(meetingDetail).mockImplementation(async (id) => ({ id, title: id, started_at: "2026-10-12T09:00:00Z", duration_ms: 0, language: null, audio_path: null, markers: [], imported: false }));
+  vi.mocked(meetingDetail).mockImplementation(async (id) => ({ id, title: id, started_at: "2026-10-12T09:00:00Z", duration_ms: 0, language: null, audio_path: null, markers: [], imported: false, voice_note: false, participants: {} }));
 });
 
 it("opens a Meeting from a search result at its Segment", async () => {
@@ -225,7 +225,7 @@ it("lists Meeting titles in the Library", async () => {
 
 it("shows the Meeting language with its duration", async () => {
   vi.mocked(rescanLibrary).mockResolvedValue({ meetings: [{ id: "one", title: "Planning", started_at: "2026-10-12T09:00:00Z", duration_ms: 1_830_000 }], malformed: [] });
-  vi.mocked(meetingDetail).mockResolvedValue({ id: "one", title: "Planning", started_at: "2026-10-12T09:00:00Z", duration_ms: 1_830_000, language: "en", audio_path: null, markers: [], imported: false });
+  vi.mocked(meetingDetail).mockResolvedValue({ id: "one", title: "Planning", started_at: "2026-10-12T09:00:00Z", duration_ms: 1_830_000, language: "en", audio_path: null, markers: [], imported: false, voice_note: false, participants: {} });
   render(<App />);
   await waitFor(() => expect(screen.getByRole("button", { name: "Planning" }).textContent).toContain("30 min · English"));
 });

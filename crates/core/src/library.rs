@@ -16,10 +16,11 @@ use crate::{
     import::{audio_duration_ms, import_extension},
     index::Index,
     meeting_file::{ImportFile, MeetingDetail, MeetingFile, RecordingEntry},
-    metadata::{update_metadata, update_metadata_and, with_current_title},
+    metadata::{update_metadata, update_metadata_and, with_current_metadata},
+    participant::{default_name, label_key},
     recording::{write_manifest, RecordingManifest},
     summary::{read_summary, render_summary_markdown},
-    transcript::{render_markdown, Language, Transcript},
+    transcript::{render_markdown_named, Language, Speaker, Transcript},
     MeetingSummary, SearchHit,
 };
 
@@ -131,6 +132,7 @@ fn import_error(error: crate::processing::ProcessingError) -> LibraryError {
 pub struct Library {
     root: PathBuf,
     index: Index,
+    your_name: Option<String>,
 }
 
 impl Library {
@@ -142,7 +144,7 @@ impl Library {
         fs::create_dir_all(&root)?;
         let index = Index::open(index_path.as_ref())?;
         let fresh = index.fresh;
-        let mut library = Self { root, index };
+        let mut library = Self { root, index, your_name: None };
         if fresh {
             library.rescan()?;
         }
@@ -344,6 +346,20 @@ impl Library {
         &self.root
     }
 
+    pub fn set_your_name(&mut self, name: Option<&str>) {
+        self.your_name = name.map(str::trim).filter(|name| !name.is_empty()).map(str::to_owned);
+    }
+
+    pub fn participant_names(&self) -> Result<Vec<String>, LibraryError> {
+        let mut names = std::collections::BTreeSet::new();
+        for meeting in self.index.list()? {
+            let file: MeetingFile = serde_json::from_slice(&fs::read(self.meeting_dir(&meeting.id).join("meeting.json"))?)?;
+            names.extend(file.participants.into_values());
+        }
+        if let Some(name) = &self.your_name { names.insert(name.clone()); }
+        Ok(names.into_iter().collect())
+    }
+
     pub fn meeting_dir(&self, id: &str) -> PathBuf {
         self.root.join(id)
     }
@@ -358,6 +374,7 @@ impl Library {
             .filter(|name| Path::new(name).file_name() == Some(std::ffi::OsStr::new(name)))
             .map(|name| folder.join(name))
             .filter(|path| path.is_file());
+        let voice_note = file.is_voice_note();
         Ok(MeetingDetail {
             id: id.to_owned(),
             title: file.title,
@@ -371,6 +388,8 @@ impl Library {
                 .into_iter()
                 .filter(|source| file.recordings.iter().any(|recording| matches!(recording, RecordingEntry::Known(known) if known.files.iter().any(|entry| entry.source == *source))))
                 .collect(),
+            voice_note,
+            participants: file.participants,
         })
     }
 
@@ -434,7 +453,7 @@ impl Library {
             let _ = fs::remove_file(&tmp);
             return Err(error);
         }
-        with_current_title(&folder, |title| write_transcript_markdown(&folder, &render_markdown(title, &transcript)))?;
+        write_current_transcript_markdown(&folder, &transcript, self.your_name.as_deref())?;
         self.index.set_transcript(id, Some(&transcript))?;
         Ok(transcript)
     }
@@ -443,6 +462,28 @@ impl Library {
         let folder = self.checked_meeting_dir(id)?;
         update_metadata(&folder, |metadata| {
             metadata["language"] = serde_json::to_value(language)?;
+            Ok(())
+        })
+    }
+
+    pub fn set_participant_name(&self, id: &str, label: Speaker, name: Option<&str>) -> Result<(), LibraryError> {
+        let folder = self.checked_meeting_dir(id)?;
+        let name = name.map(str::trim).filter(|name| !name.is_empty());
+        let default = default_name(label, self.your_name.as_deref());
+        update_metadata_and(&folder, |metadata| {
+            let participants = metadata.as_object_mut().ok_or_else(|| LibraryError::Encode("Invalid Meeting metadata".into()))?
+                .entry("participants").or_insert_with(|| serde_json::json!({}));
+            let participants = participants.as_object_mut().ok_or_else(|| LibraryError::Encode("Invalid Participants".into()))?;
+            match name.filter(|name| *name != default) {
+                Some(name) => { participants.insert(label_key(label).into(), serde_json::json!(name)); }
+                None => { participants.remove(label_key(label)); }
+            }
+            Ok(())
+        }, |metadata| {
+            if let Some(transcript) = self.transcript(id)? {
+                let markdown = markdown_from_metadata(metadata, &transcript, self.your_name.as_deref())?;
+                write_transcript_markdown(&folder, &markdown)?;
+            }
             Ok(())
         })
     }
@@ -493,9 +534,11 @@ impl Library {
         update_metadata_and(&folder, |metadata| {
             metadata["title"] = serde_json::Value::String(title.to_owned());
             Ok(())
-        }, || {
+        }, |metadata| {
             if let Ok(Some(transcript)) = self.transcript(id) {
-                let _ = write_transcript_markdown(&folder, &render_markdown(title, &transcript));
+                if let Ok(markdown) = markdown_from_metadata(metadata, &transcript, self.your_name.as_deref()) {
+                    let _ = write_transcript_markdown(&folder, &markdown);
+                }
             }
             if let Ok(Some(saved_summary)) = read_summary(&folder) {
                 let _ = write_summary_markdown(&folder, &render_summary_markdown(title, &saved_summary));
@@ -668,6 +711,17 @@ impl Library {
             malformed,
         })
     }
+}
+
+fn markdown_from_metadata(metadata: &serde_json::Value, transcript: &Transcript, your_name: Option<&str>) -> io::Result<String> {
+    let file: MeetingFile = serde_json::from_value(metadata.clone()).map_err(io::Error::other)?;
+    Ok(render_markdown_named(&file.title, transcript, &file.participants, your_name, file.is_voice_note()))
+}
+
+fn write_current_transcript_markdown(folder: &Path, transcript: &Transcript, your_name: Option<&str>) -> io::Result<()> {
+    with_current_metadata(folder, |metadata| {
+        write_transcript_markdown(folder, &markdown_from_metadata(metadata, transcript, your_name)?)
+    })
 }
 
 fn write_transcript_markdown(folder: &Path, markdown: &str) -> io::Result<()> {

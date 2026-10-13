@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use crate::participant::{participant_name, MeetingParticipants};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -154,6 +155,10 @@ pub fn assign_ids(mut placed: Vec<PlacedSegment>, duration_ms: u64) -> Vec<Segme
 }
 
 pub fn render_markdown(title: &str, transcript: &Transcript) -> String {
+    render_markdown_named(title, transcript, &MeetingParticipants::new(), None, false)
+}
+
+pub fn render_markdown_named(title: &str, transcript: &Transcript, participants: &MeetingParticipants, settings_name: Option<&str>, is_voice_note: bool) -> String {
     let language = match transcript.language {
         Language::En => "English",
         Language::Vi => "Vietnamese",
@@ -164,11 +169,7 @@ pub fn render_markdown(title: &str, transcript: &Transcript) -> String {
     );
     for s in &transcript.segments {
         let seconds = s.start_ms / 1000;
-        let speaker = match s.speaker {
-            Speaker::Me => "Me",
-            Speaker::Remote => "Remote",
-            Speaker::Unknown => "Unknown",
-        };
+        let speaker = participant_name(participants, settings_name, is_voice_note, s);
         result.push_str(&format!(
             "\n**[{:02}:{:02}:{:02}] {speaker}:** {}\n",
             seconds / 3600,

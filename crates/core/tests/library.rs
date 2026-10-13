@@ -1,6 +1,7 @@
 use chrono::{DateTime, FixedOffset};
 use meeting_minutes_core::ai::ProviderKind;
 use meeting_minutes_core::{Library, LibraryError, OrphanRecording};
+use meeting_minutes_core::transcript::Speaker;
 use tempfile::TempDir;
 
 fn write_transcript(library: &Library, id: &str, revision: u32, text: &str) {
@@ -16,6 +17,58 @@ fn write_transcript(library: &Library, id: &str, revision: u32, text: &str) {
         serde_json::to_vec(&value).unwrap(),
     )
     .unwrap();
+}
+
+#[test]
+fn participant_names_survive_rescan_and_update_transcript_markdown() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().join("Library");
+    let index = temp.path().join("index.sqlite3");
+    let mut library = Library::open(&root, &index).unwrap();
+    let meeting = library.create_meeting("Planning", at("2026-10-12T09:30:00Z")).unwrap();
+    write_transcript(&library, &meeting.id, 1, "Hello");
+    library.set_participant_name(&meeting.id, Speaker::Me, Some("Duc")).unwrap();
+    assert_eq!(library.meeting(&meeting.id).unwrap().participants.get("me").map(String::as_str), Some("Duc"));
+    assert!(std::fs::read_to_string(library.meeting_dir(&meeting.id).join("transcript.md")).unwrap().contains("Duc:** Hello"));
+    drop(library);
+    let mut reopened = Library::open(&root, &index).unwrap();
+    reopened.rescan().unwrap();
+    assert_eq!(reopened.meeting(&meeting.id).unwrap().participants.get("me").map(String::as_str), Some("Duc"));
+    assert_eq!(reopened.participant_names().unwrap(), vec!["Duc"]);
+}
+
+#[test]
+fn participant_defaults_merging_and_voice_notes_use_meeting_sources() {
+    let temp = TempDir::new().unwrap();
+    let mut library = Library::open(temp.path().join("Library"), temp.path().join("index.sqlite3")).unwrap();
+    library.set_your_name(Some("Duc"));
+    let meeting = library.create_meeting("Planning", at("2026-10-12T09:30:00Z")).unwrap();
+    let path = library.meeting_dir(&meeting.id);
+    let transcript = serde_json::json!({"schema_version":1,"revision":1,"created_at":"2026-10-12T10:00:00Z","model":"small","language":"en","language_detected":false,"duration_ms":3000,"segments":[
+        {"id":"s00001","start_ms":0,"end_ms":500,"text":"Hello","speaker":"me"},
+        {"id":"s00002","start_ms":600,"end_ms":1000,"text":"Hi","speaker":"remote"},
+        {"id":"s00003","start_ms":1100,"end_ms":1500,"text":"Maybe","speaker":"unknown"}
+    ]});
+    std::fs::write(path.join("transcript.r1.json"), serde_json::to_vec(&transcript).unwrap()).unwrap();
+    library.set_participant_name(&meeting.id, Speaker::Remote, Some("Anna")).unwrap();
+    library.set_participant_name(&meeting.id, Speaker::Unknown, Some("Anna")).unwrap();
+    let markdown = std::fs::read_to_string(path.join("transcript.md")).unwrap();
+    assert!(markdown.contains("Duc:** Hello"));
+    assert!(markdown.contains("Anna:** Hi"));
+    assert!(markdown.contains("Anna:** Maybe"));
+    library.set_participant_name(&meeting.id, Speaker::Remote, Some("Remote")).unwrap();
+    assert!(library.meeting(&meeting.id).unwrap().participants.get("remote").is_none());
+    library.set_participant_name(&meeting.id, Speaker::Me, Some("Duc")).unwrap();
+    assert!(library.meeting(&meeting.id).unwrap().participants.get("me").is_none());
+    let mut metadata: serde_json::Value = serde_json::from_slice(&std::fs::read(path.join("meeting.json")).unwrap()).unwrap();
+    metadata["recordings"] = serde_json::json!([{"number":1,"started_at":"2026-10-12T09:30:00Z","timeline_start_ms":0,"duration_ms":3000,"files":[{"source":"microphone","file":"mic.flac","channels":1}]}]);
+    assert!(!library.meeting(&meeting.id).unwrap().voice_note);
+    std::fs::write(path.join("meeting.json"), serde_json::to_vec(&metadata).unwrap()).unwrap();
+    assert!(library.meeting(&meeting.id).unwrap().voice_note);
+    library.set_participant_name(&meeting.id, Speaker::Me, Some("Duc Voice")).unwrap();
+    let markdown = std::fs::read_to_string(path.join("transcript.md")).unwrap();
+    assert!(markdown.contains("Duc Voice:** Maybe"));
+    assert!(!markdown.contains("Anna:** Maybe"));
 }
 
 #[test]

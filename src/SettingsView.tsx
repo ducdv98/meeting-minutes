@@ -63,7 +63,7 @@ export default function SettingsView() {
     const version = ++saveVersion.current;
     saveQueue.current = saveQueue.current.then(async () => {
       try {
-        await updateSettings(next.auto_process, next.model, next.vocabulary, next.language);
+        await updateSettings(next.auto_process, next.model, next.vocabulary, next.language, next.your_name);
         if (version === saveVersion.current) setSaved(true);
       } catch (reason) {
         if (version === saveVersion.current) setError({ reason: String(reason), settings: next });
@@ -81,7 +81,7 @@ export default function SettingsView() {
   unsaved.current = { settings, vocabulary };
   useEffect(() => () => {
     const next = withVocabulary(unsaved.current.settings, unsaved.current.vocabulary);
-    if (next) saveQueue.current = saveQueue.current.then(() => updateSettings(next.auto_process, next.model, next.vocabulary, next.language)).then(() => {}, () => {});
+    if (next) saveQueue.current = saveQueue.current.then(() => updateSettings(next.auto_process, next.model, next.vocabulary, next.language, next.your_name)).then(() => {}, () => {});
   }, []);
   async function runAi(action: () => Promise<AiStatus | string[] | string>) {
     setAiBusy(true); setAiError(null); setReply(null);
@@ -116,6 +116,7 @@ export default function SettingsView() {
           </RadioGroup>
         </FormSection>
         <FormSection title="Meetings">
+          <div className="grid gap-1.5"><label htmlFor="your-name" className="text-sm font-medium">Your name</label><Input id="your-name" value={settings.your_name ?? ""} placeholder="Me" onChange={(event) => save({ ...settings, your_name: event.target.value || null })} /><span className="text-xs text-ink-muted">Default Participant for Me in Meetings without a name override.</span></div>
           <div className="grid grid-cols-2 gap-3">
             <div className="grid gap-1.5">
               <label htmlFor="default-language" className="text-sm font-medium">Default language</label>

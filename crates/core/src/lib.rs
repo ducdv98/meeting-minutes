@@ -3,6 +3,7 @@ mod library;
 mod meeting_file;
 mod metadata;
 mod naming;
+pub mod participant;
 
 pub use library::{Library, LibraryError, MalformedFolder, OrphanRecording, ScanReport};
 pub use meeting_file::{MeetingDetail, MeetingSummary, SearchHit};

@@ -25,3 +25,8 @@ export function speakerName(speaker: Speaker): string {
     case "unknown": return "Unknown";
   }
 }
+
+export function participantName(speaker: Speaker, participants: Partial<Record<Speaker, string>>, yourName: string | null, isVoiceNote = false): string {
+  const label = isVoiceNote ? "me" : speaker;
+  return participants[label]?.trim() || (label === "me" ? yourName?.trim() || "Me" : speakerName(label));
+}

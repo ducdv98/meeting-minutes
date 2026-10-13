@@ -2,9 +2,8 @@ use crate::{
     audio_prep::{prepare_import, prepare_recording, PreparedRecording},
     diagnostics::{log_event, LogEvent},
     meeting_file::{MeetingFile, RecordingEntry},
-    metadata::with_current_title,
     transcript::{
-        assign_ids, place_segments, render_markdown, Language, PlacedSegment, RawSegment,
+        assign_ids, place_segments, Language, PlacedSegment, RawSegment,
         Transcript,
     },
 };
@@ -96,6 +95,16 @@ pub fn transcribe_meeting(
     engine: &mut dyn SpeechEngine,
     progress: &mut dyn FnMut(f32),
     cancel: &AtomicBool,
+) -> Result<Transcript, ProcessingError> {
+    transcribe_meeting_named(request, engine, progress, cancel, None)
+}
+
+pub fn transcribe_meeting_named(
+    request: &TranscribeRequest,
+    engine: &mut dyn SpeechEngine,
+    progress: &mut dyn FnMut(f32),
+    cancel: &AtomicBool,
+    your_name: Option<&str>,
 ) -> Result<Transcript, ProcessingError> {
     if cancel.load(Ordering::SeqCst) {
         return Err(ProcessingError::Cancelled);
@@ -270,8 +279,9 @@ pub fn transcribe_meeting(
             "Transcript revision collision limit".into(),
         ));
     }
-    let write = with_current_title(request.meeting_dir, |title| {
-        let markdown = render_markdown(title, &transcript);
+    let write = crate::metadata::with_current_metadata(request.meeting_dir, |metadata| {
+        let file: MeetingFile = serde_json::from_value(metadata.clone()).map_err(io::Error::other)?;
+        let markdown = crate::transcript::render_markdown_named(&file.title, &transcript, &file.participants, your_name, file.is_voice_note());
         let mut md = OpenOptions::new()
             .write(true)
             .create(true)

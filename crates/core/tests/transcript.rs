@@ -3,7 +3,23 @@ use meeting_minutes_core::transcript::{
     RawSegment, Speaker, Transcript,
 };
 use meeting_minutes_core::Library;
+use meeting_minutes_core::participant::{participant_name, MeetingParticipants};
 use tempfile::TempDir;
+
+#[test]
+fn participants_follow_settings_merge_and_voice_note_rules() {
+    let segment = |speaker| meeting_minutes_core::transcript::Segment { id: "s00001".into(), start_ms: 0, end_ms: 100, text: "Hi".into(), speaker };
+    let mut names = MeetingParticipants::new();
+    assert_eq!(participant_name(&names, None, false, &segment(Speaker::Me)), "Me");
+    assert_eq!(participant_name(&names, Some("Duc"), false, &segment(Speaker::Me)), "Duc");
+    assert_eq!(participant_name(&names, None, false, &segment(Speaker::Remote)), "Remote");
+    assert_eq!(participant_name(&names, None, false, &segment(Speaker::Unknown)), "Unknown");
+    names.insert("remote".into(), "Anna".into());
+    names.insert("unknown".into(), "Anna".into());
+    assert_eq!(participant_name(&names, None, false, &segment(Speaker::Remote)), "Anna");
+    assert_eq!(participant_name(&names, None, false, &segment(Speaker::Unknown)), "Anna");
+    assert_eq!(participant_name(&names, Some("Duc"), true, &segment(Speaker::Unknown)), "Duc");
+}
 
 #[test]
 fn normalizes_and_places_engine_output() {

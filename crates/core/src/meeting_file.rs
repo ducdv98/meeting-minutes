@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use crate::ai::ProviderKind;
+use crate::participant::MeetingParticipants;
 use crate::{capture::Source, recording::Marker};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -36,6 +37,8 @@ pub struct MeetingDetail {
     pub markers: Vec<Marker>,
     pub imported: bool,
     pub sources: Vec<Source>,
+    pub voice_note: bool,
+    pub participants: MeetingParticipants,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -90,6 +93,8 @@ pub(crate) struct MeetingFile {
     pub recordings: Vec<RecordingEntry>,
     #[serde(default)]
     pub markers: Vec<Marker>,
+    #[serde(default, skip_serializing_if = "MeetingParticipants::is_empty")]
+    pub participants: MeetingParticipants,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cloud_consent: Vec<CloudConsent>,
 }
@@ -106,7 +111,19 @@ impl MeetingFile {
             import: None,
             recordings: Vec::new(),
             markers: Vec::new(),
+            participants: MeetingParticipants::new(),
             cloud_consent: Vec::new(),
         }
+    }
+}
+
+impl MeetingFile {
+    pub(crate) fn is_voice_note(&self) -> bool {
+        if self.import.is_some() { return false; }
+        let sources: Vec<_> = self.recordings.iter().filter_map(|recording| match recording {
+            RecordingEntry::Known(known) => Some(known.files.iter().map(|file| file.source)),
+            _ => None,
+        }).flatten().collect();
+        !sources.is_empty() && sources.iter().all(|source| *source == Source::Microphone)
     }
 }
