@@ -1293,9 +1293,14 @@ fn start_background(app: &AppHandle) {
                     if lock_processor(&app).map(|p| p.is_running()).unwrap_or(true) {
                         return None;
                     }
-                    WhisperEngine::load_with_vad(&model_path, vad_path.as_deref())
+                    let engine = WhisperEngine::load_with_vad(&model_path, vad_path.as_deref())
                         .ok()
-                        .filter(|engine| engine.backend() == "Vulkan")
+                        .filter(|engine| engine.backend() == "Vulkan");
+                    // A model that does not load on the GPU will not load next time either.
+                    if engine.is_none() {
+                        stop.store(true, Ordering::SeqCst);
+                    }
+                    engine
                 },
                 &chunk_dir,
                 background::BackgroundControl {
