@@ -201,6 +201,8 @@ pub struct TranscribeRequest<'a> {
     pub default_language: Option<Language>,
 }
 
+type DraftCallback<'a> = dyn FnMut(&[PlacedSegment]) + 'a;
+
 pub fn transcribe_meeting(
     request: &TranscribeRequest,
     engine: &mut dyn SpeechEngine,
@@ -217,6 +219,28 @@ pub fn transcribe_meeting_named(
     cancel: &AtomicBool,
     your_name: Option<&str>,
 ) -> Result<Transcript, ProcessingError> {
+    transcribe_meeting_with_draft(request, engine, progress, cancel, your_name, None)
+}
+
+pub fn transcribe_meeting_named_with_draft(
+    request: &TranscribeRequest,
+    engine: &mut dyn SpeechEngine,
+    progress: &mut dyn FnMut(f32),
+    cancel: &AtomicBool,
+    your_name: Option<&str>,
+    draft: &mut dyn FnMut(&[PlacedSegment]),
+) -> Result<Transcript, ProcessingError> {
+    transcribe_meeting_with_draft(request, engine, progress, cancel, your_name, Some(draft))
+}
+
+fn transcribe_meeting_with_draft(
+    request: &TranscribeRequest,
+    engine: &mut dyn SpeechEngine,
+    progress: &mut dyn FnMut(f32),
+    cancel: &AtomicBool,
+    your_name: Option<&str>,
+    draft: Option<&mut DraftCallback<'_>>,
+) -> Result<Transcript, ProcessingError> {
     let mut telemetry = ProcessingTelemetry {
         stage: ProcessingStage::Preparing,
         audio_ms: 0,
@@ -226,7 +250,7 @@ pub fn transcribe_meeting_named(
     let backend = engine.backend().to_owned();
     let device = engine.device().map(str::to_owned);
     let result =
-        transcribe_meeting_inner(request, engine, progress, cancel, your_name, &mut telemetry);
+        transcribe_meeting_inner(request, engine, progress, cancel, your_name, draft, &mut telemetry);
     if let Err(error) = &result {
         log_event(LogEvent::processing_result(
             error,
@@ -247,6 +271,7 @@ fn transcribe_meeting_inner(
     progress: &mut dyn FnMut(f32),
     cancel: &AtomicBool,
     your_name: Option<&str>,
+    mut draft: Option<&mut DraftCallback<'_>>,
     telemetry: &mut ProcessingTelemetry,
 ) -> Result<Transcript, ProcessingError> {
     if cancel.load(Ordering::SeqCst) {
@@ -362,6 +387,9 @@ fn transcribe_meeting_inner(
                 "Engine returned the wrong number of streams".into(),
             ));
         }
+        if cancel.load(Ordering::SeqCst) {
+            return Err(ProcessingError::Cancelled);
+        }
         for (stream, result) in prepared.iter().zip(results) {
             audio_after_vad_ms = audio_after_vad_ms
                 .and_then(|total| result.audio_after_vad_ms.map(|duration| total + duration));
@@ -370,12 +398,17 @@ fn transcribe_meeting_inner(
                 Speaker::Remote => 1,
                 Speaker::Unknown => 2,
             };
-            per_source[index].extend(place_segments(
+            let placed = place_segments(
                 &result.segments,
                 stream.duration_ms,
                 stream.timeline_start_ms,
                 stream.speaker,
-            ));
+            );
+            // Emit only finished, placed Segments from this Source; ticket 07 moves this with its segmenter.
+            if let Some(callback) = draft.as_deref_mut() {
+                if !placed.is_empty() { callback(&placed); }
+            }
+            per_source[index].extend(placed);
         }
         whisper_wall_time += whisper_elapsed;
         transcribed_ms += group_ms;

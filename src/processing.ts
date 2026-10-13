@@ -5,6 +5,8 @@ import type { AiSettings } from "./ai";
 export type Language = "en" | "vi";
 export type Speaker = "me" | "remote" | "unknown";
 export interface Segment { id: string; start_ms: number; end_ms: number; text: string; speaker: Speaker }
+export type DraftSegment = Omit<Segment, "id">;
+export interface TranscriptDraftEvent { meeting_id: string; segments: DraftSegment[] }
 export interface Transcript { schema_version: number; revision: number; created_at: string; model: string; language: Language; language_detected: boolean; duration_ms: number; segments: Segment[] }
 export interface ProcessingJob { meeting_id: string; model: string | null; stage: "queued" | "downloading" | "transcribing" | "failed"; progress: number; error: string | null }
 export interface ProcessingStatus { jobs: ProcessingJob[] }
@@ -36,3 +38,4 @@ export const getSettings = () => invoke<Settings>("get_settings");
 export const updateSettings = (autoProcess: boolean, model: string, vocabulary: string[], language: Language | null, yourName: string | null) => invoke<Settings>("update_settings", { autoProcess, model, vocabulary, language, yourName });
 export const installedModels = () => invoke<string[]>("installed_models");
 export const onProcessingStatus = (handler: (status: ProcessingStatus) => void): Promise<UnlistenFn> => listen<ProcessingStatus>("processing-status", (event) => handler(event.payload));
+export const onTranscriptDraft = (handler: (draft: TranscriptDraftEvent) => void): Promise<UnlistenFn> => listen<TranscriptDraftEvent>("transcript-draft", (event) => handler(event.payload));

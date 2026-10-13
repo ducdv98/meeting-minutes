@@ -52,7 +52,7 @@ pub struct RawSegment {
     pub text: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct PlacedSegment {
     pub start_ms: u64,
     pub end_ms: u64,
