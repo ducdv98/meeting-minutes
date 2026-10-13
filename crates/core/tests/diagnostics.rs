@@ -18,6 +18,11 @@ fn transcription_event_formats_timings_and_rtf_without_meeting_content() {
 }
 
 #[test]
+fn vad_fallback_logs_a_content_free_event() {
+    assert_eq!(LogEvent::VadUnavailable.to_string(), "vad_unavailable");
+}
+
+#[test]
 fn transcription_event_handles_zero_audio_and_does_not_echo_unknown_model() {
     let event = LogEvent::transcription_completed(
         "private Meeting title",
@@ -211,6 +216,7 @@ fn every_log_event_is_accepted_in_the_plugin_format() {
         LogEvent::ProcessingTranscribing,
         LogEvent::ProcessingCompleted,
         LogEvent::ProcessingFailed,
+        LogEvent::VadUnavailable,
         LogEvent::transcription_completed(
             "small",
             "Vulkan",

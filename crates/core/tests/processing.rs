@@ -3,6 +3,7 @@ use meeting_minutes_core::processing::{JobStage, ProcessingError, Processor};
 use meeting_minutes_core::transcript::{Language, RawSegment};
 use meeting_minutes_core::{capture::Source, finalize_recording, recording::ChunkWriter, Library};
 use std::sync::atomic::AtomicBool;
+use std::sync::{Mutex, Once, OnceLock};
 use tempfile::TempDir;
 
 struct FakeEngine {
@@ -17,6 +18,9 @@ impl SpeechEngine for FakeEngine {
     }
     fn thread_count(&self) -> usize {
         1
+    }
+    fn audio_after_vad_ms(&self) -> Option<u64> {
+        Some(40)
     }
     fn detect_language(&mut self, _: &[f32]) -> Result<Language, String> {
         self.detected += 1;
@@ -40,6 +44,65 @@ impl SpeechEngine for FakeEngine {
             text: format!(" words {} ", self.calls),
         }])
     }
+}
+
+struct EventRecorder;
+static EVENT_RECORDER: EventRecorder = EventRecorder;
+static EVENTS: OnceLock<Mutex<Vec<(std::thread::ThreadId, String)>>> = OnceLock::new();
+static EVENT_RECORDER_INIT: Once = Once::new();
+fn record_events() {
+    EVENTS.get_or_init(|| Mutex::new(Vec::new()));
+    EVENT_RECORDER_INIT.call_once(|| {
+        log::set_logger(&EVENT_RECORDER).unwrap();
+        log::set_max_level(log::LevelFilter::Info);
+    });
+}
+impl log::Log for EventRecorder {
+    fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
+        metadata.target() == "meeting_minutes_events"
+    }
+    fn log(&self, record: &log::Record<'_>) {
+        if self.enabled(record.metadata()) {
+            EVENTS
+                .get()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .push((std::thread::current().id(), record.args().to_string()));
+        }
+    }
+    fn flush(&self) {}
+}
+
+#[test]
+fn completed_transcription_reports_speech_duration_across_recordings() {
+    record_events();
+    let (_temp, dir) = saved_meeting();
+    let mut engine = FakeEngine {
+        calls: 0,
+        prompts: vec![],
+        detected: 0,
+        lengths: vec![],
+    };
+    transcribe_meeting(
+        &TranscribeRequest {
+            meeting_dir: &dir,
+            model: "small",
+            vocabulary: &[],
+            default_language: Some(Language::En),
+        },
+        &mut engine,
+        &mut |_| {},
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    let current = std::thread::current().id();
+    let events = EVENTS.get().unwrap().lock().unwrap();
+    assert!(events.iter().any(|(thread, event)| {
+        *thread == current
+            && event.starts_with("transcription_completed ")
+            && event.contains("audio_ms=200 audio_after_vad_ms=80")
+    }));
 }
 
 fn saved_meeting() -> (TempDir, std::path::PathBuf) {
@@ -380,6 +443,35 @@ impl SpeechEngine for SignalEngine {
         self.samples = samples.to_vec();
         Ok(vec![])
     }
+}
+
+#[test]
+fn transcription_completes_without_vad_and_reports_no_speech_duration() {
+    record_events();
+    let (_temp, dir) = saved_meeting();
+    let mut engine = SignalEngine {
+        samples: Vec::new(),
+    };
+    let transcript = transcribe_meeting(
+        &TranscribeRequest {
+            meeting_dir: &dir,
+            model: "small",
+            vocabulary: &[],
+            default_language: Some(Language::En),
+        },
+        &mut engine,
+        &mut |_| {},
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    assert!(transcript.segments.is_empty());
+    let current = std::thread::current().id();
+    let events = EVENTS.get().unwrap().lock().unwrap();
+    assert!(events.iter().any(|(thread, event)| {
+        *thread == current
+            && event.starts_with("transcription_completed ")
+            && event.contains("audio_ms=200 audio_after_vad_ms=none")
+    }));
 }
 
 fn prepared_tone(hz: f32) -> Vec<f32> {

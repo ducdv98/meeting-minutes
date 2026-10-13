@@ -2409,6 +2409,7 @@ name = "meeting_minutes_whisper"
 version = "0.1.0"
 dependencies = [
  "meeting_minutes_core",
+ "sysinfo",
  "whisper-rs",
 ]
 

@@ -10,6 +10,13 @@ jobs:
     runs-on: windows-latest
     env:
       RELEASE_TAG: ${{ github.ref_name }}
+      GGML_NATIVE: "OFF"
+      GGML_AVX: "ON"
+      GGML_AVX2: "ON"
+      GGML_FMA: "ON"
+      GGML_F16C: "ON"
+      GGML_BMI2: "ON"
+      GGML_AVX512: "OFF"
     permissions:
       contents: write
     steps:
@@ -48,6 +55,8 @@ jobs:
       - run: pnpm test
       - run: pnpm build
       - run: cargo test --workspace
+      - name: Verify pinned whisper.cpp CPU flags
+        run: cargo test -p meeting_minutes_whisper pinned_cpu_instruction_set -- --ignored --nocapture
       - uses: tauri-apps/tauri-action@v0.6.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

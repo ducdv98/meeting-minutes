@@ -31,6 +31,14 @@ jobs:
 
   windows:
     runs-on: windows-latest
+    env:
+      GGML_NATIVE: "OFF"
+      GGML_AVX: "ON"
+      GGML_AVX2: "ON"
+      GGML_FMA: "ON"
+      GGML_F16C: "ON"
+      GGML_BMI2: "ON"
+      GGML_AVX512: "OFF"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -48,6 +56,8 @@ jobs:
       # Tauri's generate_context! needs the built frontend in dist/.
       - run: pnpm build
       - run: cargo test --workspace
+      - name: Verify pinned whisper.cpp CPU flags
+        run: cargo test -p meeting_minutes_whisper pinned_cpu_instruction_set -- --ignored --nocapture
       - run: pnpm tauri build --bundles nsis
       - run: cargo build --release -p capture-spike
       - uses: actions/upload-artifact@v4

@@ -40,6 +40,7 @@ pub enum LogEvent {
     ProcessingTranscribing,
     ProcessingCompleted,
     ProcessingFailed,
+    VadUnavailable,
     TranscriptionCompleted {
         model: String,
         backend: String,
@@ -147,6 +148,7 @@ impl fmt::Display for LogEvent {
             Self::ProcessingTranscribing => "processing_transcribing",
             Self::ProcessingCompleted => "processing_completed",
             Self::ProcessingFailed => "processing_failed",
+            Self::VadUnavailable => "vad_unavailable",
             Self::TranscriptionCompleted {
                 model,
                 backend,
@@ -260,6 +262,7 @@ fn safe_log_line(line: &str) -> bool {
             | "processing_transcribing"
             | "processing_completed"
             | "processing_failed"
+            | "vad_unavailable"
             | "summary_started"
             | "summary_completed"
             | "summary_failed"

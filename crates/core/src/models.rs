@@ -36,6 +36,18 @@ pub const MODELS: &[ModelInfo] = &[
     },
 ];
 pub const DEFAULT_MODEL: &str = "small";
+/// Silero is an internal Processing dependency, not a Settings transcription choice.
+pub const VAD_MODEL: ModelInfo = ModelInfo {
+    name: "silero-v6.2.0",
+    file: "ggml-silero-v6.2.0.bin",
+    size: 885_098,
+    sha256: "2aa269b785eeb53a82983a20501ddf7c1d9c48e33ab63a41391ac6c9f7fb6987",
+};
+
+pub fn vad_model_url() -> &'static str {
+    "https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v6.2.0.bin"
+}
+
 pub fn model_url(info: &ModelInfo) -> String {
     format!(
         "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{}",
@@ -108,6 +120,24 @@ pub fn download(
     progress: &mut dyn FnMut(u64),
     cancel: &AtomicBool,
 ) -> Result<PathBuf, ProcessingError> {
+    download_from_url(models_dir, info, &model_url(info), progress, cancel)
+}
+
+pub fn download_vad(
+    models_dir: &Path,
+    progress: &mut dyn FnMut(u64),
+    cancel: &AtomicBool,
+) -> Result<PathBuf, ProcessingError> {
+    download_from_url(models_dir, &VAD_MODEL, vad_model_url(), progress, cancel)
+}
+
+fn download_from_url(
+    models_dir: &Path,
+    info: &ModelInfo,
+    url: &str,
+    progress: &mut dyn FnMut(u64),
+    cancel: &AtomicBool,
+) -> Result<PathBuf, ProcessingError> {
     if is_installed(models_dir, info) {
         return Ok(model_path(models_dir, info));
     }
@@ -115,7 +145,7 @@ pub fn download(
         .timeout_connect(Duration::from_secs(30))
         .timeout_read(Duration::from_secs(30))
         .build()
-        .get(&model_url(info))
+        .get(url)
         .call()
         .map_err(|e| ProcessingError::Download(e.to_string()))?;
     install_from_reader(models_dir, info, response.into_reader(), progress, cancel).map_err(

@@ -5,4 +5,5 @@ edition = "2021"
 
 [dependencies]
 meeting_minutes_core = { path = "../core" }
+sysinfo = "=0.37.2"
 whisper-rs = "=0.16.0"

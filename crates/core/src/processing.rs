@@ -23,6 +23,10 @@ use std::{
 pub trait SpeechEngine {
     fn backend(&self) -> &str;
     fn thread_count(&self) -> usize;
+    /// Duration sent to Whisper after VAD for the latest `transcribe` call; None without VAD.
+    fn audio_after_vad_ms(&self) -> Option<u64> {
+        None
+    }
     fn detect_language(&mut self, samples_16k: &[f32]) -> Result<Language, String>;
     fn transcribe(
         &mut self,
@@ -137,6 +141,7 @@ pub fn transcribe_meeting(
     let mut preparation_wall_time = Duration::ZERO;
     let mut whisper_wall_time = Duration::ZERO;
     let mut transcribed_ms = 0u64;
+    let mut audio_after_vad_ms = Some(0u64);
     let mut process = |prepared: PreparedRecording,
                        duration_ms: u64,
                        elapsed: u64|
@@ -166,6 +171,8 @@ pub fn transcribe_meeting(
             &mut |p| progress((offset + p.clamp(0.0, 1.0) * weight).clamp(0.0, 1.0)),
             cancel,
         )?;
+        audio_after_vad_ms = audio_after_vad_ms
+            .and_then(|total| engine.audio_after_vad_ms().map(|duration| total + duration));
         whisper_wall_time += whisper_started.elapsed();
         transcribed_ms += prepared.samples_16k.len() as u64 * 1000 / 16_000;
         placed.extend(place_segments(
@@ -284,7 +291,7 @@ pub fn transcribe_meeting(
         engine.backend(),
         engine.thread_count(),
         transcribed_ms,
-        None,
+        audio_after_vad_ms,
         preparation_wall_time,
         whisper_wall_time,
     ));

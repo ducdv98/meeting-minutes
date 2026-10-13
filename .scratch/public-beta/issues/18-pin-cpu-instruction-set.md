@@ -1,6 +1,6 @@
 # Pin the CPU instruction set and thread count for release builds
 
-Status: ready-for-agent
+Status: ready-for-human
 Blocked by: 17
 Spec: ../spec.md
 
@@ -16,3 +16,14 @@ whisper.cpp builds with `GGML_NATIVE` on when it isn't cross-compiling. So CI's 
 - [ ] The CI and release workflows build whisper.cpp with the pinned flags. The build log (or the system info from ticket 17) shows `AVX2 = 1` and `AVX512 = 0`.
 - [ ] Thread count equals physical cores (capped at 8). It is tested with a fake core count where practical.
 - [ ] The installed build runs on the owner's laptop, and diagnostics show the pinned flags.
+
+## Comments
+
+### 2026-10-13: implemented; CI and laptop check pending
+
+Codex implemented this ticket and Claude reviewed it.
+- The Windows jobs in `ci.yml` and `release.yml` set `GGML_NATIVE=OFF`, AVX/AVX2/FMA/F16C/BMI2 on and AVX512 off. whisper-rs-sys passes these to CMake, and MSVC gets `/arch:AVX2`.
+- The flags are not in `.cargo/config.toml`, because the aarch64 Linux dev box also builds whisper.cpp.
+- Both jobs run `cargo test -p meeting_minutes_whisper pinned_cpu_instruction_set -- --ignored`. It checks that whisper.cpp's system info has `AVX2 = 1` and no `AVX512 = 1`.
+- Threads are physical cores (sysinfo), capped at 8. When the physical count is unknown, it falls back to half the logical count.
+- Still to do: the next CI run must pass the flag test, and the installed build's diagnostics on the laptop must show `AVX2 = 1`.

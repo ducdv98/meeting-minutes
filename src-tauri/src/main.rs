@@ -1175,10 +1175,14 @@ fn processing_worker(app: AppHandle) {
                 .unwrap_or_else(|| MODELS.iter().find(|m| m.name == DEFAULT_MODEL).unwrap());
             let models_state = app.state::<ModelsDir>();
             let models_dir = &models_state.0;
-            let model_path = if models::is_installed(models_dir, model) {
+            let needs_model_download = !models::is_installed(models_dir, model);
+            let needs_vad_download = !models::is_installed(models_dir, &models::VAD_MODEL);
+            if needs_model_download || needs_vad_download {
+                processing_stage(&app, &id, JobStage::Downloading, 0.0);
+            }
+            let model_path = if !needs_model_download {
                 models::model_path(models_dir, model)
             } else {
-                processing_stage(&app, &id, JobStage::Downloading, 0.0);
                 let mut last = 0u32;
                 models::download(
                     models_dir,
@@ -1191,19 +1195,55 @@ fn processing_worker(app: AppHandle) {
                                 &app,
                                 &id,
                                 JobStage::Downloading,
-                                bytes as f32 / model.size as f32,
+                                bytes as f32 / model.size as f32
+                                    * if needs_vad_download { 0.9 } else { 1.0 },
                             );
                         }
                     },
                     &cancel,
                 )?
             };
+            let vad_path = if needs_vad_download {
+                let mut last = 0u32;
+                match models::download_vad(
+                    models_dir,
+                    &mut |bytes| {
+                        let percent = (bytes.saturating_mul(100) / models::VAD_MODEL.size) as u32;
+                        if percent > last {
+                            last = percent;
+                            processing_stage(
+                                &app,
+                                &id,
+                                JobStage::Downloading,
+                                if needs_model_download { 0.9 } else { 0.0 }
+                                    + bytes as f32 / models::VAD_MODEL.size as f32
+                                        * if needs_model_download { 0.1 } else { 1.0 },
+                            );
+                        }
+                    },
+                    &cancel,
+                ) {
+                    Ok(path) => Some(path),
+                    Err(processing::ProcessingError::Cancelled) => {
+                        return Err(processing::ProcessingError::Cancelled)
+                    }
+                    Err(_) if cancel.load(std::sync::atomic::Ordering::SeqCst) => {
+                        return Err(processing::ProcessingError::Cancelled)
+                    }
+                    Err(_) => {
+                        log_event(LogEvent::VadUnavailable);
+                        None
+                    }
+                }
+            } else {
+                Some(models::model_path(models_dir, &models::VAD_MODEL))
+            };
             if cancel.load(std::sync::atomic::Ordering::SeqCst) {
                 return Err(processing::ProcessingError::Cancelled);
             }
             processing_stage(&app, &id, JobStage::Transcribing, 0.0);
-            let mut engine =
-                WhisperEngine::load(&model_path).map_err(processing::ProcessingError::Engine)?;
+            let mut engine = WhisperEngine::load_with_vad(&model_path, vad_path.as_deref())
+                .map_err(processing::ProcessingError::Engine)?;
             let mut last = 0u32;
             processing::transcribe_meeting(
                 &TranscribeRequest {
