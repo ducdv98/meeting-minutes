@@ -6,7 +6,7 @@
 //! are a cache in memory: they never reach the Library, and Processing after Stop transcribes only
 //! the audio after each Source's committed point.
 
-use std::{fs, io, path::Path, sync::atomic::AtomicBool};
+use std::{fs, io, path::Path, sync::atomic::AtomicBool, time::Duration};
 
 use crate::{
     audio_prep::{Decimator, WHISPER_RATE},
@@ -19,6 +19,38 @@ use crate::{
 pub const MIN_SPAN_MS: u64 = 30_000;
 /// Held-back audio with no sentence end in it is committed once it grows this long.
 pub const MAX_HELD_MS: u64 = 60_000;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BackgroundStart {
+    Cloud,
+    Local,
+    Waiting,
+    Disabled,
+}
+
+/// Selects background work for a Recording; a waiting worker can resume after power or network returns.
+pub fn start_decision(
+    has_groq_key: bool,
+    online: bool,
+    discrete_gpu: bool,
+    on_ac: bool,
+) -> BackgroundStart {
+    if has_groq_key {
+        return if online {
+            BackgroundStart::Cloud
+        } else {
+            BackgroundStart::Waiting
+        };
+    }
+    if discrete_gpu {
+        return if on_ac {
+            BackgroundStart::Local
+        } else {
+            BackgroundStart::Waiting
+        };
+    }
+    BackgroundStart::Disabled
+}
 
 const SAMPLES_PER_MS: u64 = WHISPER_RATE as u64 / 1000;
 
@@ -38,6 +70,9 @@ pub struct BackgroundResult {
     pub model: String,
     pub language: Option<Language>,
     pub initial_prompt: Option<String>,
+    pub engines_used: Vec<String>,
+    pub fallback_reason: Option<String>,
+    pub engine_audio_ms: Option<(u64, u64, u64)>,
     pub sources: Vec<SourceProgress>,
 }
 
@@ -198,6 +233,9 @@ pub struct BackgroundTranscriber {
     model: String,
     language: Option<Language>,
     initial_prompt: Option<String>,
+    engines_used: Vec<String>,
+    fallback_reason: Option<String>,
+    engine_audio_ms: Option<(u64, u64, u64)>,
     streams: Vec<SourceStream>,
 }
 
@@ -213,6 +251,9 @@ impl BackgroundTranscriber {
             model: model.to_owned(),
             language,
             initial_prompt,
+            engines_used: Vec::new(),
+            fallback_reason: None,
+            engine_audio_ms: None,
             streams: vec![
                 SourceStream::new(Source::Microphone, Speaker::Me),
                 SourceStream::new(Source::SystemAudio, Speaker::Remote),
@@ -268,20 +309,26 @@ impl BackgroundTranscriber {
                         continue;
                     }
                     let pending = &stream.decimator.output;
-                    let language = engine
-                        .detect_language(pending)
-                        .map_err(ProcessingError::Engine)?;
+                    let language = engine.detect_language(pending).map_err(|error| {
+                        if engine.is_offline() {
+                            ProcessingError::Offline
+                        } else if engine.is_deferred() {
+                            ProcessingError::Deferred
+                        } else {
+                            ProcessingError::Engine(error)
+                        }
+                    })?;
                     self.language = Some(language);
                     language
                 }
             };
             let prompt = self.initial_prompt.clone();
-            finished.extend(self.streams[index].transcribe_span(
-                engine,
-                language,
-                prompt.as_deref(),
-                cancel,
-            )?);
+            let result =
+                self.streams[index].transcribe_span(engine, language, prompt.as_deref(), cancel);
+            self.engines_used = engine.engines_used();
+            self.fallback_reason = engine.fallback_reason().map(str::to_owned);
+            self.engine_audio_ms = engine.engine_audio_ms();
+            finished.extend(result?);
         }
         Ok(finished)
     }
@@ -292,6 +339,9 @@ impl BackgroundTranscriber {
             model: self.model,
             language: self.language,
             initial_prompt: self.initial_prompt,
+            engines_used: self.engines_used,
+            fallback_reason: self.fallback_reason,
+            engine_audio_ms: self.engine_audio_ms,
             sources: self
                 .streams
                 .into_iter()
@@ -311,6 +361,8 @@ pub struct BackgroundControl<'a> {
     pub stop: &'a AtomicBool,
     /// Whether spans may run now, checked before each span (for example AC power).
     pub allowed: &'a mut dyn FnMut() -> bool,
+    /// Monotonic time, injectable so retry delays can be tested without sleeping.
+    pub now: &'a mut dyn FnMut() -> Duration,
     /// Called when there is nothing to do yet, so new Chunks can arrive.
     pub wait: &'a mut dyn FnMut(),
 }
@@ -327,12 +379,18 @@ pub fn run<E: SpeechEngine>(
 ) -> Result<(), ProcessingError> {
     use std::sync::atomic::Ordering;
     let mut engine = None;
+    let mut retry_at = None;
     loop {
         if control.stop.load(Ordering::SeqCst) {
             return Ok(());
         }
         // A missing Chunk reads as not yet written, so saving the Recording (which removes them) is harmless.
         transcriber.read_chunks(chunk_dir)?;
+        if retry_at.is_some_and(|at| (control.now)() < at) {
+            (control.wait)();
+            continue;
+        }
+        retry_at = None;
         if !(control.allowed)() {
             engine = None;
             (control.wait)();
@@ -352,6 +410,11 @@ pub fn run<E: SpeechEngine>(
         match transcriber.transcribe_ready(engine, control.stop) {
             Ok(segments) => finished(&segments),
             Err(ProcessingError::Cancelled) => return Ok(()),
+            Err(ProcessingError::Offline) => {
+                retry_at = Some((control.now)() + Duration::from_secs(5));
+                (control.wait)();
+            }
+            Err(ProcessingError::Deferred) => (control.wait)(),
             Err(error) => return Err(error),
         }
     }

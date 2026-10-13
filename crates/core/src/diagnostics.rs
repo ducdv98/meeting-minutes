@@ -225,6 +225,8 @@ impl LogEvent {
             ProcessingError::Download(_) => ("download", "none".into()),
             ProcessingError::Checksum => ("checksum", "none".into()),
             ProcessingError::NoAudio => ("no_audio", "none".into()),
+            ProcessingError::Offline => ("offline", "none".into()),
+            ProcessingError::Deferred => ("deferred", "none".into()),
             ProcessingError::Cancelled => unreachable!(),
         };
         Self::ProcessingFailed {

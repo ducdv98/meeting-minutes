@@ -201,7 +201,9 @@ fn inline_audio_is_not_serialized_or_exposed_by_debug() {
         mime_type: "audio/flac".into(),
         data: "private-meeting-audio".into(),
     });
-    assert!(!serde_json::to_string(&request).unwrap().contains("private-meeting-audio"));
+    assert!(!serde_json::to_string(&request)
+        .unwrap()
+        .contains("private-meeting-audio"));
     assert!(!format!("{request:?}").contains("private-meeting-audio"));
 }
 fn schema() -> OutputSchema {

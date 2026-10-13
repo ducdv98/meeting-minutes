@@ -1,17 +1,42 @@
 use meeting_minutes_core::background::{self, BackgroundControl, BackgroundTranscriber};
 use meeting_minutes_core::processing::{
-    background_draft, transcribe_meeting, transcribe_meeting_resuming, ProcessingError, SpeechEngine,
-    TranscribeRequest,
+    background_draft, transcribe_meeting, transcribe_meeting_resuming, ProcessingError,
+    SpeechEngine, TranscribeRequest,
 };
 use meeting_minutes_core::transcript::{Language, RawSegment, RawWord, Speaker, Transcript};
 use meeting_minutes_core::{capture::Source, finalize_recording, recording::ChunkWriter, Library};
 use std::{
     cell::Cell,
-    rc::Rc,
     path::{Path, PathBuf},
+    rc::Rc,
     sync::atomic::AtomicBool,
 };
 use tempfile::TempDir;
+
+#[test]
+fn cloud_recording_starts_on_battery_without_a_discrete_gpu() {
+    use background::BackgroundStart;
+    assert_eq!(
+        background::start_decision(true, true, false, false),
+        BackgroundStart::Cloud
+    );
+    assert_eq!(
+        background::start_decision(true, false, false, false),
+        BackgroundStart::Waiting
+    );
+    assert_eq!(
+        background::start_decision(false, true, false, false),
+        BackgroundStart::Disabled
+    );
+    assert_eq!(
+        background::start_decision(false, false, true, true),
+        BackgroundStart::Local
+    );
+    assert_eq!(
+        background::start_decision(false, true, true, false),
+        BackgroundStart::Waiting
+    );
+}
 
 const RATE: usize = 48_000;
 const WORD_MS: usize = 400;
@@ -96,7 +121,10 @@ fn speech(sentences: &[&[usize]], lead_ms: usize) -> Vec<f32> {
     let mut audio = vec![0.0; lead_ms * RATE / 1000];
     for sentence in sentences {
         for &word in sentence.iter().chain(&[9]) {
-            audio.extend(std::iter::repeat_n(word as f32 / 20.0, WORD_MS * RATE / 1000));
+            audio.extend(std::iter::repeat_n(
+                word as f32 / 20.0,
+                WORD_MS * RATE / 1000,
+            ));
             audio.extend(std::iter::repeat_n(0.0, GAP_MS * RATE / 1000));
         }
         audio.extend(std::iter::repeat_n(0.0, SENTENCE_GAP_MS * RATE / 1000));
@@ -167,8 +195,13 @@ fn texts(transcript: &Transcript) -> Vec<(Speaker, String)> {
 
 /// Microphone speech of about 75 s, with a sentence spoken across the 30 s Chunk edge.
 fn microphone_speech() -> Vec<f32> {
-    let sentences: Vec<Vec<usize>> = (0..20).map(|n| vec![1 + n % 8, 1 + (n + 3) % 8, 1 + (n + 5) % 8, 1 + (n + 6) % 8]).collect();
-    speech(&sentences.iter().map(Vec::as_slice).collect::<Vec<_>>(), 1_000)
+    let sentences: Vec<Vec<usize>> = (0..20)
+        .map(|n| vec![1 + n % 8, 1 + (n + 3) % 8, 1 + (n + 5) % 8, 1 + (n + 6) % 8])
+        .collect();
+    speech(
+        &sentences.iter().map(Vec::as_slice).collect::<Vec<_>>(),
+        1_000,
+    )
 }
 
 fn background_run(
@@ -193,6 +226,7 @@ fn background_run(
         BackgroundControl {
             stop: &stop,
             allowed,
+            now: &mut || std::time::Duration::ZERO,
             wait: &mut || {
                 waits.set(waits.get() + 1);
                 if waits.get() > 3 {
@@ -215,21 +249,38 @@ fn chunks_are_transcribed_in_order_and_a_sentence_across_an_edge_stays_whole() {
     let mut finished = Vec::new();
     for piece in microphone.chunks(10 * RATE) {
         recording.write(piece, &vec![0.0; piece.len()]);
-        finished.extend(background_run(&mut transcriber, &mut engine, &recording.chunk_dir, &mut || true));
+        finished.extend(background_run(
+            &mut transcriber,
+            &mut engine,
+            &recording.chunk_dir,
+            &mut || true,
+        ));
     }
     assert!(!finished.is_empty());
     let result = transcriber.finish();
     let source = result.source(Speaker::Me).unwrap();
     assert!(source.committed_ms >= 30_000);
-    let words = source.segments.iter().flat_map(|segment| &segment.words).collect::<Vec<_>>();
-    assert!(words.windows(2).all(|pair| pair[0].start_ms < pair[1].start_ms));
+    let words = source
+        .segments
+        .iter()
+        .flat_map(|segment| &segment.words)
+        .collect::<Vec<_>>();
+    assert!(words
+        .windows(2)
+        .all(|pair| pair[0].start_ms < pair[1].start_ms));
     // No sentence is split: every committed span ends at a sentence end.
     for segment in &source.segments {
         assert!(segment.text.ends_with("end."), "{}", segment.text);
     }
     // The committed words are exactly the words the audio holds up to the committed point.
     let (_temp, meeting_dir) = recording.stop();
-    let full = transcribe_meeting(&request(&meeting_dir), &mut WordEngine::default(), &mut |_| {}, &AtomicBool::new(false)).unwrap();
+    let full = transcribe_meeting(
+        &request(&meeting_dir),
+        &mut WordEngine::default(),
+        &mut |_| {},
+        &AtomicBool::new(false),
+    )
+    .unwrap();
     let expected = full
         .segments
         .iter()
@@ -237,7 +288,12 @@ fn chunks_are_transcribed_in_order_and_a_sentence_across_an_edge_stays_whole() {
         .map(|segment| segment.text.clone())
         .collect::<Vec<_>>()
         .join(" ");
-    let cached = source.segments.iter().map(|segment| segment.text.clone()).collect::<Vec<_>>().join(" ");
+    let cached = source
+        .segments
+        .iter()
+        .map(|segment| segment.text.clone())
+        .collect::<Vec<_>>()
+        .join(" ");
     assert_eq!(cached, expected);
 }
 
@@ -255,14 +311,26 @@ fn stop_transcribes_only_the_remainder_and_matches_transcription_after_stop() {
     let mut engine = WordEngine::default();
     for (mic, sys) in microphone.chunks(10 * RATE).zip(system.chunks(10 * RATE)) {
         recording.write(mic, sys);
-        background_run(&mut transcriber, &mut engine, &recording.chunk_dir, &mut || true);
+        background_run(
+            &mut transcriber,
+            &mut engine,
+            &recording.chunk_dir,
+            &mut || true,
+        );
     }
     let cache = transcriber.finish();
     let (_temp, meeting_dir) = recording.stop();
 
     let mut after_stop_only = WordEngine::default();
-    let expected = transcribe_meeting(&request(&meeting_dir), &mut after_stop_only, &mut |_| {}, &AtomicBool::new(false)).unwrap();
-    std::fs::remove_file(meeting_dir.join(format!("transcript.r{}.json", expected.revision))).unwrap();
+    let expected = transcribe_meeting(
+        &request(&meeting_dir),
+        &mut after_stop_only,
+        &mut |_| {},
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    std::fs::remove_file(meeting_dir.join(format!("transcript.r{}.json", expected.revision)))
+        .unwrap();
 
     let mut resuming = WordEngine::default();
     let mut draft = Vec::new();
@@ -282,17 +350,32 @@ fn stop_transcribes_only_the_remainder_and_matches_transcription_after_stop() {
 
     assert_eq!(texts(&transcript), texts(&expected));
     for (actual, wanted) in transcript.segments.iter().zip(&expected.segments) {
-        assert!(actual.start_ms.abs_diff(wanted.start_ms) <= 20 && actual.end_ms.abs_diff(wanted.end_ms) <= 20);
+        assert!(
+            actual.start_ms.abs_diff(wanted.start_ms) <= 20
+                && actual.end_ms.abs_diff(wanted.end_ms) <= 20
+        );
     }
-    let skipped: u64 = cache.sources.iter().map(|source| source.committed_ms * 16).sum();
+    let skipped: u64 = cache
+        .sources
+        .iter()
+        .map(|source| source.committed_ms * 16)
+        .sum();
     assert!(skipped > 0);
-    assert_eq!(resuming.transcribed_samples as u64 + skipped, after_stop_only.transcribed_samples as u64);
+    assert_eq!(
+        resuming.transcribed_samples as u64 + skipped,
+        after_stop_only.transcribed_samples as u64
+    );
     // The cached Segments are the Draft before any audio is transcribed, so it shows at once.
     let early = background_draft(&request(&meeting_dir), std::slice::from_ref(&cache)).unwrap();
     assert!(!early.is_empty());
-    assert!(early.iter().all(|segment| segment.end_ms <= cache.source(segment.speaker).unwrap().committed_ms));
+    assert!(early
+        .iter()
+        .all(|segment| segment.end_ms <= cache.source(segment.speaker).unwrap().committed_ms));
     // Transcription then sends only Segments of the remaining audio.
-    assert!(draft.iter().flatten().all(|segment| segment.end_ms > cache.source(segment.speaker).map_or(0, |source| source.committed_ms)));
+    assert!(draft.iter().flatten().all(|segment| segment.end_ms
+        > cache
+            .source(segment.speaker)
+            .map_or(0, |source| source.committed_ms)));
     assert!(first_progress.unwrap() > 0.0);
 }
 
@@ -305,12 +388,22 @@ fn work_waits_on_battery_and_resumes_on_ac() {
     let on_ac = Cell::new(false);
     for piece in microphone.chunks(10 * RATE) {
         recording.write(piece, &vec![0.0; piece.len()]);
-        background_run(&mut transcriber, &mut engine, &recording.chunk_dir, &mut || on_ac.get());
+        background_run(
+            &mut transcriber,
+            &mut engine,
+            &recording.chunk_dir,
+            &mut || on_ac.get(),
+        );
     }
     assert_eq!(engine.heard.get(), 0, "nothing is transcribed on battery");
     assert_eq!(engine.loads.get(), 0, "no engine holds the GPU on battery");
     on_ac.set(true);
-    background_run(&mut transcriber, &mut engine, &recording.chunk_dir, &mut || on_ac.get());
+    background_run(
+        &mut transcriber,
+        &mut engine,
+        &recording.chunk_dir,
+        &mut || on_ac.get(),
+    );
     let result = transcriber.finish();
     assert!(result.source(Speaker::Me).unwrap().committed_ms >= 30_000);
 }
@@ -323,15 +416,35 @@ fn a_cache_from_another_model_is_ignored() {
     let mut engine = WordEngine::default();
     for piece in microphone.chunks(10 * RATE) {
         recording.write(piece, &vec![0.0; piece.len()]);
-        background_run(&mut transcriber, &mut engine, &recording.chunk_dir, &mut || true);
+        background_run(
+            &mut transcriber,
+            &mut engine,
+            &recording.chunk_dir,
+            &mut || true,
+        );
     }
     let cache = transcriber.finish();
     assert!(cache.source(Speaker::Me).is_some());
     let (_temp, meeting_dir) = recording.stop();
     let mut plain = WordEngine::default();
-    transcribe_meeting(&request(&meeting_dir), &mut plain, &mut |_| {}, &AtomicBool::new(false)).unwrap();
+    transcribe_meeting(
+        &request(&meeting_dir),
+        &mut plain,
+        &mut |_| {},
+        &AtomicBool::new(false),
+    )
+    .unwrap();
     let mut resuming = WordEngine::default();
-    transcribe_meeting_resuming(&request(&meeting_dir), &mut resuming, &mut |_| {}, &AtomicBool::new(false), None, &mut |_| {}, &[cache]).unwrap();
+    transcribe_meeting_resuming(
+        &request(&meeting_dir),
+        &mut resuming,
+        &mut |_| {},
+        &AtomicBool::new(false),
+        None,
+        &mut |_| {},
+        &[cache],
+    )
+    .unwrap();
     assert_eq!(resuming.transcribed_samples, plain.transcribed_samples);
 }
 
@@ -350,15 +463,29 @@ fn background_work_writes_nothing_so_a_crash_leaves_only_the_chunks() {
     for piece in microphone.chunks(10 * RATE) {
         recording.write(piece, &vec![0.0; piece.len()]);
         before = listing(&recording.meeting_dir);
-        background_run(&mut transcriber, &mut engine, &recording.chunk_dir, &mut || true);
+        background_run(
+            &mut transcriber,
+            &mut engine,
+            &recording.chunk_dir,
+            &mut || true,
+        );
         assert_eq!(listing(&recording.meeting_dir), before);
     }
     assert!(engine.heard.get() > 0);
     // A crash drops the transcriber; the Meeting then transcribes from its Chunks as usual.
     drop(transcriber);
     let (_temp, meeting_dir) = recording.stop();
-    let transcript = transcribe_meeting(&request(&meeting_dir), &mut WordEngine::default(), &mut |_| {}, &AtomicBool::new(false)).unwrap();
-    assert!(transcript.segments.iter().all(|segment| segment.speaker == Speaker::Me));
+    let transcript = transcribe_meeting(
+        &request(&meeting_dir),
+        &mut WordEngine::default(),
+        &mut |_| {},
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    assert!(transcript
+        .segments
+        .iter()
+        .all(|segment| segment.speaker == Speaker::Me));
     assert!(!before.is_empty());
 }
 
@@ -380,7 +507,10 @@ fn audio_without_a_sentence_end_waits_for_more_instead_of_transcribing_again() {
     // 40 s of words with no sentence end, then silence: one span, then idle until more audio.
     let mut audio = Vec::new();
     for word in 0..60 {
-        audio.extend(std::iter::repeat_n((1 + word % 8) as f32 / 20.0, WORD_MS * RATE / 1000));
+        audio.extend(std::iter::repeat_n(
+            (1 + word % 8) as f32 / 20.0,
+            WORD_MS * RATE / 1000,
+        ));
         audio.extend(std::iter::repeat_n(0.0, GAP_MS * RATE / 1000));
     }
     audio.truncate(40 * RATE);
@@ -388,10 +518,15 @@ fn audio_without_a_sentence_end_waits_for_more_instead_of_transcribing_again() {
     transcriber.push(Source::Microphone, &audio);
     let mut engine = WordEngine::default();
     assert!(transcriber.span_ready());
-    transcriber.transcribe_ready(&mut engine, &AtomicBool::new(false)).unwrap();
+    transcriber
+        .transcribe_ready(&mut engine, &AtomicBool::new(false))
+        .unwrap();
     let after_one_span = engine.transcribed_samples;
     assert!(after_one_span > 0);
-    assert!(!transcriber.span_ready(), "the same audio is not transcribed again");
+    assert!(
+        !transcriber.span_ready(),
+        "the same audio is not transcribed again"
+    );
     transcriber.push(Source::Microphone, &vec![0.0; 30 * RATE]);
     assert!(transcriber.span_ready());
 }
@@ -401,7 +536,9 @@ fn silence_before_the_language_is_known_is_skipped_not_rescanned() {
     let mut transcriber = BackgroundTranscriber::new(1, "small", None, None);
     transcriber.push(Source::Microphone, &vec![0.0; 40 * RATE]);
     let mut engine = WordEngine::default();
-    transcriber.transcribe_ready(&mut engine, &AtomicBool::new(false)).unwrap();
+    transcriber
+        .transcribe_ready(&mut engine, &AtomicBool::new(false))
+        .unwrap();
     assert!(!transcriber.span_ready());
     assert_eq!(transcriber.finish().sources[0].committed_ms, 40_000);
 }
