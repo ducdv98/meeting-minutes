@@ -28,3 +28,7 @@ Review findings addressed in the uncommitted website work: the workflow now runs
 ### 2026-10-13: host on Cloudflare Workers instead of GitHub Pages
 
 The owner chose Cloudflare (the `meeting-minutes.tech` DNS is already there). `website/wrangler.jsonc` serves `website/dist` as a static-only Worker on the `meeting-minutes.tech` Custom Domain, with trailing-slash HTML handling, `404.html` for unknown paths, and no `workers.dev` or preview URLs. The deploy job keeps the readiness gate and now runs `wrangler deploy` (cloudflare/wrangler-action v4.1.3 pinned by SHA, wrangler 4.143.0, telemetry off) with the `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` secrets; it no longer needs Pages permissions. The build no longer writes `CNAME`. The privacy policy now names Cloudflare as the host. Owner steps are in `website/README.md`. `wrangler deploy --dry-run` read all 33 files from `dist`.
+
+### 2026-10-13: go live text-only before the first Release
+
+The owner wants the site public now (startup-program reviewers may visit before December). Missing screenshots no longer block publishing while no Release is published: the published site leaves those images out and the text sections use the full width; drafts still show placeholder frames. Once a Release is published, every screenshot is required again, so the site can't stay picture-less after people can download the app. Ticket 16 still requires checking every website claim against the release build.

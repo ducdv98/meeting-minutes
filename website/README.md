@@ -13,7 +13,7 @@ node website/build.mjs --draft --offline
 
 Serve `website/dist/` with any static file server. The draft build uses neutral “Screenshot” frames where assets are missing. `--offline` gives an empty release list; `--fixture path/to/releases.json` loads a GitHub Releases API array for local checks. Omit both flags to fetch Releases from GitHub. `GITHUB_TOKEN` is used if set.
 
-Run `node website/build.mjs --check-ready` to list missing publish prerequisites; it exits successfully and writes `ready=true` or `ready=false` to `GITHUB_OUTPUT` when set. The non-draft build fails until ticket 14 replaces the `PRIVACY_STUB_TICKET_14` page marker and all twelve real app screenshots listed in [`src/assets/screens/README.md`](src/assets/screens/README.md) exist. A published Release is **not** required: with none, the site shows the December 2026 target and no download button. If the newest published Release has no NSIS `.exe` asset, the build uses the newest published Release that does.
+Run `node website/build.mjs --check-ready` to list what blocks publishing; it exits successfully and writes `ready=true` or `ready=false` to `GITHUB_OUTPUT` when set. The privacy page must be the real policy (no `PRIVACY_STUB_TICKET_14` marker). Before the first published Release, missing screenshots don't block: the published site leaves those images out and is text-only. Once a Release is published, all twelve screenshots listed in [`src/assets/screens/README.md`](src/assets/screens/README.md) are required. If the newest published Release has no NSIS `.exe` asset, the build uses the newest published Release that does.
 
 ## One-time owner setup
 

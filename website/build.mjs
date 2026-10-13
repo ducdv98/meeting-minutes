@@ -16,6 +16,7 @@ if (fixtureIndex !== -1 && !args[fixtureIndex + 1]) { console.error('--fixture n
 const fixture = fixtureIndex === -1 ? null : resolve(args[fixtureIndex + 1]);
 const screens = ['meeting', 'ask', 'transcript', 'search', 'diagnostics', 'firstrun-model'];
 const missing = [];
+const missingScreens = [];
 
 const exists = async path => access(path).then(() => true, () => false);
 if (!(await exists(join(src, 'privacy.html')))) missing.push('privacy page: website/src/privacy.html');
@@ -23,17 +24,7 @@ else if ((await readFile(join(src, 'privacy.html'), 'utf8')).includes('PRIVACY_S
   missing.push('privacy page: website/src/privacy.html still has the ticket 14 stub');
 for (const name of screens) for (const theme of ['light', 'dark']) {
   const path = join(src, 'assets', 'screens', `${name}-${theme}.png`);
-  if (!(await exists(path))) missing.push(`screenshot: website/src/assets/screens/${name}-${theme}.png`);
-}
-if (checkReady) {
-  const ready = missing.length === 0;
-  console.log(ready ? 'Website is ready to publish.' : `Website cannot publish yet:\n- ${missing.join('\n- ')}`);
-  if (process.env.GITHUB_OUTPUT) await writeFile(process.env.GITHUB_OUTPUT, `ready=${ready}\n`, { flag: 'a' });
-  process.exit(0);
-}
-if (missing.length && !draft) {
-  console.error(`Non-draft website build blocked:\n- ${missing.join('\n- ')}\nUse --draft only for local previews.`);
-  process.exit(1);
+  if (!(await exists(path))) missingScreens.push(`screenshot: website/src/assets/screens/${name}-${theme}.png`);
 }
 
 async function getReleases() {
@@ -82,6 +73,21 @@ let releaseData;
 try { releaseData = await getReleases(); }
 catch (error) { console.error(error.message); process.exit(1); }
 const { latest, published } = releasePageState(releaseData);
+
+// Before the first Release the site may go live text-only: missing screenshots are left out.
+// Once people can download the app, every screenshot is required.
+const blockers = [...missing, ...(latest ? missingScreens : [])];
+if (checkReady) {
+  const ready = blockers.length === 0;
+  console.log(ready ? 'Website is ready to publish.' : `Website cannot publish yet:\n- ${blockers.join('\n- ')}`);
+  if (ready && missingScreens.length) console.log(`Publishing without screenshots until the first Release:\n- ${missingScreens.join('\n- ')}`);
+  if (process.env.GITHUB_OUTPUT) await writeFile(process.env.GITHUB_OUTPUT, `ready=${ready}\n`, { flag: 'a' });
+  process.exit(0);
+}
+if (blockers.length && !draft) {
+  console.error(`Non-draft website build blocked:\n- ${blockers.join('\n- ')}\nUse --draft only for local previews.`);
+  process.exit(1);
+}
 const releaseButton = latest ? `<a class="button primary" href="${escapeHtml(latest.url)}">Download for Windows</a>` : '';
 const target = '<span class="status-line"><strong>Free Beta for Windows:</strong> December 2026 (target)</span>';
 const heroAction = latest
@@ -93,8 +99,9 @@ const headerAction = latest ? `<a class="button primary header-download" href="$
 function screen(name, alt) {
   const light = `assets/screens/${name}-light.png`;
   const dark = `assets/screens/${name}-dark.png`;
-  if (missing.some(item => item.includes(`${name}-`))) {
-    return `<div class="screenshot placeholder" role="img" aria-label="${escapeHtml(alt)}. Screenshot pending"><span>Screenshot</span></div>`;
+  if (missingScreens.some(item => item.includes(`/${name}-`))) {
+    // Drafts show where a screenshot will go; a published text-only site leaves it out.
+    return draft ? `<div class="screenshot placeholder" role="img" aria-label="${escapeHtml(alt)}. Screenshot pending"><span>Screenshot</span></div>` : '';
   }
   return `<picture class="screenshot"><source media="(prefers-color-scheme: dark)" srcset="/${dark}"><img src="/${light}" alt="${escapeHtml(alt)}" loading="lazy"></picture>`;
 }
@@ -180,4 +187,4 @@ for (const name of screens) for (const theme of ['light', 'dark']) {
     await copyFile(join(src, 'assets', 'screens', file), join(dist, 'assets', 'screens', file));
   }
 }
-console.log(`Built website/dist (${draft ? 'draft' : 'publishable'}, ${published.length} published releases${missing.length ? `, ${missing.length} placeholders` : ''}).`);
+console.log(`Built website/dist (${draft ? 'draft' : 'publishable'}, ${published.length} published releases${missingScreens.length ? `, ${missingScreens.length} screenshots ${draft ? 'shown as placeholders' : 'left out'}` : ''}).`);
