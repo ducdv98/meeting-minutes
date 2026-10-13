@@ -89,26 +89,6 @@ impl Index {
         Ok(())
     }
 
-    pub(crate) fn rename(
-        &mut self,
-        old_id: &str,
-        meeting: &MeetingSummary,
-        started_at_ms: i64,
-    ) -> Result<(), LibraryError> {
-        let transaction = self.connection.transaction()?;
-        transaction.execute("DELETE FROM meetings WHERE id = ?1", [old_id])?;
-        transaction.execute(
-            "UPDATE segments SET meeting_id = ?1 WHERE meeting_id = ?2",
-            params![meeting.id, old_id],
-        )?;
-        transaction.execute(
-            "INSERT INTO meetings (id, title, started_at, started_at_ms, duration_ms) VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![meeting.id, meeting.title, meeting.started_at, started_at_ms, meeting.duration_ms as i64],
-        )?;
-        transaction.commit()?;
-        Ok(())
-    }
-
     pub(crate) fn set_transcript(
         &mut self,
         meeting_id: &str,

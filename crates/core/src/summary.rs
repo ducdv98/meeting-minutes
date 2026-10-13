@@ -16,6 +16,7 @@ use crate::{
         ProviderKind, Role, TextProvider,
     },
     citation::{check_citations, estimate_tokens, evidence_line, evidence_text, Citation},
+    metadata::with_current_title,
     transcript::{Language, Segment, Transcript},
 };
 
@@ -74,6 +75,10 @@ pub fn write_summary(meeting_dir: &Path, title: &str, summary: &Summary) -> io::
         &meeting_dir.join("summary.md"),
         render_summary_markdown(title, summary).as_bytes(),
     )
+}
+
+pub fn write_summary_for_meeting(meeting_dir: &Path, summary: &Summary) -> io::Result<()> {
+    with_current_title(meeting_dir, |title| write_summary(meeting_dir, title, summary))
 }
 
 fn time(ms: u64) -> String {

@@ -26,7 +26,7 @@ import type { Citation } from "./summary";
 interface Props {
   id: string;
   onBack(): void;
-  onRenamed(newId: string): void;
+  onRenamed(): void;
   onOpenSettings(): void;
   openAt?: Pick<SearchHit, "segment_id" | "revision" | "start_ms" | "end_ms"> | null;
   onOpened?(): void;
@@ -166,18 +166,13 @@ export default function MeetingView({ id, onBack, onRenamed, onOpenSettings, ope
     if (!detail || !title.trim() || saving) return;
     setSaving(true);
     setError(null);
-    playerHandle.current?.release();
-    setAudioOpen(false);
-    // Let the player unmount first: Windows cannot rename a folder whose audio file is open.
-    await new Promise((resolve) => setTimeout(resolve, 0));
     try {
       const summary = await renameMeeting(detail.id, title.trim());
-      // The folder has moved: follow the new id; the view reloads by it and reports its own errors.
+      setDetail((current) => current ? { ...current, title: summary.title } : current);
       setRenaming(false);
-      onRenamed(summary.id);
+      onRenamed();
     } catch (reason) {
       setError(String(reason));
-      setAudioOpen(true);
     } finally {
       setSaving(false);
     }

@@ -86,9 +86,9 @@ it("disables Delete for the Meeting being recorded", async () => {
   expect(item.getAttribute("data-disabled")).toBe("");
 });
 
-it("renames a Meeting inline from its row menu and follows the new id", async () => {
+it("renames a Meeting inline from its row menu while keeping the selected Meeting open", async () => {
   const planning = { id: "one", title: "Planning", started_at: "2026-10-12T09:00:00Z", duration_ms: 0 };
-  const review = { ...planning, id: "two", title: "Review" };
+  const review = { ...planning, title: "Review" };
   vi.mocked(rescanLibrary).mockResolvedValueOnce({ meetings: [planning], malformed: [] }).mockResolvedValue({ meetings: [review], malformed: [] });
   vi.mocked(renameMeeting).mockResolvedValue(review);
   render(<App />);
@@ -101,14 +101,14 @@ it("renames a Meeting inline from its row menu and follows the new id", async ()
   fireEvent.change(field, { target: { value: " Review " } });
   fireEvent.keyDown(field, { key: "Enter" });
   await waitFor(() => expect(renameMeeting).toHaveBeenCalledWith("one", "Review"));
-  expect(await screen.findByRole("heading", { name: "Meeting two" })).toBeTruthy();
+  expect(await screen.findByRole("heading", { name: "Meeting one" })).toBeTruthy();
   expect(await screen.findByRole("button", { name: "Review" })).toBeTruthy();
   expect(screen.queryByRole("textbox", { name: /Title for/ })).toBeNull();
 });
 
 it("keeps the inline rename open on failure and cancels with Escape", async () => {
   vi.mocked(rescanLibrary).mockResolvedValue({ meetings: [{ id: "one", title: "Planning", started_at: "2026-10-12T09:00:00Z", duration_ms: 0 }], malformed: [] });
-  vi.mocked(renameMeeting).mockRejectedValue("Folder is busy");
+  vi.mocked(renameMeeting).mockRejectedValue("Could not save Title");
   render(<App />);
   await screen.findByRole("button", { name: "Planning" });
   openRowMenu("Planning");
@@ -116,21 +116,36 @@ it("keeps the inline rename open on failure and cancels with Escape", async () =
   const field = screen.getByRole("textbox", { name: "Title for Planning" });
   fireEvent.change(field, { target: { value: "Review" } });
   fireEvent.keyDown(field, { key: "Enter" });
-  expect((await screen.findByRole("alert")).textContent).toContain("Folder is busy");
+  expect((await screen.findByRole("alert")).textContent).toContain("Could not save Title");
   expect(screen.getByRole("textbox", { name: "Title for Planning" })).toBeTruthy();
   fireEvent.keyDown(screen.getByRole("textbox", { name: "Title for Planning" }), { key: "Escape" });
   expect(screen.queryByRole("textbox", { name: "Title for Planning" })).toBeNull();
   expect(screen.getByRole("button", { name: "Planning" })).toBeTruthy();
 });
 
-it("disables Rename for the Meeting being recorded", async () => {
+it("allows Rename for the Meeting being recorded", async () => {
   vi.mocked(rescanLibrary).mockResolvedValue({ meetings: [{ id: "one", title: "Planning", started_at: "2026-10-12T09:00:00Z", duration_ms: 0 }], malformed: [] });
   vi.mocked(recordingStatus).mockResolvedValue({ phase: "recording", meeting_id: "one", elapsed_ms: 1000, notice_acknowledged: true, saves: [], continue_offers: [], device_switches: [] });
   render(<App />);
   await screen.findByRole("button", { name: "Planning" });
   openRowMenu("Planning");
   const item = await screen.findByRole("menuitem", { name: "Rename Planning" });
-  expect(item.getAttribute("data-disabled")).toBe("");
+  expect(item.getAttribute("data-disabled")).toBeNull();
+});
+
+it("edits the Title from the live Recording screen", async () => {
+  const planning = { id: "one", title: "Planning", started_at: "2026-10-12T09:00:00Z", duration_ms: 0 };
+  const review = { ...planning, title: "Review" };
+  vi.mocked(rescanLibrary).mockResolvedValueOnce({ meetings: [planning], malformed: [] }).mockResolvedValue({ meetings: [review], malformed: [] });
+  vi.mocked(recordingStatus).mockResolvedValue({ phase: "recording", meeting_id: "one", elapsed_ms: 1000, notice_acknowledged: true, saves: [], continue_offers: [], device_switches: [] });
+  vi.mocked(renameMeeting).mockResolvedValue(review);
+  render(<App />);
+  fireEvent.click(await screen.findByRole("button", { name: "Live Meeting" }));
+  fireEvent.click(screen.getByRole("button", { name: "Rename Planning" }));
+  fireEvent.change(screen.getByRole("textbox", { name: "Title" }), { target: { value: "Review" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(renameMeeting).toHaveBeenCalledWith("one", "Review"));
+  expect(await screen.findByRole("button", { name: "Rename Review" })).toBeTruthy();
 });
 
 it("shows a red Recording indicator and opens the Recording card from the sidebar", async () => {
@@ -141,9 +156,10 @@ it("shows a red Recording indicator and opens the Recording card from the sideba
   const live = await screen.findByRole("button", { name: "Live Meeting" });
   expect(screen.getByText("Recording").className).toContain("text-record");
   expect(screen.queryByRole("button", { name: "Record" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Planning" }));
   fireEvent.click(live);
   expect(screen.getByRole("region", { name: "Live Recording" })).toBeTruthy();
-  expect(screen.getByText("Recording a new Meeting")).toBeTruthy();
+  expect(screen.getByText("Recording Planning")).toBeTruthy();
   expect(screen.getByText(/The Transcript appears after you stop/)).toBeTruthy();
 });
 afterEach(() => {

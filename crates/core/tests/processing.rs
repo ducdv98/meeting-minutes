@@ -421,6 +421,7 @@ fn cancellation_and_no_audio_do_not_write_a_transcript() {
 
 struct SignalEngine {
     samples: Vec<f32>,
+    on_transcribe: Option<Box<dyn FnMut()>>,
 }
 impl SpeechEngine for SignalEngine {
     fn backend(&self) -> &str {
@@ -440,6 +441,7 @@ impl SpeechEngine for SignalEngine {
         _: &mut dyn FnMut(f32),
         _: &AtomicBool,
     ) -> Result<Vec<RawSegment>, ProcessingError> {
+        if let Some(rename) = &mut self.on_transcribe { rename(); }
         self.samples = samples.to_vec();
         Ok(vec![])
     }
@@ -451,6 +453,7 @@ fn transcription_completes_without_vad_and_reports_no_speech_duration() {
     let (_temp, dir) = saved_meeting();
     let mut engine = SignalEngine {
         samples: Vec::new(),
+        on_transcribe: None,
     };
     let transcript = transcribe_meeting(
         &TranscribeRequest {
@@ -472,6 +475,21 @@ fn transcription_completes_without_vad_and_reports_no_speech_duration() {
             && event.starts_with("transcription_completed ")
             && event.contains("audio_ms=200 audio_after_vad_ms=none")
     }));
+}
+
+#[test]
+fn rename_during_transcription_is_the_published_markdown_title() {
+    let (temp, dir) = saved_meeting();
+    let id = dir.file_name().unwrap().to_str().unwrap().to_owned();
+    let mut writer = Library::open(temp.path().join("Library"), temp.path().join("rename-index.sqlite3")).unwrap();
+    let mut engine = SignalEngine {
+        samples: Vec::new(),
+        on_transcribe: Some(Box::new(move || { writer.rename_meeting(&id, "Review").unwrap(); })),
+    };
+    transcribe_meeting(&TranscribeRequest {
+        meeting_dir: &dir, model: "small", vocabulary: &[], default_language: Some(Language::En),
+    }, &mut engine, &mut |_| {}, &AtomicBool::new(false)).unwrap();
+    assert!(std::fs::read_to_string(dir.join("transcript.md")).unwrap().starts_with("# Review\n"));
 }
 
 fn prepared_tone(hz: f32) -> Vec<f32> {
@@ -503,7 +521,7 @@ fn prepared_tone(hz: f32) -> Vec<f32> {
     library
         .set_language(&meeting.id, Some(Language::En))
         .unwrap();
-    let mut engine = SignalEngine { samples: vec![] };
+    let mut engine = SignalEngine { samples: vec![], on_transcribe: None };
     transcribe_meeting(
         &TranscribeRequest {
             meeting_dir: &dir,

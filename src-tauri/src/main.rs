@@ -318,7 +318,6 @@ fn import_worker(app: AppHandle) {
         })();
         match result {
             Ok(meeting) => {
-                // Queued before the Library shows the Meeting, so a rename is refused until it is processed.
                 if !app.state::<Quitting>().0.load(Ordering::SeqCst)
                     && Settings::load(&app.state::<SettingsPath>().0).auto_process
                 {
@@ -835,7 +834,7 @@ fn start_summary(app: &AppHandle, id: String, provider: ai::HttpProvider) -> Res
             return;
         };
         let result = (|| -> Result<(), String> {
-            let (detail, transcript, dir) = meeting_context(&app, &id)?;
+            let (_detail, transcript, dir) = meeting_context(&app, &id)?;
             let summary = summary::summarize(
                 &provider,
                 &transcript,
@@ -855,7 +854,7 @@ fn start_summary(app: &AppHandle, id: String, provider: ai::HttpProvider) -> Res
             if cancel.load(Ordering::SeqCst) {
                 return Err("Cancelled".into());
             }
-            summary::write_summary(&dir, &detail.title, &summary).map_err(|error| error.to_string())
+            summary::write_summary_for_meeting(&dir, &summary).map_err(|error| error.to_string())
         })();
         log_event(if result.is_ok() {
             LogEvent::SummaryCompleted
@@ -1446,17 +1445,13 @@ fn rename_meeting(
     meeting_id: String,
     title: String,
 ) -> Result<MeetingSummary, String> {
-    meeting_busy(&app, &meeting_id)?;
     let summary = {
-        let mut recorder = lock_recorder(&app)?;
         let library_state = app.state::<LibraryState>();
         let mut library = library_state.lock().map_err(|error| error.to_string())?;
         let library = library.as_mut().map_err(|error| error.clone())?;
-        let summary = library
+        library
             .rename_meeting(&meeting_id, &title)
-            .map_err(|error| error.to_string())?;
-        recorder.meeting_renamed(&meeting_id, &summary.id);
-        summary
+            .map_err(|error| error.to_string())?
     };
     let _ = app.emit("library-changed", ());
     let _ = publish(&app);

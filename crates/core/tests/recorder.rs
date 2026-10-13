@@ -331,7 +331,7 @@ fn crash_recovery_offers_to_continue_the_same_meeting() {
 }
 
 #[test]
-fn renaming_a_meeting_moves_its_continue_offer() {
+fn renaming_a_meeting_keeps_its_continue_offer() {
     let mut s = setup(true);
     s.recorder.start(&mut s.library, started_at()).unwrap();
     let old_id = s.recorder.status().meeting_id.unwrap();
@@ -345,7 +345,6 @@ fn renaming_a_meeting_moves_its_continue_offer() {
     assert_eq!(recorder.status().continue_offers, vec![old_id.clone()]);
 
     let renamed = s.library.rename_meeting(&old_id, "Recovered").unwrap();
-    recorder.meeting_renamed(&old_id, &renamed.id);
     assert_eq!(recorder.status().continue_offers, vec![renamed.id.clone()]);
     recorder
         .continue_meeting(&mut s.library, &renamed.id, started_at())

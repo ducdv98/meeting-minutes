@@ -1,6 +1,7 @@
 mod index;
 mod library;
 mod meeting_file;
+mod metadata;
 mod naming;
 
 pub use library::{Library, LibraryError, MalformedFolder, OrphanRecording, ScanReport};

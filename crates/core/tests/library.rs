@@ -344,7 +344,7 @@ fn creating_a_meeting_makes_a_readable_folder_and_index_entry() {
         .create_meeting("Planning", at("2026-10-12T09:30:00+07:00"))
         .unwrap();
 
-    assert_eq!(meeting.id, "2026-10-12 0930 Planning");
+    assert_eq!(meeting.id, "2026-10-12 0930");
     assert_eq!(meeting.title, "Planning");
     assert_eq!(meeting.started_at, "2026-10-12T09:30:00+07:00");
     assert_eq!(library.list_meetings().unwrap()[0].id, meeting.id);
@@ -363,7 +363,7 @@ fn creating_a_meeting_makes_a_readable_folder_and_index_entry() {
 fn collisions_use_suffixes_without_changing_existing_folders_or_metadata() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().join("Library");
-    let occupied = root.join("2026-10-12 0930 Planning");
+    let occupied = root.join("2026-10-12 0930");
     std::fs::create_dir_all(&occupied).unwrap();
     std::fs::write(occupied.join("meeting.json"), b"keep me").unwrap();
     std::fs::write(occupied.join("other.txt"), b"also keep me").unwrap();
@@ -376,8 +376,8 @@ fn collisions_use_suffixes_without_changing_existing_folders_or_metadata() {
         .create_meeting("Planning", at("2026-10-12T09:30:00Z"))
         .unwrap();
 
-    assert_eq!(first.id, "2026-10-12 0930 Planning (2)");
-    assert_eq!(second.id, "2026-10-12 0930 Planning (3)");
+    assert_eq!(first.id, "2026-10-12 0930 (2)");
+    assert_eq!(second.id, "2026-10-12 0930 (3)");
     assert_eq!(
         std::fs::read(occupied.join("meeting.json")).unwrap(),
         b"keep me"
@@ -400,24 +400,24 @@ fn two_meetings_in_the_same_minute_get_distinct_names() {
         .create_meeting("Planning", at("2026-10-12T09:30:00Z"))
         .unwrap();
     let second = library
-        .create_meeting("Planning", at("2026-10-12T09:30:59Z"))
+        .create_meeting("Review", at("2026-10-12T09:30:59Z"))
         .unwrap();
-    assert_eq!(first.id, "2026-10-12 0930 Planning");
-    assert_eq!(second.id, "2026-10-12 0930 Planning (2)");
+    assert_eq!(first.id, "2026-10-12 0930");
+    assert_eq!(second.id, "2026-10-12 0930 (2)");
 }
 
 #[test]
 fn an_occupied_folder_without_metadata_is_preserved() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().join("Library");
-    let occupied = root.join("2026-10-12 0930 Planning");
+    let occupied = root.join("2026-10-12 0930");
     std::fs::create_dir_all(&occupied).unwrap();
     std::fs::write(occupied.join("notes.txt"), b"private notes").unwrap();
     let mut library = Library::open(&root, temp.path().join("index.sqlite3")).unwrap();
     let meeting = library
         .create_meeting("Planning", at("2026-10-12T09:30:00Z"))
         .unwrap();
-    assert_eq!(meeting.id, "2026-10-12 0930 Planning (2)");
+    assert_eq!(meeting.id, "2026-10-12 0930 (2)");
     assert!(!occupied.join("meeting.json").exists());
     assert_eq!(
         std::fs::read(occupied.join("notes.txt")).unwrap(),
@@ -486,7 +486,7 @@ fn rescan_picks_up_hand_added_folders_and_edited_titles() {
             .collect::<Vec<_>>(),
         vec![
             ("Custom folder", "Added"),
-            ("2026-10-12 0930 Planning", "Updated planning")
+            ("2026-10-12 0930", "Updated planning")
         ]
     );
     assert!(report.malformed.is_empty());
@@ -555,11 +555,11 @@ fn list_orders_by_instant_then_title_then_folder_id() {
             .map(|m| m.id.as_str())
             .collect::<Vec<_>>(),
         vec![
-            "2026-10-12 1001 Newest",
-            "2026-10-12 1000 Alpha",
-            "2026-10-12 1000 Alpha (2)",
-            "2026-10-12 1000 Later",
-            "2026-10-12 1100 Zulu"
+            "2026-10-12 1001",
+            "2026-10-12 1000 (2)",
+            "2026-10-12 1000 (3)",
+            "2026-10-12 1000",
+            "2026-10-12 1100"
         ]
     );
 }
@@ -624,6 +624,7 @@ fn begin_next_recording_refuses_an_unsaved_recording() {
     )
     .unwrap();
     let (meeting, _, _) = library.begin_recording(at("2026-10-12T09:30:00Z")).unwrap();
+    assert_eq!(meeting.id, "2026-10-12 0930");
     assert!(matches!(
         library.begin_next_recording(&meeting.id, at("2026-10-12T10:00:00Z")),
         Err(LibraryError::UnsavedRecording)
@@ -631,7 +632,7 @@ fn begin_next_recording_refuses_an_unsaved_recording() {
 }
 
 #[test]
-fn rename_moves_the_folder_preserves_files_and_metadata_and_updates_the_index() {
+fn rename_keeps_the_folder_preserves_files_and_metadata_and_updates_the_index() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().join("Library");
     let mut library = Library::open(&root, temp.path().join("index.sqlite3")).unwrap();
@@ -650,9 +651,9 @@ fn rename_moves_the_folder_preserves_files_and_metadata_and_updates_the_index() 
         .rename_meeting(&original.id, "  Project review  ")
         .unwrap();
 
-    assert_eq!(renamed.id, "2026-10-12 0930 Project review");
+    assert_eq!(renamed.id, original.id);
     assert_eq!(renamed.title, "Project review");
-    assert!(!folder.exists());
+    assert!(folder.exists());
     let new_folder = root.join(&renamed.id);
     assert_eq!(
         std::fs::read(new_folder.join("notes.txt")).unwrap(),
@@ -663,6 +664,39 @@ fn rename_moves_the_folder_preserves_files_and_metadata_and_updates_the_index() 
     assert_eq!(saved["future"], metadata["future"]);
     assert_eq!(saved["title"], "Project review");
     assert_eq!(library.list_meetings().unwrap(), vec![renamed]);
+}
+
+#[test]
+fn legacy_title_folder_loads_and_renames_in_place() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().join("Library");
+    let mut library = Library::open(&root, temp.path().join("index.sqlite3")).unwrap();
+    let meeting = library.create_meeting("Planning", at("2026-10-12T09:30:00Z")).unwrap();
+    let legacy_id = "2026-10-12 0930 Planning";
+    std::fs::rename(root.join(&meeting.id), root.join(legacy_id)).unwrap();
+    library.rescan().unwrap();
+    let renamed = library.rename_meeting(legacy_id, "Review").unwrap();
+    assert_eq!(renamed.id, legacy_id);
+    assert_eq!(library.meeting(legacy_id).unwrap().title, "Review");
+    assert!(root.join(legacy_id).join("meeting.json").is_file());
+}
+
+#[test]
+fn summary_finished_after_rename_uses_the_current_title() {
+    use meeting_minutes_core::summary::{write_summary_for_meeting, Summary};
+
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().join("Library");
+    let mut library = Library::open(&root, temp.path().join("index.sqlite3")).unwrap();
+    let meeting = library.create_meeting("Planning", at("2026-10-12T09:30:00Z")).unwrap();
+    let summary: Summary = serde_json::from_value(serde_json::json!({
+        "schema_version": 1, "revision": 1, "created_at": "2026-10-12T10:00:00Z",
+        "provider": "ollama", "model": "fake", "overview": [], "key_points": [],
+        "decisions": [], "action_items": [], "dropped_items": 0
+    })).unwrap();
+    library.rename_meeting(&meeting.id, "Review").unwrap();
+    write_summary_for_meeting(&root.join(&meeting.id), &summary).unwrap();
+    assert!(std::fs::read_to_string(root.join(&meeting.id).join("summary.md")).unwrap().starts_with("# Review — Summary\n"));
 }
 
 #[test]
@@ -709,7 +743,7 @@ fn rename_refreshes_derived_markdown_for_current_revision() {
 }
 
 #[test]
-fn rename_to_taken_name_uses_suffix_without_touching_the_other_meeting() {
+fn rename_does_not_change_colliding_ids_or_the_other_meeting() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().join("Library");
     let mut library = Library::open(&root, temp.path().join("index.sqlite3")).unwrap();
@@ -720,7 +754,7 @@ fn rename_to_taken_name_uses_suffix_without_touching_the_other_meeting() {
         .create_meeting("Planning", at("2026-10-12T09:30:00Z"))
         .unwrap();
     let renamed = library.rename_meeting(&original.id, "Review").unwrap();
-    assert_eq!(renamed.id, "2026-10-12 0930 Review (2)");
+    assert_eq!(renamed.id, original.id);
     assert_eq!(library.meeting(&taken.id).unwrap().title, "Review");
     assert_eq!(library.list_meetings().unwrap().len(), 2);
 }
@@ -746,7 +780,7 @@ fn rename_to_same_title_keeps_folder_and_empty_title_is_rejected() {
 }
 
 #[test]
-fn case_only_rename_changes_the_folder_name() {
+fn case_only_rename_keeps_the_folder_name() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().join("Library");
     let mut library = Library::open(&root, temp.path().join("index.sqlite3")).unwrap();
@@ -756,9 +790,8 @@ fn case_only_rename_changes_the_folder_name() {
 
     let renamed = library.rename_meeting(&original.id, "PLANNING").unwrap();
 
-    assert_eq!(renamed.id, "2026-10-12 0930 PLANNING");
+    assert_eq!(renamed.id, original.id);
     assert_eq!(renamed.title, "PLANNING");
-    // List real names: on Windows `root.join(&original.id)` still resolves to the renamed folder.
     let folders: Vec<String> = std::fs::read_dir(&root)
         .unwrap()
         .map(|entry| entry.unwrap().file_name().into_string().unwrap())
@@ -769,7 +802,7 @@ fn case_only_rename_changes_the_folder_name() {
 }
 
 #[test]
-fn rename_refuses_unsaved_recordings_and_missing_or_invalid_ids() {
+fn rename_accepts_unsaved_recordings_and_refuses_missing_or_invalid_ids() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().join("Library");
     let mut library = Library::open(&root, temp.path().join("index.sqlite3")).unwrap();
@@ -777,10 +810,7 @@ fn rename_refuses_unsaved_recordings_and_missing_or_invalid_ids() {
         .create_meeting("Planning", at("2026-10-12T09:30:00Z"))
         .unwrap();
     std::fs::create_dir_all(root.join(&original.id).join(".chunks/recording-1")).unwrap();
-    assert!(matches!(
-        library.rename_meeting(&original.id, "New title"),
-        Err(LibraryError::UnsavedRecording)
-    ));
+    assert_eq!(library.rename_meeting(&original.id, "New title").unwrap().id, original.id);
     assert!(matches!(
         library.rename_meeting("missing", "New title"),
         Err(LibraryError::MeetingNotFound)
@@ -794,7 +824,43 @@ fn rename_refuses_unsaved_recordings_and_missing_or_invalid_ids() {
         Err(LibraryError::MeetingNotFound)
     ));
     assert!(root.join(&original.id).exists());
-    assert_eq!(library.list_meetings().unwrap(), vec![original]);
+    assert_eq!(library.list_meetings().unwrap()[0].title, "New title");
+}
+
+#[test]
+fn concurrent_title_and_language_writes_both_survive() {
+    use std::sync::{Arc, Barrier};
+
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().join("Library");
+    let mut library = Library::open(&root, temp.path().join("index.sqlite3")).unwrap();
+    let meeting = library.create_meeting("Planning", at("2026-10-12T09:30:00Z")).unwrap();
+    let barrier = Arc::new(Barrier::new(2));
+    let rename_index = temp.path().join("rename-index.sqlite3");
+    std::thread::scope(|scope| {
+        let root = root.clone();
+        let id = meeting.id.clone();
+        let thread_barrier = barrier.clone();
+        scope.spawn(move || {
+            let mut writer = Library::open(root, rename_index).unwrap();
+            for number in 0..32 {
+                thread_barrier.wait();
+                writer.rename_meeting(&id, &format!("Review {number}")).unwrap();
+                thread_barrier.wait();
+            }
+        });
+        for number in 0..32 {
+            barrier.wait();
+            let language = if number % 2 == 0 { meeting_minutes_core::transcript::Language::En } else { meeting_minutes_core::transcript::Language::Vi };
+            library.set_language(&meeting.id, Some(language)).unwrap();
+            barrier.wait();
+        }
+    });
+    assert_eq!(library.meeting(&meeting.id).unwrap().title, "Review 31");
+    let metadata: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(root.join(&meeting.id).join("meeting.json")).unwrap()
+    ).unwrap();
+    assert_eq!(metadata["language"], "vi");
 }
 
 #[test]

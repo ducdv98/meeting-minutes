@@ -1,5 +1,4 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { useState } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import MeetingView from "./MeetingView";
 import { deleteMeeting, meetingDetail, openMeetingFolder, renameMeeting, type MeetingDetail } from "./library";
@@ -125,38 +124,33 @@ it("highlights the cited Timeline span when a Summary Citation plays", async () 
   expect(HTMLMediaElement.prototype.play).toHaveBeenCalled();
 });
 
-it("renames the Meeting after releasing audio and follows the new id", async () => {
-  const renamed: MeetingDetail = { ...detail, id: "new", title: "Review", audio_path: null, markers: [] };
-  vi.mocked(meetingDetail).mockImplementation(async (id) => id === "new" ? renamed : detail);
+it("renames the Meeting while keeping audio mounted and its id unchanged", async () => {
   const onRenamed = vi.fn();
   vi.mocked(renameMeeting).mockImplementation(async () => {
-    expect(document.querySelector("audio")).toBeNull();
-    return { id: "new", title: "Review", started_at: detail.started_at, duration_ms: detail.duration_ms };
+    expect(document.querySelector("audio")).toBeTruthy();
+    return { id: "old", title: "Review", started_at: detail.started_at, duration_ms: detail.duration_ms };
   });
-  function Host() {
-    const [id, setId] = useState("old");
-    return <MeetingView id={id} onBack={() => {}} onOpenSettings={() => {}} onRenamed={(next) => { onRenamed(next); setId(next); }} />;
-  }
-  render(<Host />);
+  render(<MeetingView id="old" onBack={() => {}} onOpenSettings={() => {}} onRenamed={onRenamed} />);
   await screen.findByRole("heading", { name: "Planning" });
+  const audio = document.querySelector("audio");
   fireEvent.click(screen.getByRole("button", { name: "Rename Planning" }));
-  const title = screen.getByRole("textbox", { name: "Title" });
-  fireEvent.change(title, { target: { value: " Review " } });
+  fireEvent.change(screen.getByRole("textbox", { name: "Title" }), { target: { value: " Review " } });
   fireEvent.click(screen.getByRole("button", { name: "Save" }));
   expect(await screen.findByRole("heading", { name: "Review" })).toBeTruthy();
   expect(renameMeeting).toHaveBeenCalledWith("old", "Review");
-  expect(onRenamed).toHaveBeenCalledWith("new");
-  expect(meetingDetail).toHaveBeenCalledWith("new");
+  expect(onRenamed).toHaveBeenCalledTimes(1);
+  expect(document.querySelector("audio")).toBe(audio);
+  expect(meetingDetail).toHaveBeenCalledTimes(1);
 });
 
 it("keeps the rename input open and shows an error on failure", async () => {
-  vi.mocked(renameMeeting).mockRejectedValue("Folder is busy");
+  vi.mocked(renameMeeting).mockRejectedValue("Could not save Title");
   render(<MeetingView id="old" onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
   await screen.findByRole("heading", { name: "Planning" });
   fireEvent.click(screen.getByRole("button", { name: "Rename Planning" }));
   fireEvent.change(screen.getByRole("textbox", { name: "Title" }), { target: { value: "Review" } });
   fireEvent.click(screen.getByRole("button", { name: "Save" }));
-  expect((await screen.findByRole("alert")).textContent).toContain("Folder is busy");
+  expect((await screen.findByRole("alert")).textContent).toContain("Could not save Title");
   expect(screen.getByRole("textbox", { name: "Title" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "Save" })).toBeTruthy();
 });
@@ -265,25 +259,16 @@ it("keeps a newer processing event when the initial snapshot arrives late", asyn
   expect(screen.queryByText("Waiting to transcribe")).toBeNull();
 });
 
-it("follows the new id even when reloading the renamed Meeting fails", async () => {
-  vi.mocked(meetingDetail).mockImplementation(async (id) => {
-    if (id === "new") throw "Could not read meeting.json";
-    return detail;
-  });
-  vi.mocked(renameMeeting).mockResolvedValue({ id: "new", title: "Review", started_at: detail.started_at, duration_ms: detail.duration_ms });
-  const onRenamed = vi.fn();
-  function Host() {
-    const [id, setId] = useState("old");
-    return <MeetingView id={id} onBack={() => {}} onOpenSettings={() => {}} onRenamed={(next) => { onRenamed(next); setId(next); }} />;
-  }
-  render(<Host />);
+it("keeps playback available when rename fails", async () => {
+  vi.mocked(renameMeeting).mockRejectedValue("Could not write meeting.json");
+  render(<MeetingView id="old" onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
   await screen.findByRole("heading", { name: "Planning" });
+  const audio = document.querySelector("audio");
   fireEvent.click(screen.getByRole("button", { name: "Rename Planning" }));
   fireEvent.change(screen.getByRole("textbox", { name: "Title" }), { target: { value: "Review" } });
   fireEvent.click(screen.getByRole("button", { name: "Save" }));
-  expect((await screen.findByRole("alert")).textContent).toContain("Could not read meeting.json");
-  expect(onRenamed).toHaveBeenCalledWith("new");
-  expect(screen.queryByRole("textbox", { name: "Title" })).toBeNull();
+  expect((await screen.findByRole("alert")).textContent).toContain("Could not write meeting.json");
+  expect(document.querySelector("audio")).toBe(audio);
 });
 
 it("labels an imported Meeting below its date", async () => {

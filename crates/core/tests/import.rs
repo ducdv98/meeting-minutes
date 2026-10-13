@@ -45,6 +45,7 @@ fn importing_wav_copies_source_and_creates_playable_meeting() {
         .unwrap();
     let folder = library.meeting_dir(&meeting.id);
     assert_eq!(meeting.title, "Team sync");
+    assert_eq!(meeting.id, "2026-10-12 1000");
     assert_eq!(meeting.duration_ms, 2500);
     assert_eq!(fs::read(folder.join("imported.wav")).unwrap(), original);
     assert_eq!(fs::read(&source).unwrap(), original);

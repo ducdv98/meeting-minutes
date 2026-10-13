@@ -16,6 +16,7 @@ use crate::{
     import::{audio_duration_ms, import_extension},
     index::Index,
     meeting_file::{ImportFile, MeetingDetail, MeetingFile, RecordingEntry},
+    metadata::{update_metadata, update_metadata_and, with_current_title},
     recording::{write_manifest, RecordingManifest},
     summary::{read_summary, render_summary_markdown},
     transcript::{render_markdown, Language, Transcript},
@@ -153,7 +154,7 @@ impl Library {
         title: &str,
         started_at: DateTime<FixedOffset>,
     ) -> Result<MeetingSummary, LibraryError> {
-        let base = folder_name(started_at, title);
+        let base = folder_name(started_at);
         for number in 1..=1000 {
             let id = if number == 1 {
                 base.clone()
@@ -287,7 +288,7 @@ impl Library {
             if cancel.load(Ordering::SeqCst) {
                 return Err(LibraryError::Encode("Import cancelled".into()));
             }
-            let base = folder_name(imported_at, &file.title);
+            let base = folder_name(imported_at);
             for number in 1..=1000 {
                 let id = if number == 1 {
                     base.clone()
@@ -415,7 +416,6 @@ impl Library {
             return Err(LibraryError::EmptySegmentText);
         }
         segment.text = text;
-        let meeting: MeetingFile = serde_json::from_slice(&fs::read(folder.join("meeting.json"))?)?;
         let path = folder.join(format!("transcript.r{revision}.json"));
         let tmp = folder.join(format!("transcript.r{revision}.json.edit.tmp"));
         let write = (|| -> Result<(), LibraryError> {
@@ -434,17 +434,17 @@ impl Library {
             let _ = fs::remove_file(&tmp);
             return Err(error);
         }
-        write_transcript_markdown(&folder, &render_markdown(&meeting.title, &transcript))?;
+        with_current_title(&folder, |title| write_transcript_markdown(&folder, &render_markdown(title, &transcript)))?;
         self.index.set_transcript(id, Some(&transcript))?;
         Ok(transcript)
     }
 
     pub fn set_language(&self, id: &str, language: Option<Language>) -> Result<(), LibraryError> {
         let folder = self.checked_meeting_dir(id)?;
-        let mut metadata: serde_json::Value =
-            serde_json::from_slice(&fs::read(folder.join("meeting.json"))?)?;
-        metadata["language"] = serde_json::to_value(language)?;
-        write_metadata(&folder, &metadata)
+        update_metadata(&folder, |metadata| {
+            metadata["language"] = serde_json::to_value(language)?;
+            Ok(())
+        })
     }
 
     pub fn cloud_consent(&self, id: &str, provider: ProviderKind) -> Result<bool, LibraryError> {
@@ -468,22 +468,16 @@ impl Library {
             ));
         }
         let folder = self.checked_meeting_dir(id)?;
-        let mut metadata: serde_json::Value =
-            serde_json::from_slice(&fs::read(folder.join("meeting.json"))?)?;
-        let entries = metadata["cloud_consent"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default();
-        if entries
-            .iter()
-            .any(|entry| entry["provider"] == serde_json::json!(provider))
-        {
-            return Ok(());
-        }
-        let mut entries = entries;
-        entries.push(serde_json::json!({"provider": provider, "consented_at": at.to_rfc3339()}));
-        metadata["cloud_consent"] = serde_json::Value::Array(entries);
-        write_metadata(&folder, &metadata)
+        update_metadata(&folder, |metadata| {
+            let entries = metadata["cloud_consent"].as_array().cloned().unwrap_or_default();
+            if entries.iter().any(|entry| entry["provider"] == serde_json::json!(provider)) {
+                return Ok(());
+            }
+            let mut entries = entries;
+            entries.push(serde_json::json!({"provider": provider, "consented_at": at.to_rfc3339()}));
+            metadata["cloud_consent"] = serde_json::Value::Array(entries);
+            Ok(())
+        })
     }
 
     pub fn rename_meeting(
@@ -495,80 +489,21 @@ impl Library {
         if title.is_empty() {
             return Err(LibraryError::EmptyTitle);
         }
-        let old_folder = self.checked_meeting_dir(id)?;
-        if !unsaved_recordings(&old_folder)?.is_empty() {
-            return Err(LibraryError::UnsavedRecording);
-        }
-        let mut metadata: serde_json::Value =
-            serde_json::from_slice(&fs::read(old_folder.join("meeting.json"))?)?;
-        let started_at = metadata["started_at"]
-            .as_str()
-            .ok_or_else(|| LibraryError::Encode("Invalid started_at".into()))?;
-        let started_at = DateTime::parse_from_rfc3339(started_at)
-            .map_err(|error| LibraryError::Encode(format!("Invalid started_at: {error}")))?;
-        let base = folder_name(started_at, title);
-        let mut selected = None;
-        for number in 1..=1000 {
-            let new_id = if number == 1 {
-                base.clone()
-            } else {
-                format!("{base} ({number})")
-            };
-            let new_folder = self.root.join(&new_id);
-            if new_id != id {
-                let case_only = new_id.to_lowercase() == id.to_lowercase();
-                if case_only {
-                    // On Windows the target resolves to the source; on case-sensitive file systems
-                    // it might be a distinct occupied folder.
-                    if let Ok(info) = fs::symlink_metadata(&new_folder) {
-                        if info.file_type().is_symlink()
-                            || fs::canonicalize(&new_folder)? != fs::canonicalize(&old_folder)?
-                        {
-                            continue;
-                        }
-                    }
-                } else if fs::symlink_metadata(&new_folder).is_ok() {
-                    continue;
-                }
-                match fs::rename(&old_folder, &new_folder) {
-                    Ok(()) => {}
-                    Err(error)
-                        if matches!(
-                            error.kind(),
-                            std::io::ErrorKind::AlreadyExists
-                                | std::io::ErrorKind::DirectoryNotEmpty
-                        ) =>
-                    {
-                        continue;
-                    }
-                    Err(error) => return Err(error.into()),
-                }
+        let folder = self.checked_meeting_dir(id)?;
+        update_metadata_and(&folder, |metadata| {
+            metadata["title"] = serde_json::Value::String(title.to_owned());
+            Ok(())
+        }, || {
+            if let Ok(Some(transcript)) = self.transcript(id) {
+                let _ = write_transcript_markdown(&folder, &render_markdown(title, &transcript));
             }
-            selected = Some((new_id, new_folder));
-            break;
-        }
-        let (new_id, new_folder) = selected.ok_or(LibraryError::CollisionLimit)?;
-        metadata["title"] = serde_json::Value::String(title.to_owned());
-        let write_result = write_metadata(&new_folder, &metadata);
-        if let Err(error) = write_result {
-            if new_id != id {
-                let _ = fs::rename(&new_folder, &old_folder);
+            if let Ok(Some(saved_summary)) = read_summary(&folder) {
+                let _ = write_summary_markdown(&folder, &render_summary_markdown(title, &saved_summary));
             }
-            return Err(error);
-        }
-        let (summary, started_at_ms) =
-            read_meeting(&new_folder, &new_id).map_err(LibraryError::Encode)?;
-        // The folder is renamed; a stale index row is fixed by the next rescan.
-        let _ = self.index.rename(id, &summary, started_at_ms);
-        if let Ok(Some(transcript)) = self.transcript(&new_id) {
-            let _ = write_transcript_markdown(&new_folder, &render_markdown(title, &transcript));
-        }
-        if let Ok(Some(saved_summary)) = read_summary(&new_folder) {
-            let _ = write_summary_markdown(
-                &new_folder,
-                &render_summary_markdown(title, &saved_summary),
-            );
-        }
+            Ok(())
+        })?;
+        let (summary, started_at_ms) = read_meeting(&folder, id).map_err(LibraryError::Encode)?;
+        self.index.insert(&summary, started_at_ms)?;
         Ok(summary)
     }
 
@@ -733,19 +668,6 @@ impl Library {
             malformed,
         })
     }
-}
-
-fn write_metadata(folder: &Path, metadata: &serde_json::Value) -> Result<(), LibraryError> {
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(folder.join("meeting.json.tmp"))?;
-    serde_json::to_writer_pretty(&mut file, metadata)?;
-    file.write_all(b"\n")?;
-    file.sync_all()?;
-    fs::rename(folder.join("meeting.json.tmp"), folder.join("meeting.json"))?;
-    Ok(())
 }
 
 fn write_transcript_markdown(folder: &Path, markdown: &str) -> io::Result<()> {

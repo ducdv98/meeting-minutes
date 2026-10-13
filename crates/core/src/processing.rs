@@ -2,6 +2,7 @@ use crate::{
     audio_prep::{prepare_import, prepare_recording, PreparedRecording},
     diagnostics::{log_event, LogEvent},
     meeting_file::{MeetingFile, RecordingEntry},
+    metadata::with_current_title,
     transcript::{
         assign_ids, place_segments, render_markdown, Language, PlacedSegment, RawSegment,
         Transcript,
@@ -269,8 +270,8 @@ pub fn transcribe_meeting(
             "Transcript revision collision limit".into(),
         ));
     }
-    let markdown = render_markdown(&metadata.title, &transcript);
-    let write = (|| -> Result<(), ProcessingError> {
+    let write = with_current_title(request.meeting_dir, |title| {
+        let markdown = render_markdown(title, &transcript);
         let mut md = OpenOptions::new()
             .write(true)
             .create(true)
@@ -280,10 +281,10 @@ pub fn transcribe_meeting(
         md.sync_all()?;
         fs::rename(&markdown_tmp, request.meeting_dir.join("transcript.md"))?;
         Ok(())
-    })();
+    });
     if let Err(error) = write {
         let _ = fs::remove_file(&markdown_tmp);
-        return Err(error);
+        return Err(error.into());
     }
     progress(1.0);
     log_event(LogEvent::transcription_completed(

@@ -5,6 +5,7 @@ use crate::capture::{
 use crate::{
     library::LibraryError,
     meeting_file::{MeetingFile, RecordingEntry, RecordingFile, SourceFile},
+    metadata::update_metadata,
     timeline::place_recording,
 };
 use flacenc::error::Verify;
@@ -620,8 +621,10 @@ pub fn finalize_recording(
     number: u32,
 ) -> Result<FinalizedRecording, LibraryError> {
     let chunk_dir = meeting_dir.join(format!(".chunks/recording-{number}"));
-    let mut meeting: MeetingFile =
+    let initial_metadata: serde_json::Value =
         serde_json::from_slice(&fs::read(meeting_dir.join("meeting.json"))?)?;
+    let initial_recordings = initial_metadata["recordings"].clone();
+    let meeting: MeetingFile = serde_json::from_value(initial_metadata)?;
     if meeting.schema_version != 1 {
         return Err(LibraryError::Encode("Unsupported Meeting schema".into()));
     }
@@ -714,38 +717,31 @@ pub fn finalize_recording(
         if meeting.audio.is_some() {
             fs::rename(meeting_dir.join(&mp3_name), meeting_dir.join(&audio_name))?;
         }
-        meeting
-            .recordings
-            .push(RecordingEntry::Known(RecordingFile {
-                number,
-                started_at: manifest.started_at,
-                timeline_start_ms,
-                duration_ms,
-                files: vec![
-                    SourceFile {
-                        source: Source::Microphone,
-                        file: mic_name,
-                        channels: 1,
-                    },
-                    SourceFile {
-                        source: Source::SystemAudio,
-                        file: system_name,
-                        channels: 2,
-                    },
-                ],
-            }));
-        meeting.markers.extend(placement.markers);
-        meeting.duration_ms = timeline_start_ms + duration_ms;
-        meeting.audio = Some(audio_name);
-        let mut file = create_final(meeting_dir, "meeting.json.tmp", &mut journal, &mut created)?;
-        serde_json::to_writer_pretty(&mut file, &meeting)?;
-        file.write_all(b"\n")?;
-        file.sync_all()?;
-        drop(file);
-        fs::rename(
-            meeting_dir.join("meeting.json.tmp"),
-            meeting_dir.join("meeting.json"),
-        )?;
+        let recording = RecordingFile {
+            number,
+            started_at: manifest.started_at,
+            timeline_start_ms,
+            duration_ms,
+            files: vec![
+                SourceFile { source: Source::Microphone, file: mic_name, channels: 1 },
+                SourceFile { source: Source::SystemAudio, file: system_name, channels: 2 },
+            ],
+        };
+        update_metadata(meeting_dir, |metadata| {
+            if metadata["recordings"] != initial_recordings {
+                return Err(LibraryError::Encode("Meeting changed during save; retry".into()));
+            }
+            let mut recordings = metadata["recordings"].as_array().cloned().unwrap_or_default();
+            recordings.push(serde_json::to_value(&recording)?);
+            metadata["recordings"] = serde_json::Value::Array(recordings);
+            let mut markers = metadata["markers"].as_array().cloned().unwrap_or_default();
+            let added: Vec<serde_json::Value> = placement.markers.iter().map(serde_json::to_value).collect::<Result<_, _>>()?;
+            markers.extend(added);
+            metadata["markers"] = serde_json::Value::Array(markers);
+            metadata["duration_ms"] = serde_json::to_value(timeline_start_ms + duration_ms)?;
+            metadata["audio"] = serde_json::to_value(&audio_name)?;
+            Ok(())
+        })?;
         Ok(())
     })();
     if let Err(error) = result {

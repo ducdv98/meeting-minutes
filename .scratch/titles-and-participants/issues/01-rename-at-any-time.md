@@ -27,3 +27,13 @@ Stop moving the Meeting folder on rename (ADR 0009).
 - [ ] A rename at the same time as another `meeting.json` write keeps both changes (core test).
 - [ ] Existing folders with a Title in their name still load and rename correctly.
 - [ ] Core and frontend tests updated; Windows clippy check passes.
+
+## Comments
+
+### 2026-10-13: implemented
+
+- New folders are `YYYY-MM-DD HHMM` (+ ` (n)`). Rename writes only `meeting.json`, updates the index row and re-renders the Markdown files; ID and folder never change.
+- `crates/core/src/metadata.rs`: every `meeting.json` writer after creation (rename, language, cloud consent, recording finalization) goes through one process-wide lock. Transcript and Summary Markdown are written with the Title read under that lock, so a rename during Processing or Summary isn't overwritten by the old Title.
+- Rename is no longer disabled while busy; the player stays open; the Recording screen can edit the Title.
+- Checks: core tests, `pnpm typecheck`, Vitest, Windows-gnu clippy of `src-tauri` with a whisper stub.
+- Review notes left as is: Markdown write errors on rename are ignored (as before; `meeting.json` is the source of truth); the global lock is held during the small Markdown writes.
