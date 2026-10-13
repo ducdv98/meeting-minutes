@@ -1,6 +1,6 @@
 use meeting_minutes_core::{
     diagnostics::{log_event, LogEvent},
-    processing::{ProcessingError, SpeechEngine},
+    processing::{ProcessingError, SpeechEngine, StreamTranscription},
     transcript::{Language, RawSegment},
 };
 use std::{
@@ -13,7 +13,7 @@ use std::{
 };
 use whisper_rs::{
     get_lang_id, FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters,
-    WhisperVadContext, WhisperVadContextParams, WhisperVadParams,
+    WhisperState, WhisperVadContext, WhisperVadContextParams, WhisperVadParams,
 };
 
 pub struct WhisperEngine {
@@ -305,6 +305,98 @@ impl WhisperEngine {
     }
 }
 
+#[derive(Clone, Copy)]
+struct TranscriptionSettings<'a> {
+    language: Language,
+    prompt: Option<&'a str>,
+    threads: usize,
+}
+
+fn transcribe_with_state(
+    mut state: WhisperState,
+    samples_16k: &[f32],
+    speech: Option<SpeechAudio>,
+    settings: TranscriptionSettings<'_>,
+    progress: &mut dyn FnMut(f32),
+    cancel: &AtomicBool,
+) -> Result<Vec<RawSegment>, ProcessingError> {
+    if cancel.load(Ordering::SeqCst) {
+        return Err(ProcessingError::Cancelled);
+    }
+    if speech
+        .as_ref()
+        .is_some_and(|audio| audio.samples.is_empty())
+    {
+        return Ok(Vec::new());
+    }
+    let whisper_samples = speech.as_ref().map_or(samples_16k, |audio| &audio.samples);
+    let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
+    params.set_language(Some(match settings.language {
+        Language::En => "en",
+        Language::Vi => "vi",
+    }));
+    params.set_translate(false);
+    params.set_print_special(false);
+    params.set_print_progress(false);
+    params.set_print_realtime(false);
+    params.set_print_timestamps(false);
+    params.set_suppress_blank(true);
+    params.set_suppress_nst(true);
+    if let Some(prompt) = settings.prompt {
+        params.set_initial_prompt(prompt);
+    }
+    params.set_n_threads(settings.threads as i32);
+    let (sender, receiver) = mpsc::channel::<i32>();
+    params.set_progress_callback_safe(move |percent| {
+        let _ = sender.send(percent);
+    });
+    let abort = Arc::new(AtomicBool::new(false));
+    let abort_for_callback = Arc::clone(&abort);
+    // whisper-rs stores a boxed trait object; matching F to that type keeps its trampoline sound.
+    let abort_callback: Box<dyn FnMut() -> bool> =
+        Box::new(move || abort_for_callback.load(Ordering::SeqCst));
+    params.set_abort_callback_safe(abort_callback);
+    let result = std::thread::scope(|scope| {
+        let worker = scope.spawn(|| state.full(params, whisper_samples));
+        while !worker.is_finished() {
+            abort.store(cancel.load(Ordering::SeqCst), Ordering::SeqCst);
+            if let Ok(percent) = receiver.recv_timeout(Duration::from_millis(25)) {
+                progress((percent as f32 / 100.0).clamp(0.0, 1.0));
+            }
+        }
+        for percent in receiver.try_iter() {
+            progress((percent as f32 / 100.0).clamp(0.0, 1.0));
+        }
+        worker
+            .join()
+            .map_err(|_| ProcessingError::Engine("Whisper worker panicked".into()))?
+            .map_err(|e| ProcessingError::Engine(e.to_string()))
+    });
+    if cancel.load(Ordering::SeqCst) {
+        return Err(ProcessingError::Cancelled);
+    }
+    result?;
+    state
+        .as_iter()
+        .map(|segment| {
+            Ok(RawSegment {
+                start_ms: speech.as_ref().map_or_else(
+                    || (segment.start_timestamp().max(0) as u64) * 10,
+                    |audio| audio.original_ms((segment.start_timestamp().max(0) as u64) * 10),
+                ),
+                end_ms: speech.as_ref().map_or_else(
+                    || (segment.end_timestamp().max(0) as u64) * 10,
+                    |audio| audio.original_ms((segment.end_timestamp().max(0) as u64) * 10),
+                ),
+                text: segment
+                    .to_str_lossy()
+                    .map_err(|e| ProcessingError::Engine(e.to_string()))?
+                    .into_owned(),
+            })
+        })
+        .collect()
+}
+
 impl SpeechEngine for WhisperEngine {
     fn backend(&self) -> &str {
         self.backend
@@ -344,6 +436,13 @@ impl SpeechEngine for WhisperEngine {
         }
     }
 
+    fn has_speech(&mut self, samples_16k: &[f32]) -> bool {
+        self.speech_only(samples_16k).map_or_else(
+            || samples_16k.iter().any(|sample| sample.abs() > 0.01),
+            |speech| !speech.samples.is_empty(),
+        )
+    }
+
     fn transcribe(
         &mut self,
         samples_16k: &[f32],
@@ -367,76 +466,158 @@ impl SpeechEngine for WhisperEngine {
         if cancel.load(Ordering::SeqCst) {
             return Err(ProcessingError::Cancelled);
         }
-        let whisper_samples = speech.as_ref().map_or(samples_16k, |audio| &audio.samples);
-        let mut state = self
+        let state = self
             .context
             .create_state()
             .map_err(|e| ProcessingError::Engine(e.to_string()))?;
-        let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
-        params.set_language(Some(match language {
-            Language::En => "en",
-            Language::Vi => "vi",
-        }));
-        params.set_translate(false);
-        params.set_print_special(false);
-        params.set_print_progress(false);
-        params.set_print_realtime(false);
-        params.set_print_timestamps(false);
-        params.set_suppress_blank(true);
-        params.set_suppress_nst(true);
-        if let Some(prompt) = initial_prompt {
-            params.set_initial_prompt(prompt);
-        }
-        params.set_n_threads(self.threads as i32);
-        let (sender, receiver) = mpsc::channel::<i32>();
-        params.set_progress_callback_safe(move |percent| {
-            let _ = sender.send(percent);
-        });
-        let abort = Arc::new(AtomicBool::new(false));
-        let abort_for_callback = Arc::clone(&abort);
-        // whisper-rs stores a boxed trait object; matching F to that type keeps its trampoline sound.
-        let abort_callback: Box<dyn FnMut() -> bool> =
-            Box::new(move || abort_for_callback.load(Ordering::SeqCst));
-        params.set_abort_callback_safe(abort_callback);
-        let result = std::thread::scope(|scope| {
-            let worker = scope.spawn(|| state.full(params, whisper_samples));
-            while !worker.is_finished() {
-                abort.store(cancel.load(Ordering::SeqCst), Ordering::SeqCst);
-                if let Ok(percent) = receiver.recv_timeout(Duration::from_millis(25)) {
-                    progress((percent as f32 / 100.0).clamp(0.0, 1.0));
-                }
-            }
-            for percent in receiver.try_iter() {
-                progress((percent as f32 / 100.0).clamp(0.0, 1.0));
-            }
-            worker
-                .join()
-                .map_err(|_| ProcessingError::Engine("Whisper worker panicked".into()))?
-                .map_err(|e| ProcessingError::Engine(e.to_string()))
-        });
+        transcribe_with_state(
+            state,
+            samples_16k,
+            speech,
+            TranscriptionSettings {
+                language,
+                prompt: initial_prompt,
+                threads: self.threads,
+            },
+            progress,
+            cancel,
+        )
+    }
+
+    fn transcribe_streams(
+        &mut self,
+        streams: &[&[f32]],
+        language: Language,
+        initial_prompt: Option<&str>,
+        progress: &mut dyn FnMut(f32),
+        cancel: &AtomicBool,
+    ) -> Result<Vec<StreamTranscription>, ProcessingError> {
         if cancel.load(Ordering::SeqCst) {
             return Err(ProcessingError::Cancelled);
         }
-        result?;
-        state
-            .as_iter()
-            .map(|segment| {
-                Ok(RawSegment {
-                    start_ms: speech.as_ref().map_or_else(
-                        || (segment.start_timestamp().max(0) as u64) * 10,
-                        |audio| audio.original_ms((segment.start_timestamp().max(0) as u64) * 10),
-                    ),
-                    end_ms: speech.as_ref().map_or_else(
-                        || (segment.end_timestamp().max(0) as u64) * 10,
-                        |audio| audio.original_ms((segment.end_timestamp().max(0) as u64) * 10),
-                    ),
-                    text: segment
-                        .to_str_lossy()
-                        .map_err(|e| ProcessingError::Engine(e.to_string()))?
-                        .into_owned(),
-                })
-            })
-            .collect()
+        let sequential = |engine: &mut Self, progress: &mut dyn FnMut(f32)| {
+            let total = streams
+                .iter()
+                .map(|stream| stream.len())
+                .sum::<usize>()
+                .max(1);
+            let mut completed = 0usize;
+            let mut results = Vec::with_capacity(streams.len());
+            for stream in streams {
+                let base = completed as f32 / total as f32;
+                let weight = stream.len() as f32 / total as f32;
+                let segments = engine.transcribe(
+                    stream,
+                    language,
+                    initial_prompt,
+                    &mut |fraction| progress(base + fraction.clamp(0.0, 1.0) * weight),
+                    cancel,
+                )?;
+                results.push(StreamTranscription {
+                    segments,
+                    audio_after_vad_ms: engine.audio_after_vad_ms,
+                });
+                completed += stream.len();
+            }
+            Ok(results)
+        };
+        if streams.len() != 2 || self.backend != "Vulkan" {
+            return sequential(self, progress);
+        }
+        let first_state = self
+            .context
+            .create_state()
+            .map_err(|e| ProcessingError::Engine(e.to_string()))?;
+        let Ok(second_state) = self.context.create_state() else {
+            drop(first_state);
+            return sequential(self, progress);
+        };
+        let first_speech = self.speech_only(streams[0]);
+        let second_speech = self.speech_only(streams[1]);
+        let duration = |speech: &Option<SpeechAudio>| {
+            speech
+                .as_ref()
+                .map(|audio| audio.samples.len() as u64 * 1000 / SAMPLE_RATE as u64)
+        };
+        let first_vad = duration(&first_speech);
+        let second_vad = duration(&second_speech);
+        let total = streams
+            .iter()
+            .map(|stream| stream.len())
+            .sum::<usize>()
+            .max(1);
+        let first_weight = streams[0].len() as f32 / total as f32;
+        let (sender, receiver) = mpsc::channel::<(usize, f32)>();
+        let settings = TranscriptionSettings {
+            language,
+            prompt: initial_prompt,
+            threads: self.threads,
+        };
+        let (first, second) = std::thread::scope(|scope| {
+            let first_sender = sender.clone();
+            let first = scope.spawn(move || {
+                let result = transcribe_with_state(
+                    first_state,
+                    streams[0],
+                    first_speech,
+                    settings,
+                    &mut |fraction| {
+                        let _ = first_sender.send((0, fraction));
+                    },
+                    cancel,
+                );
+                let _ = first_sender.send((0, 1.0));
+                result
+            });
+            let second = scope.spawn(move || {
+                let result = transcribe_with_state(
+                    second_state,
+                    streams[1],
+                    second_speech,
+                    settings,
+                    &mut |fraction| {
+                        let _ = sender.send((1, fraction));
+                    },
+                    cancel,
+                );
+                let _ = sender.send((1, 1.0));
+                result
+            });
+            let mut fractions = [0.0_f32; 2];
+            let mut reported = 0.0_f32;
+            while !first.is_finished() || !second.is_finished() {
+                if let Ok((index, fraction)) = receiver.recv_timeout(Duration::from_millis(25)) {
+                    fractions[index] = fractions[index].max(fraction.clamp(0.0, 1.0));
+                    reported = reported
+                        .max(fractions[0] * first_weight + fractions[1] * (1.0 - first_weight));
+                    progress(reported);
+                }
+            }
+            for (index, fraction) in receiver.try_iter() {
+                fractions[index] = fractions[index].max(fraction.clamp(0.0, 1.0));
+            }
+            progress(
+                (fractions[0] * first_weight + fractions[1] * (1.0 - first_weight)).max(reported),
+            );
+            let first = first
+                .join()
+                .map_err(|_| ProcessingError::Engine("Whisper worker panicked".into()))?;
+            let second = second
+                .join()
+                .map_err(|_| ProcessingError::Engine("Whisper worker panicked".into()))?;
+            Ok::<_, ProcessingError>((first?, second?))
+        })?;
+        self.audio_after_vad_ms = first_vad.zip(second_vad).map(|(a, b)| a + b);
+        Ok(vec![
+            StreamTranscription {
+                segments: first,
+                audio_after_vad_ms: first_vad,
+            },
+            StreamTranscription {
+                segments: second,
+                audio_after_vad_ms: second_vad,
+            },
+        ])
     }
 }
 

@@ -1,6 +1,6 @@
 use meeting_minutes_core::processing::{transcribe_meeting, SpeechEngine, TranscribeRequest};
 use meeting_minutes_core::processing::{JobStage, ProcessingError, Processor};
-use meeting_minutes_core::transcript::{Language, RawSegment};
+use meeting_minutes_core::transcript::{Language, RawSegment, Speaker};
 use meeting_minutes_core::{capture::Source, finalize_recording, recording::ChunkWriter, Library};
 use std::sync::atomic::AtomicBool;
 use std::sync::{Mutex, Once, OnceLock};
@@ -38,11 +38,16 @@ impl SpeechEngine for FakeEngine {
         self.prompts.push(prompt.map(str::to_owned));
         self.lengths.push(samples.len());
         progress(1.0);
-        Ok(vec![RawSegment {
-            start_ms: 0,
-            end_ms: 120,
-            text: format!(" words {} ", self.calls),
-        }])
+        Ok(samples
+            .iter()
+            .any(|sample| sample.abs() > 0.01)
+            .then(|| RawSegment {
+                start_ms: 0,
+                end_ms: 120,
+                text: format!(" words {} ", self.calls),
+            })
+            .into_iter()
+            .collect())
     }
 }
 
@@ -101,7 +106,7 @@ fn completed_transcription_reports_speech_duration_across_recordings() {
     assert!(events.iter().any(|(thread, event)| {
         *thread == current
             && event.starts_with("transcription_completed ")
-            && event.contains("audio_ms=200 audio_after_vad_ms=80")
+            && event.contains("audio_ms=400 audio_after_vad_ms=160")
     }));
 }
 
@@ -158,6 +163,248 @@ fn saved_meeting() -> (TempDir, std::path::PathBuf) {
     (temp, dir)
 }
 
+struct AudibleEngine {
+    calls: Vec<(usize, f32)>,
+    detected: usize,
+    detected_peak: f32,
+}
+
+impl SpeechEngine for AudibleEngine {
+    fn backend(&self) -> &str {
+        "CPU"
+    }
+    fn thread_count(&self) -> usize {
+        1
+    }
+    fn audio_after_vad_ms(&self) -> Option<u64> {
+        Some(60)
+    }
+    fn detect_language(&mut self, samples: &[f32]) -> Result<Language, String> {
+        self.detected += 1;
+        self.detected_peak = samples
+            .iter()
+            .fold(0.0_f32, |peak, sample| peak.max(sample.abs()));
+        Ok(Language::En)
+    }
+    fn transcribe(
+        &mut self,
+        samples: &[f32],
+        _: Language,
+        _: Option<&str>,
+        progress: &mut dyn FnMut(f32),
+        _: &AtomicBool,
+    ) -> Result<Vec<RawSegment>, ProcessingError> {
+        let peak = samples
+            .iter()
+            .copied()
+            .fold(0.0_f32, |peak, sample| peak.max(sample.abs()));
+        self.calls.push((samples.len(), peak));
+        progress(1.0);
+        Ok((peak > 0.01)
+            .then(|| RawSegment {
+                start_ms: 0,
+                end_ms: 80,
+                text: "Speech".into(),
+            })
+            .into_iter()
+            .collect())
+    }
+}
+
+#[test]
+fn each_source_is_transcribed_and_labelled_on_the_meeting_timeline() {
+    record_events();
+    let (_temp, dir) = saved_meeting();
+    let mut engine = AudibleEngine {
+        calls: vec![],
+        detected: 0,
+        detected_peak: 0.0,
+    };
+    let mut progress = vec![];
+    let transcript = transcribe_meeting(
+        &TranscribeRequest {
+            meeting_dir: &dir,
+            model: "small",
+            vocabulary: &[],
+            default_language: None,
+        },
+        &mut engine,
+        &mut |p| progress.push(p),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    assert_eq!(
+        transcript
+            .segments
+            .iter()
+            .map(|s| (s.start_ms, s.end_ms, s.speaker))
+            .collect::<Vec<_>>(),
+        vec![(0, 80, Speaker::Me), (100, 180, Speaker::Remote)]
+    );
+    assert_eq!(engine.calls.len(), 4);
+    assert_eq!(engine.detected, 1);
+    assert!(progress.windows(2).all(|pair| pair[0] <= pair[1]));
+    assert_eq!(progress.last(), Some(&1.0));
+    let thread = std::thread::current().id();
+    assert!(EVENTS
+        .get()
+        .unwrap()
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|(id, event)| *id == thread
+            && event.starts_with("transcription_completed ")
+            && event.contains("audio_ms=400 audio_after_vad_ms=240")));
+}
+
+#[test]
+fn simultaneous_sources_keep_overlapping_segments_with_distinct_speakers() {
+    let (_temp, dir) = meeting_with_sources(0.2, 0.2);
+    let mut engine = AudibleEngine {
+        calls: vec![],
+        detected: 0,
+        detected_peak: 0.0,
+    };
+    let transcript = transcribe_meeting(
+        &TranscribeRequest {
+            meeting_dir: &dir,
+            model: "small",
+            vocabulary: &[],
+            default_language: Some(Language::En),
+        },
+        &mut engine,
+        &mut |_| {},
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    assert_eq!(
+        transcript
+            .segments
+            .iter()
+            .map(|s| (s.start_ms, s.end_ms, s.speaker))
+            .collect::<Vec<_>>(),
+        vec![(0, 80, Speaker::Me), (0, 80, Speaker::Remote)]
+    );
+}
+
+fn meeting_with_sources(mic: f32, system: f32) -> (TempDir, std::path::PathBuf) {
+    let temp = TempDir::new().unwrap();
+    let mut library = Library::open(
+        temp.path().join("Library"),
+        temp.path().join("index.sqlite3"),
+    )
+    .unwrap();
+    let at = chrono::DateTime::parse_from_rfc3339("2026-10-12T09:30:00Z").unwrap();
+    let (meeting, recording, _) = library.begin_recording(at).unwrap();
+    let dir = library.meeting_dir(&meeting.id);
+    for source in [Source::Microphone, Source::SystemAudio] {
+        let mut writer = ChunkWriter::new(&recording, source).unwrap();
+        writer
+            .write(&vec![
+                if source == Source::Microphone {
+                    mic
+                } else {
+                    system
+                };
+                if source == Source::Microphone {
+                    4_800
+                } else {
+                    9_600
+                }
+            ])
+            .unwrap();
+        writer.finish().unwrap();
+    }
+    finalize_recording(&dir, 1).unwrap();
+    (temp, dir)
+}
+
+#[test]
+fn language_detection_uses_system_audio_when_microphone_has_no_speech() {
+    let (_temp, dir) = meeting_with_sources(0.0, 0.2);
+    let mut engine = AudibleEngine {
+        calls: vec![],
+        detected: 0,
+        detected_peak: 0.0,
+    };
+    let transcript = transcribe_meeting(
+        &TranscribeRequest {
+            meeting_dir: &dir,
+            model: "small",
+            vocabulary: &[],
+            default_language: None,
+        },
+        &mut engine,
+        &mut |_| {},
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    assert_eq!(engine.detected, 1);
+    assert!(engine.detected_peak > 0.01);
+    assert_eq!(transcript.segments.len(), 1);
+    assert_eq!(transcript.segments[0].speaker, Speaker::Remote);
+}
+
+#[test]
+fn silent_sources_do_not_claim_a_detected_language() {
+    let (_temp, dir) = meeting_with_sources(0.0, 0.0);
+    let mut engine = AudibleEngine {
+        calls: vec![],
+        detected: 0,
+        detected_peak: 0.0,
+    };
+    let transcript = transcribe_meeting(
+        &TranscribeRequest {
+            meeting_dir: &dir,
+            model: "small",
+            vocabulary: &[],
+            default_language: None,
+        },
+        &mut engine,
+        &mut |_| {},
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    assert_eq!(engine.detected, 0);
+    assert!(!transcript.language_detected);
+    assert!(transcript.segments.is_empty());
+}
+
+#[test]
+fn voice_note_segments_are_me_when_only_microphone_source_is_present() {
+    let (_temp, dir) = saved_meeting();
+    let path = dir.join("meeting.json");
+    let mut metadata: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    for recording in metadata["recordings"].as_array_mut().unwrap() {
+        recording["files"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|file| file["source"] == "microphone");
+    }
+    std::fs::write(&path, serde_json::to_vec(&metadata).unwrap()).unwrap();
+    let mut engine = AudibleEngine {
+        calls: vec![],
+        detected: 0,
+        detected_peak: 0.0,
+    };
+    let transcript = transcribe_meeting(
+        &TranscribeRequest {
+            meeting_dir: &dir,
+            model: "small",
+            vocabulary: &[],
+            default_language: Some(Language::En),
+        },
+        &mut engine,
+        &mut |_| {},
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    assert_eq!(transcript.segments.len(), 1);
+    assert_eq!(transcript.segments[0].speaker, Speaker::Me);
+    assert_eq!(engine.calls.len(), 2);
+}
+
 #[test]
 fn transcribes_two_recordings_on_timeline_and_creates_revisions() {
     let (_temp, dir) = saved_meeting();
@@ -180,8 +427,8 @@ fn transcribes_two_recordings_on_timeline_and_creates_revisions() {
     assert_eq!(first.language, Language::Vi);
     assert!(first.language_detected);
     assert_eq!(engine.detected, 1);
-    assert_eq!(engine.prompts, vec![Some("Nguyễn, Project X".into()); 2]);
-    assert_eq!(engine.lengths, vec![1600; 2]);
+    assert_eq!(engine.prompts, vec![Some("Nguyễn, Project X".into()); 4]);
+    assert_eq!(engine.lengths, vec![1600; 4]);
     assert_eq!(
         first
             .segments
@@ -211,7 +458,9 @@ fn transcribes_two_recordings_on_timeline_and_creates_revisions() {
         library.transcript(id).unwrap().unwrap().segments,
         first.segments
     );
-    library.assign_segments(id, 1, &["s00001".into()], Some("Anna")).unwrap();
+    library
+        .assign_segments(id, 1, &["s00001".into()], Some("Anna"))
+        .unwrap();
     let second =
         transcribe_meeting(&request, &mut engine, &mut |_| {}, &AtomicBool::new(false)).unwrap();
     assert_eq!(second.revision, 2);
@@ -223,23 +472,42 @@ fn transcribes_two_recordings_on_timeline_and_creates_revisions() {
     assert!(std::fs::read_to_string(dir.join("transcript.md"))
         .unwrap()
         .contains("Transcript revision 2"));
-    assert!(std::fs::read_to_string(dir.join("transcript.md")).unwrap().contains("Anna:** words"));
+    assert!(std::fs::read_to_string(dir.join("transcript.md"))
+        .unwrap()
+        .contains("Anna:** words"));
     let carried = library.meeting(id).unwrap().segment_participants.unwrap();
     assert_eq!(carried.revision, 2);
-    assert_eq!(carried.segments.get("s00001").map(String::as_str), Some("Anna"));
+    assert_eq!(
+        carried.segments.get("s00001").map(String::as_str),
+        Some("Anna")
+    );
     // Moves made on an older Revision still carry when that Revision is not the previous file.
-    let mut moved: serde_json::Value = serde_json::from_slice(&std::fs::read(dir.join("transcript.r2.json")).unwrap()).unwrap();
+    let mut moved: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.join("transcript.r2.json")).unwrap()).unwrap();
     moved["revision"] = serde_json::json!(5);
-    std::fs::write(dir.join("transcript.r5.json"), serde_json::to_vec(&moved).unwrap()).unwrap();
+    std::fs::write(
+        dir.join("transcript.r5.json"),
+        serde_json::to_vec(&moved).unwrap(),
+    )
+    .unwrap();
     std::fs::remove_file(dir.join("transcript.r2.json")).unwrap();
-    let mut metadata: serde_json::Value = serde_json::from_slice(&std::fs::read(dir.join("meeting.json")).unwrap()).unwrap();
+    let mut metadata: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.join("meeting.json")).unwrap()).unwrap();
     metadata["segment_participants"]["revision"] = serde_json::json!(5);
-    std::fs::write(dir.join("meeting.json"), serde_json::to_vec(&metadata).unwrap()).unwrap();
-    let third = transcribe_meeting(&request, &mut engine, &mut |_| {}, &AtomicBool::new(false)).unwrap();
+    std::fs::write(
+        dir.join("meeting.json"),
+        serde_json::to_vec(&metadata).unwrap(),
+    )
+    .unwrap();
+    let third =
+        transcribe_meeting(&request, &mut engine, &mut |_| {}, &AtomicBool::new(false)).unwrap();
     assert_eq!(third.revision, 6);
     let carried = library.meeting(id).unwrap().segment_participants.unwrap();
     assert_eq!(carried.revision, 6);
-    assert_eq!(carried.segments.get("s00001").map(String::as_str), Some("Anna"));
+    assert_eq!(
+        carried.segments.get("s00001").map(String::as_str),
+        Some("Anna")
+    );
 }
 
 #[test]
@@ -459,8 +727,12 @@ impl SpeechEngine for SignalEngine {
         _: &mut dyn FnMut(f32),
         _: &AtomicBool,
     ) -> Result<Vec<RawSegment>, ProcessingError> {
-        if let Some(rename) = &mut self.on_transcribe { rename(); }
-        self.samples = samples.to_vec();
+        if let Some(rename) = &mut self.on_transcribe {
+            rename();
+        }
+        if samples.iter().any(|sample| sample.abs() > 0.01) {
+            self.samples = samples.to_vec();
+        }
         Ok(vec![])
     }
 }
@@ -491,7 +763,7 @@ fn transcription_completes_without_vad_and_reports_no_speech_duration() {
     assert!(events.iter().any(|(thread, event)| {
         *thread == current
             && event.starts_with("transcription_completed ")
-            && event.contains("audio_ms=200 audio_after_vad_ms=none")
+            && event.contains("audio_ms=400 audio_after_vad_ms=none")
     }));
 }
 
@@ -499,15 +771,32 @@ fn transcription_completes_without_vad_and_reports_no_speech_duration() {
 fn rename_during_transcription_is_the_published_markdown_title() {
     let (temp, dir) = saved_meeting();
     let id = dir.file_name().unwrap().to_str().unwrap().to_owned();
-    let mut writer = Library::open(temp.path().join("Library"), temp.path().join("rename-index.sqlite3")).unwrap();
+    let mut writer = Library::open(
+        temp.path().join("Library"),
+        temp.path().join("rename-index.sqlite3"),
+    )
+    .unwrap();
     let mut engine = SignalEngine {
         samples: Vec::new(),
-        on_transcribe: Some(Box::new(move || { writer.rename_meeting(&id, "Review").unwrap(); })),
+        on_transcribe: Some(Box::new(move || {
+            writer.rename_meeting(&id, "Review").unwrap();
+        })),
     };
-    transcribe_meeting(&TranscribeRequest {
-        meeting_dir: &dir, model: "small", vocabulary: &[], default_language: Some(Language::En),
-    }, &mut engine, &mut |_| {}, &AtomicBool::new(false)).unwrap();
-    assert!(std::fs::read_to_string(dir.join("transcript.md")).unwrap().starts_with("# Review\n"));
+    transcribe_meeting(
+        &TranscribeRequest {
+            meeting_dir: &dir,
+            model: "small",
+            vocabulary: &[],
+            default_language: Some(Language::En),
+        },
+        &mut engine,
+        &mut |_| {},
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    assert!(std::fs::read_to_string(dir.join("transcript.md"))
+        .unwrap()
+        .starts_with("# Review\n"));
 }
 
 fn prepared_tone(hz: f32) -> Vec<f32> {
@@ -539,7 +828,10 @@ fn prepared_tone(hz: f32) -> Vec<f32> {
     library
         .set_language(&meeting.id, Some(Language::En))
         .unwrap();
-    let mut engine = SignalEngine { samples: vec![], on_transcribe: None };
+    let mut engine = SignalEngine {
+        samples: vec![],
+        on_transcribe: None,
+    };
     transcribe_meeting(
         &TranscribeRequest {
             meeting_dir: &dir,

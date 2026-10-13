@@ -3,8 +3,7 @@ use crate::{
     diagnostics::{log_event, LogEvent},
     meeting_file::{MeetingFile, RecordingEntry},
     transcript::{
-        assign_ids, place_segments, Language, PlacedSegment, RawSegment,
-        Transcript,
+        assign_ids, place_segments, Language, PlacedSegment, RawSegment, Speaker, Transcript,
     },
 };
 use serde::{Serialize, Serializer};
@@ -28,6 +27,9 @@ pub trait SpeechEngine {
         None
     }
     fn detect_language(&mut self, samples_16k: &[f32]) -> Result<Language, String>;
+    fn has_speech(&mut self, samples_16k: &[f32]) -> bool {
+        samples_16k.iter().any(|sample| sample.abs() > 0.01)
+    }
     fn transcribe(
         &mut self,
         samples_16k: &[f32],
@@ -36,6 +38,41 @@ pub trait SpeechEngine {
         progress: &mut dyn FnMut(f32),
         cancel: &AtomicBool,
     ) -> Result<Vec<RawSegment>, ProcessingError>;
+
+    fn transcribe_streams(
+        &mut self,
+        streams: &[&[f32]],
+        language: Language,
+        initial_prompt: Option<&str>,
+        progress: &mut dyn FnMut(f32),
+        cancel: &AtomicBool,
+    ) -> Result<Vec<StreamTranscription>, ProcessingError> {
+        let total: usize = streams.iter().map(|samples| samples.len()).sum();
+        let mut completed = 0usize;
+        let mut results = Vec::with_capacity(streams.len());
+        for samples in streams {
+            let base = completed as f32 / total.max(1) as f32;
+            let weight = samples.len() as f32 / total.max(1) as f32;
+            let segments = self.transcribe(
+                samples,
+                language,
+                initial_prompt,
+                &mut |fraction| progress(base + fraction.clamp(0.0, 1.0) * weight),
+                cancel,
+            )?;
+            results.push(StreamTranscription {
+                segments,
+                audio_after_vad_ms: self.audio_after_vad_ms(),
+            });
+            completed += samples.len();
+        }
+        Ok(results)
+    }
+}
+
+pub struct StreamTranscription {
+    pub segments: Vec<RawSegment>,
+    pub audio_after_vad_ms: Option<u64>,
 }
 
 #[derive(Debug)]
@@ -134,7 +171,10 @@ pub fn transcribe_meeting_named(
     let total: u64 = if metadata.import.is_some() {
         metadata.duration_ms
     } else {
-        recordings.iter().map(|r| r.duration_ms).sum()
+        recordings
+            .iter()
+            .map(|r| r.duration_ms * r.files.len() as u64)
+            .sum()
     };
     let prompt = request
         .vocabulary
@@ -155,58 +195,81 @@ pub fn transcribe_meeting_named(
         }
     };
     let detected = language.is_none();
-    let mut placed = Vec::<PlacedSegment>::new();
+    let mut per_source: [Vec<PlacedSegment>; 3] = std::array::from_fn(|_| Vec::new());
     let mut elapsed = 0u64;
     let mut preparation_wall_time = Duration::ZERO;
     let mut whisper_wall_time = Duration::ZERO;
     let mut transcribed_ms = 0u64;
     let mut audio_after_vad_ms = Some(0u64);
-    let mut process = |prepared: PreparedRecording,
-                       duration_ms: u64,
-                       elapsed: u64|
-     -> Result<(), ProcessingError> {
-        let whisper_started = Instant::now();
-        if language.is_none() {
-            language = Some(
-                engine
-                    .detect_language(&prepared.samples_16k)
-                    .map_err(ProcessingError::Engine)?,
-            );
-        }
-        let weight = if total == 0 {
-            1.0
-        } else {
-            duration_ms as f32 / total as f32
+    let mut process =
+        |prepared: Vec<PreparedRecording>, elapsed: u64| -> Result<(), ProcessingError> {
+            let whisper_started = Instant::now();
+            if language.is_none() {
+                if let Some(stream) = prepared
+                    .iter()
+                    .find(|stream| engine.has_speech(&stream.samples_16k))
+                {
+                    language = Some(
+                        engine
+                            .detect_language(&stream.samples_16k)
+                            .map_err(ProcessingError::Engine)?,
+                    );
+                }
+            }
+            let group_ms: u64 = prepared
+                .iter()
+                .map(|stream| stream.samples_16k.len() as u64 * 1000 / 16_000)
+                .sum();
+            let weight = if total == 0 {
+                1.0
+            } else {
+                group_ms as f32 / total as f32
+            };
+            let offset = if total == 0 {
+                0.0
+            } else {
+                elapsed as f32 / total as f32
+            };
+            let streams = prepared
+                .iter()
+                .map(|stream| stream.samples_16k.as_slice())
+                .collect::<Vec<_>>();
+            let results = engine.transcribe_streams(
+                &streams,
+                language.unwrap_or(Language::En),
+                prompt,
+                &mut |p| progress((offset + p.clamp(0.0, 1.0) * weight).clamp(0.0, 1.0)),
+                cancel,
+            )?;
+            if results.len() != prepared.len() {
+                return Err(ProcessingError::Engine(
+                    "Engine returned the wrong number of streams".into(),
+                ));
+            }
+            for (stream, result) in prepared.iter().zip(results) {
+                audio_after_vad_ms = audio_after_vad_ms
+                    .and_then(|total| result.audio_after_vad_ms.map(|duration| total + duration));
+                let index = match stream.speaker {
+                    Speaker::Me => 0,
+                    Speaker::Remote => 1,
+                    Speaker::Unknown => 2,
+                };
+                per_source[index].extend(place_segments(
+                    &result.segments,
+                    stream.duration_ms,
+                    stream.timeline_start_ms,
+                    stream.speaker,
+                ));
+            }
+            whisper_wall_time += whisper_started.elapsed();
+            transcribed_ms += group_ms;
+            Ok(())
         };
-        let offset = if total == 0 {
-            0.0
-        } else {
-            elapsed as f32 / total as f32
-        };
-        let raw = engine.transcribe(
-            &prepared.samples_16k,
-            language.unwrap(),
-            prompt,
-            &mut |p| progress((offset + p.clamp(0.0, 1.0) * weight).clamp(0.0, 1.0)),
-            cancel,
-        )?;
-        audio_after_vad_ms = audio_after_vad_ms
-            .and_then(|total| engine.audio_after_vad_ms().map(|duration| total + duration));
-        whisper_wall_time += whisper_started.elapsed();
-        transcribed_ms += prepared.samples_16k.len() as u64 * 1000 / 16_000;
-        placed.extend(place_segments(
-            &raw,
-            prepared.duration_ms,
-            prepared.timeline_start_ms,
-            &prepared.activity,
-        ));
-        Ok(())
-    };
     if let Some(import) = &metadata.import {
         let preparation_started = Instant::now();
         let prepared = prepare_import(request.meeting_dir, &import.file, cancel)?;
         preparation_wall_time += preparation_started.elapsed();
-        process(prepared, metadata.duration_ms, 0)?;
+        process(vec![prepared], 0)?;
     } else {
         for recording in recordings {
             if cancel.load(Ordering::SeqCst) {
@@ -215,8 +278,8 @@ pub fn transcribe_meeting_named(
             let preparation_started = Instant::now();
             let prepared = prepare_recording(request.meeting_dir, recording, cancel)?;
             preparation_wall_time += preparation_started.elapsed();
-            process(prepared, recording.duration_ms, elapsed)?;
-            elapsed += recording.duration_ms;
+            process(prepared, elapsed)?;
+            elapsed += recording.duration_ms * recording.files.len() as u64;
         }
     }
     if cancel.load(Ordering::SeqCst) {
@@ -240,10 +303,13 @@ pub fn transcribe_meeting_named(
         revision,
         created_at: chrono::Local::now().to_rfc3339(),
         model: request.model.into(),
-        language: language.unwrap(),
-        language_detected: detected,
+        language: language.unwrap_or(Language::En),
+        language_detected: detected && language.is_some(),
         duration_ms: metadata.duration_ms,
-        segments: assign_ids(placed, metadata.duration_ms),
+        segments: assign_ids(
+            per_source.into_iter().flatten().collect(),
+            metadata.duration_ms,
+        ),
     };
     let markdown_tmp = request.meeting_dir.join("transcript.md.tmp");
     let mut published = false;

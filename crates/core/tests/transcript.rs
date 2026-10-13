@@ -1,32 +1,55 @@
+use meeting_minutes_core::participant::{MeetingParticipants, Participants};
 use meeting_minutes_core::transcript::{
-    assign_ids, place_segments, render_markdown, speaker_label, Activity, Language, PlacedSegment,
-    RawSegment, Speaker, Transcript,
+    assign_ids, place_segments, render_markdown, Language, PlacedSegment, RawSegment, Speaker,
+    Transcript,
 };
 use meeting_minutes_core::Library;
-use meeting_minutes_core::participant::{MeetingParticipants, Participants};
 use tempfile::TempDir;
 
 #[test]
 fn participants_follow_settings_merge_and_voice_note_rules() {
-    let segment = |speaker| meeting_minutes_core::transcript::Segment { id: "s00001".into(), start_ms: 0, end_ms: 100, text: "Hi".into(), speaker };
+    let segment = |speaker| meeting_minutes_core::transcript::Segment {
+        id: "s00001".into(),
+        start_ms: 0,
+        end_ms: 100,
+        text: "Hi".into(),
+        speaker,
+    };
     let mut names = MeetingParticipants::new();
-    assert_eq!(Participants::new(names.clone(), None, None, false).name(&segment(Speaker::Me), 1), "Me");
-    assert_eq!(Participants::new(names.clone(), None, Some("Duc"), false).name(&segment(Speaker::Me), 1), "Duc");
-    assert_eq!(Participants::new(names.clone(), None, None, false).name(&segment(Speaker::Remote), 1), "Remote");
-    assert_eq!(Participants::new(names.clone(), None, None, false).name(&segment(Speaker::Unknown), 1), "Unknown");
+    assert_eq!(
+        Participants::new(names.clone(), None, None, false).name(&segment(Speaker::Me), 1),
+        "Me"
+    );
+    assert_eq!(
+        Participants::new(names.clone(), None, Some("Duc"), false).name(&segment(Speaker::Me), 1),
+        "Duc"
+    );
+    assert_eq!(
+        Participants::new(names.clone(), None, None, false).name(&segment(Speaker::Remote), 1),
+        "Remote"
+    );
+    assert_eq!(
+        Participants::new(names.clone(), None, None, false).name(&segment(Speaker::Unknown), 1),
+        "Unknown"
+    );
     names.insert("remote".into(), "Anna".into());
     names.insert("unknown".into(), "Anna".into());
-    assert_eq!(Participants::new(names.clone(), None, None, false).name(&segment(Speaker::Remote), 1), "Anna");
-    assert_eq!(Participants::new(names.clone(), None, None, false).name(&segment(Speaker::Unknown), 1), "Anna");
-    assert_eq!(Participants::new(names, None, Some("Duc"), true).name(&segment(Speaker::Unknown), 1), "Duc");
+    assert_eq!(
+        Participants::new(names.clone(), None, None, false).name(&segment(Speaker::Remote), 1),
+        "Anna"
+    );
+    assert_eq!(
+        Participants::new(names.clone(), None, None, false).name(&segment(Speaker::Unknown), 1),
+        "Anna"
+    );
+    assert_eq!(
+        Participants::new(names, None, Some("Duc"), true).name(&segment(Speaker::Unknown), 1),
+        "Duc"
+    );
 }
 
 #[test]
 fn normalizes_and_places_engine_output() {
-    let activity = Activity {
-        microphone: Some(vec![0.1; 100]),
-        system_audio: Some(vec![0.0; 100]),
-    };
     let placed = place_segments(
         &[
             RawSegment {
@@ -62,7 +85,7 @@ fn normalizes_and_places_engine_output() {
         ],
         2000,
         5000,
-        &activity,
+        Speaker::Me,
     );
     assert_eq!(placed.len(), 3);
     assert_eq!(
@@ -82,74 +105,6 @@ fn normalizes_and_places_engine_output() {
         ),
         (5600, 7000, "two words")
     );
-}
-
-#[test]
-fn labels_source_activity_and_threshold() {
-    let activity = |mic: Option<Vec<f32>>, sys: Option<Vec<f32>>| Activity {
-        microphone: mic,
-        system_audio: sys,
-    };
-    assert_eq!(
-        speaker_label(&activity(Some(vec![0.02; 20]), Some(vec![0.0; 20])), 0, 400),
-        Speaker::Me
-    );
-    assert_eq!(
-        speaker_label(&activity(Some(vec![0.0; 20]), Some(vec![0.02; 20])), 0, 400),
-        Speaker::Remote
-    );
-    assert_eq!(
-        speaker_label(
-            &activity(Some(vec![0.02; 20]), Some(vec![0.02; 20])),
-            0,
-            400
-        ),
-        Speaker::Unknown
-    );
-    assert_eq!(
-        speaker_label(&activity(Some(vec![0.0; 20]), Some(vec![0.0; 20])), 0, 400),
-        Speaker::Unknown
-    );
-    assert_eq!(
-        speaker_label(&activity(None, None), 0, 400),
-        Speaker::Unknown
-    );
-    assert_eq!(
-        speaker_label(
-            &activity(
-                Some([vec![0.02; 3], vec![0.0; 17]].concat()),
-                Some(vec![0.0; 20])
-            ),
-            0,
-            400
-        ),
-        Speaker::Me
-    );
-    assert_eq!(
-        speaker_label(
-            &activity(
-                Some([vec![0.02; 2], vec![0.0; 18]].concat()),
-                Some(vec![0.0; 20])
-            ),
-            0,
-            400
-        ),
-        Speaker::Unknown
-    );
-}
-
-#[test]
-fn long_segment_counts_a_half_second_remote_interjection() {
-    let activity = Activity {
-        microphone: Some(vec![0.02; 500]),
-        system_audio: Some([vec![0.0; 200], vec![0.02; 25], vec![0.0; 275]].concat()),
-    };
-    assert_eq!(speaker_label(&activity, 0, 10_000), Speaker::Unknown);
-    let activity = Activity {
-        microphone: Some(vec![0.02; 500]),
-        system_audio: Some([vec![0.0; 200], vec![0.02; 24], vec![0.0; 276]].concat()),
-    };
-    assert_eq!(speaker_label(&activity, 0, 10_000), Speaker::Me);
 }
 
 #[test]

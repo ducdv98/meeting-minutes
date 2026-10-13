@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use crate::participant::{MeetingParticipants, Participants};
+use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -52,41 +52,6 @@ pub struct RawSegment {
     pub text: String,
 }
 
-pub struct Activity {
-    pub microphone: Option<Vec<f32>>,
-    pub system_audio: Option<Vec<f32>>,
-}
-pub const ACTIVITY_FRAME_MS: u64 = 20;
-pub const ACTIVE_RMS: f32 = 0.01;
-pub const ACTIVE_FRACTION: f32 = 0.15;
-pub const ACTIVE_MIN_FRAMES: usize = 25;
-
-pub fn speaker_label(activity: &Activity, start_ms: u64, end_ms: u64) -> Speaker {
-    fn active(values: &Option<Vec<f32>>, start_ms: u64, end_ms: u64) -> bool {
-        let Some(values) = values else { return false };
-        let start = (start_ms / ACTIVITY_FRAME_MS) as usize;
-        let end = end_ms.div_ceil(ACTIVITY_FRAME_MS) as usize;
-        let frames = values
-            .get(start.min(values.len())..end.min(values.len()))
-            .unwrap_or(&[]);
-        let active = frames.iter().filter(|&&rms| rms >= ACTIVE_RMS).count();
-        !frames.is_empty()
-            && (active >= ACTIVE_MIN_FRAMES
-                || active as f32 / frames.len() as f32 >= ACTIVE_FRACTION)
-    }
-    if activity.microphone.is_none() || activity.system_audio.is_none() {
-        return Speaker::Unknown;
-    }
-    match (
-        active(&activity.microphone, start_ms, end_ms),
-        active(&activity.system_audio, start_ms, end_ms),
-    ) {
-        (true, false) => Speaker::Me,
-        (false, true) => Speaker::Remote,
-        _ => Speaker::Unknown,
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PlacedSegment {
     pub start_ms: u64,
@@ -99,7 +64,7 @@ pub fn place_segments(
     raw: &[RawSegment],
     recording_ms: u64,
     timeline_start_ms: u64,
-    activity: &Activity,
+    speaker: Speaker,
 ) -> Vec<PlacedSegment> {
     let mut result = Vec::new();
     for segment in raw {
@@ -128,7 +93,7 @@ pub fn place_segments(
             start_ms: timeline_start_ms.saturating_add(start),
             end_ms: timeline_start_ms.saturating_add(end),
             text,
-            speaker: speaker_label(activity, start, end),
+            speaker,
         });
     }
     result.sort_by_key(|s| (s.start_ms, s.end_ms));
@@ -155,10 +120,18 @@ pub fn assign_ids(mut placed: Vec<PlacedSegment>, duration_ms: u64) -> Vec<Segme
 }
 
 pub fn render_markdown(title: &str, transcript: &Transcript) -> String {
-    render_markdown_named(title, transcript, &Participants::new(MeetingParticipants::new(), None, None, false))
+    render_markdown_named(
+        title,
+        transcript,
+        &Participants::new(MeetingParticipants::new(), None, None, false),
+    )
 }
 
-pub fn render_markdown_named(title: &str, transcript: &Transcript, participants: &Participants) -> String {
+pub fn render_markdown_named(
+    title: &str,
+    transcript: &Transcript,
+    participants: &Participants,
+) -> String {
     let language = match transcript.language {
         Language::En => "English",
         Language::Vi => "Vietnamese",

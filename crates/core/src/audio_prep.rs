@@ -6,10 +6,7 @@ use std::{
 };
 
 use crate::{
-    capture::Source,
-    meeting_file::RecordingFile,
-    processing::ProcessingError,
-    transcript::{Activity, ACTIVITY_FRAME_MS},
+    capture::Source, meeting_file::RecordingFile, processing::ProcessingError, transcript::Speaker,
 };
 
 pub const WHISPER_RATE: u32 = 16_000;
@@ -18,7 +15,7 @@ const TAPS: usize = 63;
 
 pub struct PreparedRecording {
     pub samples_16k: Vec<f32>,
-    pub activity: Activity,
+    pub speaker: Speaker,
     pub duration_ms: u64,
     pub timeline_start_ms: u64,
 }
@@ -48,7 +45,7 @@ pub(crate) fn prepare_recording(
     meeting_dir: &Path,
     recording: &RecordingFile,
     cancel: &AtomicBool,
-) -> Result<PreparedRecording, ProcessingError> {
+) -> Result<Vec<PreparedRecording>, ProcessingError> {
     if cancel.load(Ordering::SeqCst) {
         return Err(ProcessingError::Cancelled);
     }
@@ -72,102 +69,65 @@ pub(crate) fn prepare_recording(
         }
         Ok(Some(reader))
     }
-    let mut mic = open(meeting_dir, recording, Source::Microphone)?;
-    let mut sys = open(meeting_dir, recording, Source::SystemAudio)?;
-    if mic.is_none() && sys.is_none() {
-        return Err(ProcessingError::NoAudio);
-    }
-    let mut mic_samples = mic.as_mut().map(|reader| reader.samples());
-    let mut sys_samples = sys.as_mut().map(|reader| reader.samples());
-    let mut output = Vec::new();
-    let mut mic_activity = mic_samples.as_ref().map(|_| Vec::new());
-    let mut sys_activity = sys_samples.as_ref().map(|_| Vec::new());
-    let mut mic_power = 0.0f64;
-    let mut sys_power = 0.0f64;
-    let mut frame_count = 0usize;
-    let mut history = VecDeque::with_capacity(TAPS);
-    let taps = coefficients();
-    let mut frames = 0usize;
-    loop {
-        if frames.is_multiple_of(INPUT_RATE as usize) && cancel.load(Ordering::SeqCst) {
-            return Err(ProcessingError::Cancelled);
-        }
-        let m = mic_samples
-            .as_mut()
-            .map(|s| s.next().transpose())
-            .transpose()
-            .map_err(|e| ProcessingError::Audio(e.to_string()))?
-            .flatten();
-        let left = sys_samples
-            .as_mut()
-            .map(|s| s.next().transpose())
-            .transpose()
-            .map_err(|e| ProcessingError::Audio(e.to_string()))?
-            .flatten();
-        let right = if left.is_some() {
-            sys_samples
-                .as_mut()
-                .map(|s| s.next().transpose())
+    let mut prepared = Vec::new();
+    for (source, speaker) in [
+        (Source::Microphone, Speaker::Me),
+        (Source::SystemAudio, Speaker::Remote),
+    ] {
+        let Some(mut reader) = open(meeting_dir, recording, source)? else {
+            continue;
+        };
+        let mut samples = reader.samples();
+        let mut output = Vec::new();
+        let mut history = VecDeque::with_capacity(TAPS);
+        let taps = coefficients();
+        let mut frames = 0usize;
+        loop {
+            if frames.is_multiple_of(INPUT_RATE as usize) && cancel.load(Ordering::SeqCst) {
+                return Err(ProcessingError::Cancelled);
+            }
+            let Some(first) = samples
+                .next()
                 .transpose()
                 .map_err(|e| ProcessingError::Audio(e.to_string()))?
-                .flatten()
-        } else {
-            None
-        };
-        if m.is_none() && left.is_none() {
-            break;
-        }
-        if sys_samples.is_some() && left.is_some() && right.is_none() {
-            return Err(ProcessingError::Audio("Incomplete stereo frame".into()));
-        }
-        let microphone = m.unwrap_or(0) as f32 / 32767.0;
-        let system = (left.unwrap_or(0) as f32 + right.unwrap_or(0) as f32) / 65534.0;
-        mic_power += (microphone as f64).powi(2);
-        sys_power += (system as f64).powi(2);
-        frame_count += 1;
-        let mixed = (microphone + system).clamp(-1.0, 1.0);
-        history.push_front(mixed);
-        if history.len() > TAPS {
-            history.pop_back();
-        }
-        if frames.is_multiple_of((INPUT_RATE / WHISPER_RATE) as usize) {
-            output.push(
-                taps.iter()
-                    .zip(history.iter())
-                    .map(|(tap, sample)| tap * sample)
-                    .sum(),
-            );
-        }
-        frames += 1;
-        if frame_count == (INPUT_RATE as u64 * ACTIVITY_FRAME_MS / 1000) as usize {
-            if let Some(values) = &mut mic_activity {
-                values.push((mic_power / frame_count as f64).sqrt() as f32);
+            else {
+                break;
+            };
+            let sample = if source == Source::SystemAudio {
+                let second = samples
+                    .next()
+                    .transpose()
+                    .map_err(|e| ProcessingError::Audio(e.to_string()))?
+                    .ok_or_else(|| ProcessingError::Audio("Incomplete stereo frame".into()))?;
+                (first as f32 + second as f32) / 65534.0
+            } else {
+                first as f32 / 32767.0
+            };
+            history.push_front(sample);
+            if history.len() > TAPS {
+                history.pop_back();
             }
-            if let Some(values) = &mut sys_activity {
-                values.push((sys_power / frame_count as f64).sqrt() as f32);
+            if frames.is_multiple_of((INPUT_RATE / WHISPER_RATE) as usize) {
+                output.push(
+                    taps.iter()
+                        .zip(history.iter())
+                        .map(|(tap, sample)| tap * sample)
+                        .sum(),
+                );
             }
-            mic_power = 0.0;
-            sys_power = 0.0;
-            frame_count = 0;
+            frames += 1;
         }
+        prepared.push(PreparedRecording {
+            samples_16k: output,
+            speaker,
+            duration_ms: recording.duration_ms,
+            timeline_start_ms: recording.timeline_start_ms,
+        });
     }
-    if frame_count > 0 {
-        if let Some(values) = &mut mic_activity {
-            values.push((mic_power / frame_count as f64).sqrt() as f32);
-        }
-        if let Some(values) = &mut sys_activity {
-            values.push((sys_power / frame_count as f64).sqrt() as f32);
-        }
+    if prepared.is_empty() {
+        return Err(ProcessingError::NoAudio);
     }
-    Ok(PreparedRecording {
-        samples_16k: output,
-        activity: Activity {
-            microphone: mic_activity,
-            system_audio: sys_activity,
-        },
-        duration_ms: recording.duration_ms,
-        timeline_start_ms: recording.timeline_start_ms,
-    })
+    Ok(prepared)
 }
 
 /// Exact polyphase windowed-sinc resampler from an import's rate to 16 kHz. Output n sits at input position n * down / up,
@@ -299,20 +259,21 @@ pub fn prepare_import(
     }
     let mut resampler: Option<ImportResampler> = None;
     let mut rate = 0u32;
-    crate::import::decode_audio(&meeting_dir.join(file), cancel, &mut |samples, sample_rate| {
-        rate = sample_rate;
-        resampler
-            .get_or_insert_with(|| ImportResampler::new(sample_rate))
-            .push(samples);
-    })?;
+    crate::import::decode_audio(
+        &meeting_dir.join(file),
+        cancel,
+        &mut |samples, sample_rate| {
+            rate = sample_rate;
+            resampler
+                .get_or_insert_with(|| ImportResampler::new(sample_rate))
+                .push(samples);
+        },
+    )?;
     let resampler = resampler.ok_or(ProcessingError::NoAudio)?;
     let frames = resampler.frames;
     Ok(PreparedRecording {
         samples_16k: resampler.finish(),
-        activity: Activity {
-            microphone: None,
-            system_audio: None,
-        },
+        speaker: Speaker::Unknown,
         duration_ms: frames.saturating_mul(1000) / rate as u64,
         timeline_start_ms: 0,
     })

@@ -152,7 +152,10 @@ fn preparation_preserves_speech_tone_and_rejects_high_frequency_alias() {
     let high = prepare_import(temp.path(), "high.wav", &cancel).unwrap();
     assert!((tone.samples_16k.len() as i64 - 16_000).abs() < 160);
     assert_eq!(tone.duration_ms, 1000);
-    assert!(tone.activity.microphone.is_none() && tone.activity.system_audio.is_none());
+    assert_eq!(
+        tone.speaker,
+        meeting_minutes_core::transcript::Speaker::Unknown
+    );
     let rms = |samples: &[f32]| {
         (samples
             .iter()
