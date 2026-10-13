@@ -50,7 +50,7 @@ The reminder that other participants may need to consent to being recorded, plus
 The spoken language of a Meeting (English or Vietnamese), chosen by the user or detected. One language per Meeting.
 
 **Processing**:
-Turning a Meeting's audio into a Transcript, then a Summary and Action items. Local Processing may start automatically after Stop; cloud Processing only starts on an explicit user action.
+Turning a Meeting's audio into a Transcript, then a Summary and Action items. Processing starts automatically after Stop, in the cloud when the user has set up a provider key and locally otherwise. One Meeting's Transcript may come partly from each.
 
 **Transcript**:
 The ordered list of Segments for a Meeting. Re-transcribing produces a new **Revision**; it never silently rewrites the old one. Editing a Segment's text keeps its ID and Revision.
@@ -61,6 +61,10 @@ The user's list of names and terms given to transcription as a hint. A Meeting's
 **Segment**:
 A span of transcribed speech with an app-assigned stable ID and a millisecond range on the Meeting timeline. A Segment is about one sentence from one Source: it never crosses a change of Speaker label, a fragment too short to stand alone joins a neighbour, and an overlong sentence is split at its longest pause. Segments from different Sources may overlap in time when people talk over each other.
 _Avoid_: Line, utterance, chunk
+
+**Correction**:
+The step of Processing that fixes a Transcript's wording (names, Vocabulary terms, punctuation, diacritics) before its Revision is published. It never changes a Segment's time range or Source, and never merges or splits Segments. If it fails, the uncorrected text is published.
+_Avoid_: Cleanup, polish, rewrite
 
 **Draft**:
 The Segments shown while a Meeting is still being transcribed, before its Revision is published. A Draft is read-only and cannot be cited, asked about or searched; it is replaced by the Revision when Processing completes, and discarded if Processing fails.

@@ -1,5 +1,7 @@
 # Fast local transcription on the GPU; cloud transcription deferred
 
+> Superseded by ADR 0011 for cloud transcription: it now runs on the user's own free Groq key. The local speed-ups here still apply to the local fallback.
+
 Before the first release, local transcription was too slow: Medium on CPU took about 30 minutes for a 16-minute Meeting on a Ryzen 7 8745H. We considered a cloud transcription default, with an app-owned Cloudflare Workers AI or Groq key behind a rate-limited relay. We rejected it for now because of its ongoing cost and the backend it would need. Instead we speed up the local engine:
 - a Vulkan GPU build of whisper.cpp, falling back to CPU;
 - Large v3 turbo (`q5_0`) in place of Medium;
