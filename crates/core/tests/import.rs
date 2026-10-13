@@ -216,6 +216,7 @@ fn imported_audio_transcribes_with_unknown_speaker() {
             meeting_dir: &folder,
             model: "small",
             vocabulary: &[],
+            default_language: None,
         },
         &mut FakeEngine,
         &mut |_| {},

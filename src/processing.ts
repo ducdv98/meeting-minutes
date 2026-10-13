@@ -17,12 +17,15 @@ export function processingStageLabel(job: ProcessingJob): string {
   }
 }
 export const MODELS = [
-  { name: "base", size_mb: 148 },
-  { name: "small", size_mb: 488 },
-  { name: "medium", size_mb: 1534 },
-  { name: "large-v3-turbo", size_mb: 1625 },
+  { name: "base", label: "Base", size_mb: 148, description: "Fastest. Fine for clear English." },
+  { name: "small", label: "Small", size_mb: 488, description: "Good balance for English and Vietnamese." },
+  { name: "medium", label: "Medium", size_mb: 1534, description: "More accurate and slower." },
+  { name: "large-v3-turbo", label: "Large v3 turbo", size_mb: 1625, description: "Most accurate. Needs 16 GB of memory." },
 ] as const;
-export interface Settings { recording_notice_acknowledged: boolean; auto_process: boolean; model: string; vocabulary: string[]; ai: AiSettings }
+export function modelSizeLabel(sizeMb: number) {
+  return sizeMb < 1000 ? `${sizeMb} MB` : `${(sizeMb / 1000).toFixed(1)} GB`;
+}
+export interface Settings { recording_notice_acknowledged: boolean; auto_process: boolean; model: string; vocabulary: string[]; language: Language | null; ai: AiSettings }
 
 export const processingStatus = () => invoke<ProcessingStatus>("processing_status");
 export const enqueueTranscription = (meetingId: string, model?: string) => invoke<ProcessingStatus>("transcribe_meeting", { meetingId, model: model ?? null });
@@ -31,5 +34,6 @@ export const dismissProcessing = (meetingId: string) => invoke<ProcessingStatus>
 export const meetingTranscript = (meetingId: string) => invoke<Transcript | null>("meeting_transcript", { meetingId });
 export const setMeetingLanguage = (meetingId: string, language: Language | null) => invoke<void>("set_meeting_language", { meetingId, language });
 export const getSettings = () => invoke<Settings>("get_settings");
-export const updateSettings = (autoProcess: boolean, model: string, vocabulary: string[]) => invoke<Settings>("update_settings", { autoProcess, model, vocabulary });
+export const updateSettings = (autoProcess: boolean, model: string, vocabulary: string[], language: Language | null) => invoke<Settings>("update_settings", { autoProcess, model, vocabulary, language });
+export const installedModels = () => invoke<string[]>("installed_models");
 export const onProcessingStatus = (handler: (status: ProcessingStatus) => void): Promise<UnlistenFn> => listen<ProcessingStatus>("processing-status", (event) => handler(event.payload));

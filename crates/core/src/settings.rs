@@ -1,4 +1,4 @@
-use crate::ai::ProviderKind;
+use crate::{ai::ProviderKind, transcript::Language};
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
@@ -13,6 +13,8 @@ pub struct Settings {
     pub auto_process: bool,
     pub model: String,
     pub vocabulary: Vec<String>,
+    /// Default Meeting language; `None` detects it.
+    pub language: Option<Language>,
     pub ai: AiSettings,
 }
 
@@ -23,6 +25,7 @@ impl Default for Settings {
             auto_process: true,
             model: "small".into(),
             vocabulary: Vec::new(),
+            language: None,
             ai: AiSettings::default(),
         }
     }
@@ -88,5 +91,6 @@ mod tests {
         assert!(settings.auto_process);
         assert_eq!(settings.model, "small");
         assert!(settings.vocabulary.is_empty());
+        assert_eq!(settings.language, None);
     }
 }

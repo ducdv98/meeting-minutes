@@ -103,6 +103,7 @@ fn transcribes_two_recordings_on_timeline_and_creates_revisions() {
         meeting_dir: &dir,
         model: "small",
         vocabulary: &vocabulary,
+        default_language: None,
     };
     let first =
         transcribe_meeting(&request, &mut engine, &mut |_| {}, &AtomicBool::new(false)).unwrap();
@@ -175,6 +176,7 @@ fn stale_json_temp_is_not_a_revision_and_existing_revision_is_preserved() {
         meeting_dir: &dir,
         model: "small",
         vocabulary: &[],
+        default_language: None,
     };
     let first =
         transcribe_meeting(&request, &mut engine, &mut |_| {}, &AtomicBool::new(false)).unwrap();
@@ -211,6 +213,7 @@ fn chosen_meeting_language_skips_detection() {
             meeting_dir: &dir,
             model: "small",
             vocabulary: &[],
+            default_language: None,
         },
         &mut engine,
         &mut |_| {},
@@ -220,6 +223,64 @@ fn chosen_meeting_language_skips_detection() {
     assert_eq!(engine.detected, 0);
     assert_eq!(transcript.language, Language::Vi);
     assert!(!transcript.language_detected);
+}
+
+#[test]
+fn default_language_from_settings_skips_detection() {
+    let (_temp, dir) = saved_meeting();
+    let mut engine = FakeEngine {
+        calls: 0,
+        prompts: vec![],
+        detected: 0,
+        lengths: vec![],
+    };
+    let transcript = transcribe_meeting(
+        &TranscribeRequest {
+            meeting_dir: &dir,
+            model: "small",
+            vocabulary: &[],
+            default_language: Some(Language::En),
+        },
+        &mut engine,
+        &mut |_| {},
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    assert_eq!(engine.detected, 0);
+    assert_eq!(transcript.language, Language::En);
+    assert!(!transcript.language_detected);
+}
+
+#[test]
+fn meeting_language_wins_over_default_language() {
+    let (temp, dir) = saved_meeting();
+    let id = dir.file_name().unwrap().to_str().unwrap();
+    let library = Library::open(
+        temp.path().join("Library"),
+        temp.path().join("index.sqlite3"),
+    )
+    .unwrap();
+    library.set_language(id, Some(Language::Vi)).unwrap();
+    let mut engine = FakeEngine {
+        calls: 0,
+        prompts: vec![],
+        detected: 0,
+        lengths: vec![],
+    };
+    let transcript = transcribe_meeting(
+        &TranscribeRequest {
+            meeting_dir: &dir,
+            model: "small",
+            vocabulary: &[],
+            default_language: Some(Language::En),
+        },
+        &mut engine,
+        &mut |_| {},
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    assert_eq!(engine.detected, 0);
+    assert_eq!(transcript.language, Language::Vi);
 }
 
 #[test]
@@ -235,6 +296,7 @@ fn cancellation_and_no_audio_do_not_write_a_transcript() {
         meeting_dir: &dir,
         model: "small",
         vocabulary: &[],
+        default_language: None,
     };
     assert!(matches!(
         transcribe_meeting(&request, &mut engine, &mut |_| {}, &AtomicBool::new(true)),
@@ -274,6 +336,7 @@ fn cancellation_and_no_audio_do_not_write_a_transcript() {
         meeting_dir: temp.path(),
         model: "small",
         vocabulary: &[],
+        default_language: None,
     };
     assert!(matches!(
         transcribe_meeting(&request, &mut engine, &mut |_| {}, &AtomicBool::new(false)),
@@ -336,6 +399,7 @@ fn prepared_tone(hz: f32) -> Vec<f32> {
             meeting_dir: &dir,
             model: "small",
             vocabulary: &[],
+            default_language: None,
         },
         &mut engine,
         &mut |_| {},

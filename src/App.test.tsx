@@ -9,7 +9,8 @@ import { onRecordingStatus, recordingStatus } from "./recording";
 vi.mock("./importing", () => ({ pickAudioFiles: vi.fn(), importStatus: vi.fn(), dismissImportErrors: vi.fn(), onImportStatus: vi.fn(), onImportHover: vi.fn() }));
 vi.mock("./library", async (original) => ({ ...(await original<typeof import("./library")>()), rescanLibrary: vi.fn(), searchLibrary: vi.fn(), deleteMeeting: vi.fn(), meetingDetail: vi.fn() }));
 vi.mock("./RecordingBar", () => ({ default: () => null }));
-vi.mock("./SettingsView", () => ({ default: ({ onBack }: { onBack: () => void }) => <section><h1>Settings pane</h1><button onClick={onBack}>Back to Library</button></section> }));
+vi.mock("./SettingsView", () => ({ default: () => <section><h1>Settings pane</h1></section> }));
+vi.mock("./HelpView", () => ({ default: () => <section><h1>Help pane</h1></section> }));
 vi.mock("./processing", async (importOriginal) => ({ ...(await importOriginal<typeof import("./processing")>()), processingStatus: vi.fn(), onProcessingStatus: vi.fn(), cancelProcessing: vi.fn() }));
 vi.mock("./MeetingView", () => ({ default: ({ id, openAt, onBack }: { id: string; openAt?: { segment_id: string }; onBack: () => void }) => (
   <section><h1>Meeting {id}</h1>{openAt && <p>Segment {openAt.segment_id}</p>}<button type="button" onClick={onBack}>Back to Library</button></section>
@@ -237,7 +238,7 @@ it("focuses sidebar search with Ctrl K and shows results in the main pane", asyn
   expect(screen.getByRole("list", { name: "Search results" }).textContent).toContain("Planning");
 });
 
-it("groups Meetings, marks the selected row, and opens Settings in the main pane", async () => {
+it("groups Meetings, marks the selected row, and opens Settings and Help in the main pane", async () => {
   const now = new Date();
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 9).toISOString();
   const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 9).toISOString();
@@ -254,4 +255,10 @@ it("groups Meetings, marks the selected row, and opens Settings in the main pane
   fireEvent.click(screen.getByRole("button", { name: "Settings" }));
   expect(screen.getByRole("heading", { name: "Settings pane" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "Today meeting" }).getAttribute("aria-current")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Help" }));
+  expect(screen.getByRole("heading", { name: "Help pane" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Help" }).getAttribute("aria-current")).toBe("page");
+  expect(screen.getByRole("button", { name: "Settings" }).getAttribute("aria-current")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Yesterday meeting" }));
+  expect(screen.queryByRole("heading", { name: "Help pane" })).toBeNull();
 });

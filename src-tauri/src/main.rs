@@ -575,13 +575,24 @@ fn update_settings(
     auto_process: bool,
     model: String,
     vocabulary: Vec<String>,
+    language: Option<Language>,
 ) -> Result<Settings, String> {
     let mut settings = Settings::load(&path.0);
     settings.auto_process = auto_process;
     settings.model = model;
     settings.vocabulary = vocabulary;
+    settings.language = language;
     settings.save(&path.0).map_err(|e| e.to_string())?;
     Ok(settings)
+}
+
+#[tauri::command]
+fn installed_models(models_dir: State<'_, ModelsDir>) -> Vec<&'static str> {
+    MODELS
+        .iter()
+        .filter(|info| models::is_installed(&models_dir.0, info))
+        .map(|info| info.name)
+        .collect()
 }
 
 fn current_ai_status(path: &SettingsPath, secrets: &Secrets) -> AiStatus {
@@ -1205,6 +1216,7 @@ fn processing_worker(app: AppHandle) {
                     meeting_dir: &meeting_dir,
                     model: model.name,
                     vocabulary: &settings.vocabulary,
+                    default_language: settings.language,
                 },
                 &mut engine,
                 &mut |fraction| {
@@ -1363,6 +1375,35 @@ fn open_meeting_folder(
     {
         let _ = folder;
         Err("Opening the Meeting folder is available on Windows".into())
+    }
+}
+
+/// The app's fixed outside links, shown in Help.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum OutsideLink {
+    Privacy,
+    Support,
+}
+
+/// Opens an outside link in the default browser or mail app.
+#[tauri::command]
+fn open_link(link: OutsideLink) -> Result<(), String> {
+    let url = match link {
+        OutsideLink::Privacy => "https://meeting-minutes.tech/privacy",
+        OutsideLink::Support => "mailto:admin@meeting-minutes.tech",
+    };
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer.exe")
+            .arg(url)
+            .spawn()
+            .map_err(|error| format!("Couldn't open {url}: {error}"))?;
+        Ok(())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Err(format!("Opening {url} is available on Windows"))
     }
 }
 
@@ -2217,6 +2258,7 @@ fn main() {
             search_library,
             meeting_detail,
             open_meeting_folder,
+            open_link,
             rename_meeting,
             delete_meeting,
             recording_status,
@@ -2237,6 +2279,7 @@ fn main() {
             set_meeting_language,
             get_settings,
             update_settings,
+            installed_models,
             ai_status,
             list_ai_models,
             save_api_key,

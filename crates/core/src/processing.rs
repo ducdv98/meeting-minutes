@@ -78,6 +78,8 @@ pub struct TranscribeRequest<'a> {
     pub meeting_dir: &'a Path,
     pub model: &'a str,
     pub vocabulary: &'a [String],
+    /// Settings' Meeting language, used when the Meeting has none of its own.
+    pub default_language: Option<Language>,
 }
 
 pub fn transcribe_meeting(
@@ -118,7 +120,7 @@ pub fn transcribe_meeting(
     let mut language = match metadata.language.as_deref() {
         Some("en") => Some(Language::En),
         Some("vi") => Some(Language::Vi),
-        None => None,
+        None => request.default_language,
         Some(other) => {
             return Err(ProcessingError::Engine(format!(
                 "Unsupported Meeting language: {other}"
