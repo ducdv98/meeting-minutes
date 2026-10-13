@@ -1,6 +1,6 @@
 # Correction before publishing
 
-Status: ready-for-agent
+Status: ready-for-human
 Spec: ../spec.md
 Blocked by: 04
 

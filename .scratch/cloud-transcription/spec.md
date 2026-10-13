@@ -1,6 +1,6 @@
 # Cloud transcription spec
 
-Status: ready-for-agent
+Status: ready-for-human
 
 Make Transcripts more accurate and faster on any laptop, at no cost to us, by using each user's own free Groq and Gemini API keys. Vocabulary: `CONTEXT.md` (**Processing**, **Correction**, **Segment**, **Draft**, **Revision**, **Chunk**, **Vocabulary**). Decisions: ADR 0011 (this feature), ADR 0002 (amended), ADR 0008 (superseded for cloud), ADR 0010 (background transcription).
 

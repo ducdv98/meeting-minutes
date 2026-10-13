@@ -1,6 +1,6 @@
 # Cloud transcription during a Recording
 
-Status: ready-for-agent
+Status: ready-for-human
 Spec: ../spec.md
 Blocked by: 03
 

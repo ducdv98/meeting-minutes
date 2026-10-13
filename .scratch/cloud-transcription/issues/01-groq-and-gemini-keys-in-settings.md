@@ -1,6 +1,6 @@
 # Groq and Gemini keys in Settings
 
-Status: ready-for-agent
+Status: ready-for-human
 Spec: ../spec.md
 
 ## What
