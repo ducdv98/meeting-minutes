@@ -1,7 +1,7 @@
 use meeting_minutes_core::{
     diagnostics::{log_event, LogEvent},
     processing::{ProcessingError, SpeechEngine, StreamTranscription},
-    transcript::{Language, RawSegment},
+    transcript::{Language, RawSegment, RawWord},
 };
 use std::{
     path::Path,
@@ -158,11 +158,10 @@ struct SpeechAudio {
 impl SpeechAudio {
     fn original_ms(&self, processed_ms: u64) -> u64 {
         let sample = (processed_ms as usize).saturating_mul(SAMPLE_RATE) / 1000;
-        let Some(part) = self
+        let index = self
             .mapping
-            .iter()
-            .find(|part| sample <= part.processed_end)
-        else {
+            .partition_point(|part| part.processed_end < sample);
+        let Some(part) = self.mapping.get(index) else {
             return self.mapping.last().map_or(0, |part| {
                 (part.original_end as u64) * 1000 / SAMPLE_RATE as u64
             });
@@ -312,6 +311,47 @@ struct TranscriptionSettings<'a> {
     threads: usize,
 }
 
+struct TokenPiece {
+    text: Vec<u8>,
+    start_ms: u64,
+    end_ms: u64,
+}
+
+fn join_token_pieces(pieces: Vec<TokenPiece>) -> Vec<RawWord> {
+    let mut words = Vec::new();
+    let mut bytes = Vec::new();
+    let mut start = 0;
+    let mut end = 0;
+    let flush = |words: &mut Vec<RawWord>, bytes: &mut Vec<u8>, start, end| {
+        if !bytes.is_empty() {
+            words.push(RawWord {
+                start_ms: start,
+                end_ms: end,
+                text: String::from_utf8_lossy(bytes).into_owned(),
+            });
+            bytes.clear();
+        }
+    };
+    for piece in pieces {
+        if piece.text.starts_with(b"<|") && piece.text.ends_with(b"|>") {
+            continue;
+        }
+        for byte in piece.text {
+            if byte.is_ascii_whitespace() {
+                flush(&mut words, &mut bytes, start, end);
+            } else {
+                if bytes.is_empty() {
+                    start = piece.start_ms;
+                }
+                bytes.push(byte);
+                end = end.max(piece.end_ms);
+            }
+        }
+    }
+    flush(&mut words, &mut bytes, start, end);
+    words
+}
+
 fn transcribe_with_state(
     mut state: WhisperState,
     samples_16k: &[f32],
@@ -342,6 +382,7 @@ fn transcribe_with_state(
     params.set_print_timestamps(false);
     params.set_suppress_blank(true);
     params.set_suppress_nst(true);
+    params.set_token_timestamps(true);
     if let Some(prompt) = settings.prompt {
         params.set_initial_prompt(prompt);
     }
@@ -379,19 +420,49 @@ fn transcribe_with_state(
     state
         .as_iter()
         .map(|segment| {
+            let map_time = |centiseconds: i64| {
+                let ms = (centiseconds.max(0) as u64) * 10;
+                speech.as_ref().map_or(ms, |audio| audio.original_ms(ms))
+            };
+            let start_ms = map_time(segment.start_timestamp());
+            let end_ms = map_time(segment.end_timestamp());
+            let text = segment
+                .to_str_lossy()
+                .map_err(|e| ProcessingError::Engine(e.to_string()))?
+                .into_owned();
+            let pieces = (0..segment.n_tokens())
+                .map(|index| {
+                    let token = segment.get_token(index).unwrap();
+                    let data = token.token_data();
+                    Ok(TokenPiece {
+                        text: token
+                            .to_bytes()
+                            .map_err(|e| ProcessingError::Engine(e.to_string()))?
+                            .to_vec(),
+                        start_ms: map_time(data.t0),
+                        end_ms: map_time(data.t1),
+                    })
+                })
+                .collect::<Result<Vec<_>, ProcessingError>>()?;
+            let words = join_token_pieces(pieces);
+            let normalized = |value: &str| value.split_whitespace().collect::<Vec<_>>().join(" ");
+            let joined = words
+                .iter()
+                .map(|word| word.text.as_str())
+                .collect::<Vec<_>>()
+                .join(" ");
+            let valid_words = words
+                .iter()
+                .all(|word| word.start_ms.max(start_ms) < word.end_ms.min(end_ms));
             Ok(RawSegment {
-                start_ms: speech.as_ref().map_or_else(
-                    || (segment.start_timestamp().max(0) as u64) * 10,
-                    |audio| audio.original_ms((segment.start_timestamp().max(0) as u64) * 10),
-                ),
-                end_ms: speech.as_ref().map_or_else(
-                    || (segment.end_timestamp().max(0) as u64) * 10,
-                    |audio| audio.original_ms((segment.end_timestamp().max(0) as u64) * 10),
-                ),
-                text: segment
-                    .to_str_lossy()
-                    .map_err(|e| ProcessingError::Engine(e.to_string()))?
-                    .into_owned(),
+                start_ms,
+                end_ms,
+                words: if valid_words && normalized(&joined) == normalized(&text) {
+                    words
+                } else {
+                    Vec::new()
+                },
+                text,
             })
         })
         .collect()
@@ -624,6 +695,58 @@ impl SpeechEngine for WhisperEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn token_pieces_join_subwords_and_keep_word_timestamps() {
+        let pieces = vec![
+            TokenPiece {
+                text: b" Hel".to_vec(),
+                start_ms: 0,
+                end_ms: 400,
+            },
+            TokenPiece {
+                text: b"lo".to_vec(),
+                start_ms: 400,
+                end_ms: 600,
+            },
+            TokenPiece {
+                text: b" world".to_vec(),
+                start_ms: 700,
+                end_ms: 1100,
+            },
+            TokenPiece {
+                text: b"!".to_vec(),
+                start_ms: 1100,
+                end_ms: 1200,
+            },
+        ];
+        let words = join_token_pieces(pieces);
+        assert_eq!(
+            words
+                .iter()
+                .map(|word| (word.start_ms, word.end_ms, word.text.as_str()))
+                .collect::<Vec<_>>(),
+            vec![(0, 600, "Hello"), (700, 1200, "world!")]
+        );
+    }
+
+    #[test]
+    fn token_pieces_can_split_a_vietnamese_character_between_tokens() {
+        let words = join_token_pieces(vec![
+            TokenPiece {
+                text: b" \xe1\xba".to_vec(),
+                start_ms: 100,
+                end_ms: 200,
+            },
+            TokenPiece {
+                text: b"\xa1.".to_vec(),
+                start_ms: 200,
+                end_ms: 300,
+            },
+        ]);
+        assert_eq!(words[0].text, "ạ.");
+        assert_eq!((words[0].start_ms, words[0].end_ms), (100, 300));
+    }
 
     #[test]
     fn chooses_largest_gpu_and_keeps_ggml_order_for_ties() {
