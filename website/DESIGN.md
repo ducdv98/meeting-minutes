@@ -36,7 +36,7 @@ In this order:
 6. **Roadmap.** A dated list, one row per milestone, month and year, future items marked "target": Mac App Store, December 2026 (target); Windows Free Beta, December 2026 (target); later items only when dated. Each row shows its status (Shipped, In progress, Target) as text, not colour alone.
 7. **FAQ.** Full-width accordion rows with 1px `--line` dividers and a `+` that rotates to `×`. Questions: Is it free? Where are my meetings stored? Does anything get uploaded? Why does Windows warn me when I install it? Which languages does it understand? Do I need a powerful PC? How do I uninstall it, and do I keep my meetings?
 8. **Closing call to action.** Centred: one line in `--heading-lg` and the same primary action as the hero (or the target date when nothing is published).
-9. **Footer.** Wordmark, one sentence, links (Privacy, Support, Changelog, GitHub), "Made by Duc Dao", `support@meeting-minutes.tech`, and the year.
+9. **Footer.** Wordmark, one sentence, links (Privacy, Support, Changelog, GitHub), "Made by Duc Dao", `admin@meeting-minutes.tech`, and the year.
 
 Do not add customer logos, metrics, testimonials, use-case pages or pricing until there is something real to show.
 

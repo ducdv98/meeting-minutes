@@ -134,7 +134,7 @@ function shell(title, description, body, current = '') {
 <main id="main">${body}</main>
 <footer class="site-foot"><div class="wrap footer-grid"><div>${brand()}<p>A meeting recorder for Windows that keeps your meetings on your PC. Made by Duc Dao.</p></div>
 <nav aria-label="Footer navigation">${nav}<a href="https://github.com/ducdv98/meeting-minutes">GitHub</a></nav>
-<div class="legal"><span>© 2026 Duc Dao</span><a href="mailto:support@meeting-minutes.tech">support@meeting-minutes.tech</a></div></div></footer></body></html>`;
+<div class="legal"><span>© 2026 Duc Dao</span><a href="mailto:admin@meeting-minutes.tech">admin@meeting-minutes.tech</a></div></div></footer></body></html>`;
 }
 
 async function write(path, value) { await mkdir(dirname(path), { recursive: true }); await writeFile(path, value); }
@@ -150,7 +150,7 @@ await write(join(dist, 'support', 'index.html'), shell('Support', 'Get help with
 await write(join(dist, 'privacy', 'index.html'), shell('Privacy', 'How Meeting Minutes handles your meetings and data.', privacy, '/privacy/'));
 await write(join(dist, 'changelog', 'index.html'), shell('Changelog', 'Published Meeting Minutes releases.', changelog, '/changelog/'));
 await write(join(dist, '404.html'), shell('Page not found', 'This page could not be found.', '<article class="doc"><h1>Page not found</h1><p>The page you requested does not exist. <a href="/">Go to the home page</a>.</p></article>'));
-await write(join(dist, 'llms.txt'), `# Meeting Minutes\n\nMeeting Minutes is a local-first Windows 11 app by Duc Dao. It records Microphone and System audio from meetings, transcribes English or Vietnamese on the PC, and provides cited Summaries and Answers. No account or telemetry.\n\nWindows Free Beta: ${latest ? `${latest.version}, published ${latest.date}; download: ${latest.url}` : 'December 2026 (target); no public download yet'}.\nMac App Store: December 2026 (target).\n\nHome: https://meeting-minutes.tech/\nPrivacy: https://meeting-minutes.tech/privacy/\nSupport: https://meeting-minutes.tech/support/\nChangelog: https://meeting-minutes.tech/changelog/\nRepository: https://github.com/ducdv98/meeting-minutes\nContact: support@meeting-minutes.tech\n`);
+await write(join(dist, 'llms.txt'), `# Meeting Minutes\n\nMeeting Minutes is a local-first Windows 11 app by Duc Dao. It records Microphone and System audio from meetings, transcribes English or Vietnamese on the PC, and provides cited Summaries and Answers. No account or telemetry.\n\nWindows Free Beta: ${latest ? `${latest.version}, published ${latest.date}; download: ${latest.url}` : 'December 2026 (target); no public download yet'}.\nMac App Store: December 2026 (target).\n\nHome: https://meeting-minutes.tech/\nPrivacy: https://meeting-minutes.tech/privacy/\nSupport: https://meeting-minutes.tech/support/\nChangelog: https://meeting-minutes.tech/changelog/\nRepository: https://github.com/ducdv98/meeting-minutes\nContact: admin@meeting-minutes.tech\n`);
 
 const ranges = { latin: 'U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD',
   'latin-ext': 'U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20CF,U+2113,U+2C60-2C7F,U+A720-A7FF',

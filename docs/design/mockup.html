@@ -647,7 +647,7 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 20px; resize: ver
         <section class="screen" data-screen="help">
           <div class="form-page"><div class="form-inner">
             <div class="about-head"><div class="wm" role="img" aria-label="Meeting Minutes"></div><span class="beta">Beta</span></div>
-            <dl class="kv num"><dt>Version</dt><dd>0.1.0 · up to date</dd><dt>Made by</dt><dd>Duc Dao</dd><dt>Support</dt><dd>support@meeting-minutes.tech</dd><dt>Privacy</dt><dd><span class="textlink">meeting-minutes.tech/privacy</span></dd></dl>
+            <dl class="kv num"><dt>Version</dt><dd>0.1.0 · up to date</dd><dt>Made by</dt><dd>Duc Dao</dd><dt>Support</dt><dd>admin@meeting-minutes.tech</dd><dt>Privacy</dt><dd><span class="textlink">meeting-minutes.tech/privacy</span></dd></dl>
             <div class="fsec">
               <h3>Keyboard shortcuts</h3>
               <div class="card shortcuts num">
@@ -856,7 +856,7 @@ Model: small (downloaded) · Provider: ollama
           <h2>Recording other people</h2>
           <p>You are responsible for telling people you record them and for following the consent rules where you and they are.</p>
           <h2>Contact</h2>
-          <p>Duc Dao, support@meeting-minutes.tech</p>
+          <p>Duc Dao, admin@meeting-minutes.tech</p>
         </article>
       </div>
 
@@ -865,7 +865,7 @@ Model: small (downloaded) · Provider: ollama
           <h1>Support</h1>
           <div class="updated">Free Beta · replies within a few days</div>
           <h2>Write to us</h2>
-          <div class="copybox"><code>support@meeting-minutes.tech</code><button class="btn btn-secondary" style="height:30px" id="copyMail"><svg class="i"><use href="#i-copy"/></svg> Copy</button></div>
+          <div class="copybox"><code>admin@meeting-minutes.tech</code><button class="btn btn-secondary" style="height:30px" id="copyMail"><svg class="i"><use href="#i-copy"/></svg> Copy</button></div>
           <p>Or open an issue on GitHub. Both work; GitHub is public, email is not.</p>
           <h2>Include diagnostics</h2>
           <ol class="steps"><li>In the app, open Help.</li><li>Choose Copy diagnostics.</li><li>Paste it into your message. It includes versions, devices and recent log lines, never your Transcripts or keys.</li></ol>
@@ -879,7 +879,7 @@ Model: small (downloaded) · Provider: ollama
       <footer class="site-foot"><div class="wrap">
         <div><div class="wordmark" role="img" aria-label="Meeting Minutes"></div><p>A meeting recorder for Windows that keeps everything on your PC. Made by Duc Dao.</p></div>
         <nav><a data-web="web-privacy">Privacy</a><a data-web="web-support">Support</a><a>Changelog</a><a>GitHub</a></nav>
-        <div class="legal"><span>© 2026 Duc Dao</span><span>support@meeting-minutes.tech</span></div>
+        <div class="legal"><span>© 2026 Duc Dao</span><span>admin@meeting-minutes.tech</span></div>
       </div></footer>
     </div>
   </div>
@@ -1021,7 +1021,7 @@ function copy(btn, text) {
   function selectText() { const r = document.createRange(); r.selectNodeContents(btn.id === "copyMail" ? $(".copybox code") : $("#diagText")); getSelection().removeAllRanges(); getSelection().addRange(r); }
 }
 $("#copyDiag").addEventListener("click", e => copy(e.currentTarget, $("#diagText").textContent));
-$("#copyMail").addEventListener("click", e => copy(e.currentTarget, "support@meeting-minutes.tech"));
+$("#copyMail").addEventListener("click", e => copy(e.currentTarget, "admin@meeting-minutes.tech"));
 
 /* website */
 function showWeb(name) {

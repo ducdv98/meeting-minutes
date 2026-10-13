@@ -43,7 +43,7 @@ Someone who finds `meeting-minutes.tech` downloads the beta, gets past SmartScre
 
 ### Website (`website/` in this repo)
 - Static site on `meeting-minutes.tech`, deployed by GitHub Actions. Design spec: `website/DESIGN.md`, built on the same visual identity as the app. No third-party requests in the browser.
-- Pages: Home (what it does, "Free Beta · Windows 11" status, download button for the latest Release, SmartScreen note, dated roadmap: Mac App Store Dec 2026, Windows Free Beta Dec 2026, later months marked "target"), Privacy, Support (`support@meeting-minutes.tech`, GitHub issues, how to Copy diagnostics), Changelog (from Releases), `llms.txt`. Maker (Duc Dao) named in the footer and About.
+- Pages: Home (what it does, "Free Beta · Windows 11" status, download button for the latest Release, SmartScreen note, dated roadmap: Mac App Store Dec 2026, Windows Free Beta Dec 2026, later months marked "target"), Privacy, Support (`admin@meeting-minutes.tech`, GitHub issues, how to Copy diagnostics), Changelog (from Releases), `llms.txt`. Maker (Duc Dao) named in the footer and About.
 - Never overstate availability: no download button until a Release is published.
 - The privacy policy is written from the code and states: everything stays on the PC; nothing is sent without a click; cloud Summary/Ask sends Transcript text to OpenAI or Anthropic under the user's own key; models download from Hugging Face; no telemetry.
 
