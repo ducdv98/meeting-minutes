@@ -1,6 +1,6 @@
 # Clickable mockup of the app and website
 
-Status: ready-for-human
+Status: resolved
 Blocked by: none
 Spec: ../spec.md
 
@@ -10,10 +10,10 @@ Claude builds a clickable HTML mockup, in light and dark, of: Library (with sear
 
 ## Acceptance criteria
 
-- [ ] Every screen above exists in light and dark.
-- [ ] Every value used comes from (or is added to) `docs/design/visual-identity.md`.
-- [ ] App and website read as the same product side by side.
-- [ ] The owner approves the mockup; the link and approved version are recorded here.
+- [x] Every screen above exists in light and dark.
+- [x] Every value used comes from (or is added to) `docs/design/visual-identity.md`.
+- [x] App and website read as the same product side by side.
+- [x] The owner approves the mockup; the link and approved version are recorded here.
 
 ## Comments
 
@@ -25,3 +25,7 @@ Source: `docs/design/mockup.html` (one self-contained page, sample data). Publis
 - Website: Home (hero with a live scaled copy of the Meeting view, release published vs not-yet toggle, roadmap, FAQ), Privacy, Support.
 - Light, dark and system themes. Every value comes from `docs/design/visual-identity.md`; no token changes were needed.
 - Waiting on the owner's approval.
+
+### 2026-10-13: approved
+
+The owner approved mockup version 1 (https://claude.ai/artifact/SEyFm9SNGkAip7FTUhQAhp, source `docs/design/mockup.html`) with no changes. It is the visual spec for tickets 07–13.
