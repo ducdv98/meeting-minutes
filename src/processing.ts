@@ -26,7 +26,7 @@ export const MODELS = [
 export function modelSizeLabel(sizeMb: number) {
   return sizeMb < 1000 ? `${sizeMb} MB` : `${(sizeMb / 1000).toFixed(1)} GB`;
 }
-export interface Settings { recording_notice_acknowledged: boolean; auto_process: boolean; model: string; vocabulary: string[]; language: Language | null; your_name: string | null; ai: AiSettings }
+export interface Settings { recording_notice_acknowledged: boolean; cloud_notice_acknowledged: boolean; auto_process: boolean; model: string; vocabulary: string[]; language: Language | null; your_name: string | null; ai: AiSettings }
 
 export const processingStatus = () => invoke<ProcessingStatus>("processing_status");
 export const enqueueTranscription = (meetingId: string, model?: string) => invoke<ProcessingStatus>("transcribe_meeting", { meetingId, model: model ?? null });
@@ -36,6 +36,7 @@ export const meetingTranscript = (meetingId: string) => invoke<Transcript | null
 export const transcriptDraft = (meetingId: string) => invoke<DraftSegment[]>("transcript_draft", { meetingId });
 export const setMeetingLanguage = (meetingId: string, language: Language | null) => invoke<void>("set_meeting_language", { meetingId, language });
 export const getSettings = () => invoke<Settings>("get_settings");
+export const acknowledgeCloudNotice = () => invoke<Settings>("acknowledge_cloud_notice");
 export const updateSettings = (autoProcess: boolean, model: string, vocabulary: string[], language: Language | null, yourName: string | null) => invoke<Settings>("update_settings", { autoProcess, model, vocabulary, language, yourName });
 export const installedModels = () => invoke<string[]>("installed_models");
 export const onProcessingStatus = (handler: (status: ProcessingStatus) => void): Promise<UnlistenFn> => listen<ProcessingStatus>("processing-status", (event) => handler(event.payload));

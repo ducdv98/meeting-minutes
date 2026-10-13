@@ -350,6 +350,8 @@ impl fmt::Display for LogEvent {
                     ProviderKind::Ollama => "ollama",
                     ProviderKind::Openai => "openai",
                     ProviderKind::Anthropic => "anthropic",
+                    ProviderKind::Groq => "groq",
+                    ProviderKind::Gemini => "gemini",
                 };
                 return match status {
                     Some(status) => write!(f, "provider_error provider={kind} status={status}"),

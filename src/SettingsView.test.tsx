@@ -2,18 +2,54 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import SettingsView from "./SettingsView";
 import type { AiSettings } from "./ai";
-import { getSettings, installedModels, updateSettings, type Settings } from "./processing";
-import { aiStatus, listAiModels, saveApiKey, testAiProvider, updateAiSettings, type AiStatus } from "./ai";
+import { acknowledgeCloudNotice, getSettings, installedModels, updateSettings, type Settings } from "./processing";
+import { aiStatus, listAiModels, saveApiKey, testAiProvider, testCloudApiKey, updateAiSettings, type AiStatus } from "./ai";
+import { openLink } from "./app-info";
 
-vi.mock("./processing", async (importOriginal) => ({ ...(await importOriginal<typeof import("./processing")>()), getSettings: vi.fn(), updateSettings: vi.fn(), installedModels: vi.fn() }));
-vi.mock("./ai", async (importOriginal) => ({ ...(await importOriginal<typeof import("./ai")>()), aiStatus: vi.fn(), listAiModels: vi.fn(), saveApiKey: vi.fn(), deleteApiKey: vi.fn(), updateAiSettings: vi.fn(), testAiProvider: vi.fn() }));
+vi.mock("./processing", async (importOriginal) => ({ ...(await importOriginal<typeof import("./processing")>()), getSettings: vi.fn(), updateSettings: vi.fn(), installedModels: vi.fn(), acknowledgeCloudNotice: vi.fn() }));
+vi.mock("./ai", async (importOriginal) => ({ ...(await importOriginal<typeof import("./ai")>()), aiStatus: vi.fn(), listAiModels: vi.fn(), saveApiKey: vi.fn(), deleteApiKey: vi.fn(), updateAiSettings: vi.fn(), testAiProvider: vi.fn(), testCloudApiKey: vi.fn() }));
+vi.mock("./app-info", () => ({ openLink: vi.fn() }));
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
 beforeEach(() => { vi.mocked(installedModels).mockResolvedValue([]); });
 
 const noAi: AiSettings = { provider: null, ollama_model: null, openai_model: null, anthropic_model: null };
-const empty: AiStatus = { provider: null, model: null, configured: false, has_openai_key: false, has_anthropic_key: false };
+const empty: AiStatus = { provider: null, model: null, configured: false, has_openai_key: false, has_anthropic_key: false, has_groq_key: false, has_gemini_key: false };
 
-const base: Settings = { recording_notice_acknowledged: true, auto_process: true, model: "small", vocabulary: ["Nguyễn"], language: null, your_name: null, ai: noAi };
+const base: Settings = { recording_notice_acknowledged: true, cloud_notice_acknowledged: false, auto_process: true, model: "small", vocabulary: ["Nguyễn"], language: null, your_name: null, ai: noAi };
+
+it("opens provider key pages, tests saved keys, and shows the cloud notice once", async () => {
+  vi.mocked(getSettings).mockResolvedValue(base);
+  vi.mocked(aiStatus).mockResolvedValue(empty);
+  vi.mocked(saveApiKey).mockResolvedValueOnce({ ...empty, has_groq_key: true }).mockResolvedValueOnce({ ...empty, has_groq_key: true, has_gemini_key: true });
+  vi.mocked(acknowledgeCloudNotice).mockResolvedValue({ ...base, cloud_notice_acknowledged: true });
+  vi.mocked(testCloudApiKey).mockResolvedValueOnce().mockRejectedValueOnce("Gemini quota exceeded");
+  render(<SettingsView />);
+  const cloud = await screen.findByRole("region", { name: "Cloud transcription" });
+  fireEvent.click(within(cloud).getByRole("button", { name: "Get a free Groq key" }));
+  fireEvent.click(within(cloud).getByRole("button", { name: "Get a free Gemini key" }));
+  expect(openLink).toHaveBeenCalledWith("groq");
+  expect(openLink).toHaveBeenCalledWith("gemini");
+  fireEvent.change(within(cloud).getByLabelText("Groq API key"), { target: { value: "secret" } });
+  fireEvent.click(within(cloud).getByRole("button", { name: "Save Groq key" }));
+  await waitFor(() => expect(saveApiKey).toHaveBeenCalledWith("groq", "secret"));
+  expect(await screen.findByText(/Gemini's free tier may use content for training/)).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Got it" }));
+  await waitFor(() => expect(acknowledgeCloudNotice).toHaveBeenCalledTimes(1));
+  fireEvent.change(within(cloud).getByLabelText("Gemini API key"), { target: { value: "gemini-secret" } });
+  fireEvent.click(within(cloud).getByRole("button", { name: "Save Gemini key" }));
+  await waitFor(() => expect(saveApiKey).toHaveBeenCalledWith("gemini", "gemini-secret"));
+  fireEvent.click(within(cloud).getByRole("button", { name: "Test Groq key" }));
+  expect(await within(cloud).findByText("Groq key: OK")).toBeTruthy();
+  fireEvent.click(within(cloud).getByRole("button", { name: "Test Gemini key" }));
+  expect(await within(cloud).findByText(/Gemini quota exceeded/)).toBeTruthy();
+  expect(screen.queryByText(/Gemini's free tier may use content for training/)).toBeNull();
+  cleanup();
+  vi.mocked(getSettings).mockResolvedValue({ ...base, cloud_notice_acknowledged: true });
+  vi.mocked(aiStatus).mockResolvedValue({ ...empty, has_groq_key: true, has_gemini_key: true });
+  render(<SettingsView />);
+  await screen.findByRole("region", { name: "Cloud transcription" });
+  expect(screen.queryByText(/Gemini's free tier may use content for training/)).toBeNull();
+});
 
 it("saves Your name and clears it to the Me default", async () => {
   vi.mocked(aiStatus).mockResolvedValue(empty);

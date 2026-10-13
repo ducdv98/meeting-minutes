@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Check } from "lucide-react";
-import { getSettings, installedModels, MODELS, modelSizeLabel, updateSettings, type Language, type Settings } from "./processing";
-import { aiStatus, deleteApiKey, listAiModels, PROVIDER_NAMES, PROVIDERS, saveApiKey, testAiProvider, updateAiSettings, type AiStatus, type ProviderKind } from "./ai";
+import { acknowledgeCloudNotice, getSettings, installedModels, MODELS, modelSizeLabel, updateSettings, type Language, type Settings } from "./processing";
+import { aiStatus, deleteApiKey, listAiModels, PROVIDER_NAMES, PROVIDERS, saveApiKey, testAiProvider, testCloudApiKey, updateAiSettings, type AiStatus, type ProviderKind } from "./ai";
+import { openLink } from "./app-info";
 import { Badge } from "./components/ui/Badge";
 import { Button } from "./components/ui/Button";
 import { Input } from "./components/ui/Input";
@@ -18,6 +19,8 @@ const PROVIDER_NOTES: Record<ProviderKind, string> = {
   ollama: "On this PC",
   openai: "Sends the Transcript to OpenAI when you click. Key kept in Windows Credential Manager.",
   anthropic: "Sends the Transcript to Anthropic when you click. Key kept in Windows Credential Manager.",
+  groq: "Transcription key",
+  gemini: "Correction key",
 };
 
 /** Settings with the typed Vocabulary, or null when it matches what is saved. */
@@ -43,6 +46,10 @@ export default function SettingsView() {
   const [aiError, setAiError] = useState<string | null>(null);
   const [reply, setReply] = useState<string | null>(null);
   const [aiBusy, setAiBusy] = useState(false);
+  const [cloudKeys, setCloudKeys] = useState({ groq: "", gemini: "" });
+  const [cloudBusy, setCloudBusy] = useState(false);
+  const [cloudResults, setCloudResults] = useState<{ groq?: string; gemini?: string }>({});
+  const [cloudNoticeError, setCloudNoticeError] = useState<string | null>(null);
   useEffect(() => {
     let active = true;
     setLoadFailed(false);
@@ -97,6 +104,34 @@ export default function SettingsView() {
   const isCloud = provider === "openai" || provider === "anthropic";
   const hasKey = (kind: ProviderKind) => kind === "openai" ? providerStatus?.has_openai_key : kind === "anthropic" ? providerStatus?.has_anthropic_key : false;
   const selectedLabel = provider ? PROVIDER_NAMES[provider] : "";
+  const cloudNoticeVisible = !!settings && !settings.cloud_notice_acknowledged && !!(providerStatus?.has_groq_key || providerStatus?.has_gemini_key);
+  async function saveCloudKey(kind: "groq" | "gemini") {
+    const entered = cloudKeys[kind];
+    setCloudBusy(true);
+    setCloudResults((current) => ({ ...current, [kind]: undefined }));
+    try {
+      const status = await saveApiKey(kind, entered);
+      setProviderStatus(status);
+      setCloudKeys((current) => ({ ...current, [kind]: "" }));
+    } catch (reason) { setCloudResults((current) => ({ ...current, [kind]: String(reason) })); }
+    finally { setCloudBusy(false); }
+  }
+  async function removeCloudKey(kind: "groq" | "gemini") {
+    setCloudBusy(true);
+    try { setProviderStatus(await deleteApiKey(kind)); setCloudResults((current) => ({ ...current, [kind]: undefined })); }
+    catch (reason) { setCloudResults((current) => ({ ...current, [kind]: String(reason) })); }
+    finally { setCloudBusy(false); }
+  }
+  async function testCloudKey(kind: "groq" | "gemini") {
+    setCloudBusy(true);
+    try { await testCloudApiKey(kind); setCloudResults((current) => ({ ...current, [kind]: "OK" })); }
+    catch (reason) { setCloudResults((current) => ({ ...current, [kind]: String(reason) })); }
+    finally { setCloudBusy(false); }
+  }
+  async function openCloudKeyPage(kind: "groq" | "gemini") {
+    try { await openLink(kind); }
+    catch (reason) { setCloudResults((current) => ({ ...current, [kind]: String(reason) })); }
+  }
   return <section aria-label="Settings" className="min-h-0 flex-1 overflow-y-auto">
     <div className="grid max-w-[680px] gap-8 px-7 pb-12 pt-7">
       <div className="flex items-center gap-3">
@@ -105,6 +140,20 @@ export default function SettingsView() {
       </div>
       {error && <ErrorState title="Couldn't save Settings" guidance={`${error.reason}. The change shown below isn't saved yet.`} onRetry={() => save(error.settings)} />}
       {loadFailed ? <ErrorState title="Couldn't load Settings" guidance="Try again in a moment." onRetry={() => setLoad((value) => value + 1)} /> : !settings ? <Loading message="Loading Settings…" /> : <>
+          <FormSection title="Cloud transcription" hint="Use your own keys for cloud Processing. Keys stay in Windows Credential Manager.">
+            {(["groq", "gemini"] as const).map((kind) => {
+              const label = PROVIDER_NAMES[kind];
+              const stored = kind === "groq" ? providerStatus?.has_groq_key : providerStatus?.has_gemini_key;
+              return <div key={kind} className="grid gap-2 rounded-md border border-line bg-raised p-3.5">
+                <div className="flex flex-wrap items-center justify-between gap-2"><span className="font-medium">{label} · {kind === "groq" ? "Transcription" : "Correction"}</span><Button variant="ghost" onClick={() => void openCloudKeyPage(kind)}>Get a free {label} key</Button></div>
+                <label htmlFor={`${kind}-key`} className="text-sm">{label} API key</label>
+                <div className="flex flex-wrap gap-2"><Input id={`${kind}-key`} type="password" value={cloudKeys[kind]} onChange={(event) => setCloudKeys((current) => ({ ...current, [kind]: event.target.value }))} /><Button variant="secondary" disabled={cloudBusy || !cloudKeys[kind].trim()} onClick={() => void saveCloudKey(kind)}>Save {label} key</Button></div>
+                <div className="flex flex-wrap items-center gap-2 text-sm"><span>{stored ? "Key saved" : "No key saved"}</span><Button variant="secondary" disabled={cloudBusy || !stored} onClick={() => void testCloudKey(kind)}>Test {label} key</Button>{stored && <Button variant="secondary" disabled={cloudBusy} onClick={() => void removeCloudKey(kind)}>Remove {label} key</Button>}</div>
+                {cloudResults[kind] && <p role="status" className="m-0 text-sm">{label} key: {cloudResults[kind]}</p>}
+              </div>;
+            })}
+          </FormSection>
+          {cloudNoticeVisible && <div role="alert" className="mt-3 grid gap-2 rounded-md border border-line bg-raised p-3.5 text-sm"><p className="m-0">When Processing runs, Meeting audio or text will be sent to Groq or Gemini when their keys are set. Gemini's free tier may use content for training.</p><Button variant="secondary" onClick={() => void acknowledgeCloudNotice().then((next) => { setSettings(next); setCloudNoticeError(null); }, (reason) => setCloudNoticeError(String(reason)))}>Got it</Button>{cloudNoticeError && <p className="m-0">{cloudNoticeError}</p>}</div>}
         <FormSection title="Transcription model" hint="Runs on this PC. Larger models are more accurate and slower. You can change this any time.">
           <RadioGroup aria-label="Transcription model" value={settings.model} onValueChange={(model) => save({ ...settings, model })}>
             {MODELS.map((model) => <RadioGroupItem key={model.name} value={model.name} description={model.description} sideNote={<span className="grid justify-items-end tabular-nums">

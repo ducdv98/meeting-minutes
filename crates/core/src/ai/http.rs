@@ -111,6 +111,7 @@ fn endpoint(kind: ProviderKind) -> &'static str {
         ProviderKind::Ollama => "/api/chat",
         ProviderKind::Openai => "/v1/chat/completions",
         ProviderKind::Anthropic => "/v1/messages",
+        ProviderKind::Groq | ProviderKind::Gemini => "",
     }
 }
 fn headers(kind: ProviderKind, key: Option<&ApiKey>) -> Result<Vec<(String, String)>, AiError> {
@@ -127,6 +128,14 @@ fn headers(kind: ProviderKind, key: Option<&ApiKey>) -> Result<Vec<(String, Stri
             ),
             ("anthropic-version".into(), "2023-06-01".into()),
         ]),
+        ProviderKind::Groq => Ok(vec![(
+            "Authorization".into(),
+            format!("Bearer {}", key.ok_or(AiError::MissingKey(kind))?.expose()),
+        )]),
+        ProviderKind::Gemini => Ok(vec![(
+            "x-goog-api-key".into(),
+            key.ok_or(AiError::MissingKey(kind))?.expose().into(),
+        )]),
     }
 }
 fn error_message(raw: &str, kind: ProviderKind, key: Option<&ApiKey>) -> String {
@@ -171,6 +180,32 @@ fn unreachable(error: AiError, kind: ProviderKind) -> AiError {
         error
     }
 }
+pub fn test_cloud_key(
+    http: &dyn HttpClient,
+    kind: ProviderKind,
+    key: &ApiKey,
+) -> Result<(), AiError> {
+    let url = match kind {
+        ProviderKind::Groq => "https://api.groq.com/openai/v1/models",
+        ProviderKind::Gemini => "https://generativelanguage.googleapis.com/v1beta/models",
+        _ => {
+            return Err(AiError::Unsupported(format!(
+                "{} has no cloud key test",
+                kind.label()
+            )))
+        }
+    };
+    let response = http
+        .send(HttpRequest {
+            method: Method::Get,
+            url: url.into(),
+            headers: headers(kind, Some(key))?,
+            body: None,
+        })
+        .inspect_err(|error| crate::diagnostics::log_provider_error(kind, error))?;
+    checked_response(response, kind, Some(key))?;
+    Ok(())
+}
 pub fn list_models(
     http: &dyn HttpClient,
     kind: ProviderKind,
@@ -180,6 +215,12 @@ pub fn list_models(
         ProviderKind::Ollama => format!("{OLLAMA_URL}/api/tags"),
         ProviderKind::Openai => format!("{OPENAI_URL}/v1/models"),
         ProviderKind::Anthropic => format!("{ANTHROPIC_URL}/v1/models?limit=100"),
+        ProviderKind::Groq | ProviderKind::Gemini => {
+            return Err(AiError::Unsupported(format!(
+                "{} models are not available for Summary or Ask yet",
+                kind.label()
+            )))
+        }
     };
     let response = http
         .send(HttpRequest {
@@ -282,6 +323,12 @@ impl TextProvider for HttpProvider {
                 }
                 body
             }
+            ProviderKind::Groq | ProviderKind::Gemini => {
+                return Err(AiError::Unsupported(format!(
+                    "{} is not supported for Summary or Ask yet",
+                    self.kind.label()
+                )))
+            }
         };
         let response = self
             .http
@@ -378,6 +425,12 @@ impl TextProvider for HttpProvider {
                     } else {
                         None
                     }
+                }
+                ProviderKind::Groq | ProviderKind::Gemini => {
+                    return Err(AiError::Unsupported(format!(
+                        "{} is not supported for Summary or Ask yet",
+                        self.kind.label()
+                    )))
                 }
             };
             if let Some(delta) = delta {

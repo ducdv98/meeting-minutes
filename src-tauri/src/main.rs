@@ -238,6 +238,8 @@ impl KeyringStore {
         let user = match kind {
             ProviderKind::Openai => "openai-api-key",
             ProviderKind::Anthropic => "anthropic-api-key",
+            ProviderKind::Groq => "groq-api-key",
+            ProviderKind::Gemini => "gemini-api-key",
             ProviderKind::Ollama => return Err("Ollama needs no API key".into()),
         };
         keyring::Entry::new("Meeting Minutes", user).map_err(|error| error.to_string())
@@ -691,6 +693,29 @@ async fn list_ai_models(app: AppHandle, provider: ProviderKind) -> Result<Vec<St
     })
     .await
     .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn test_cloud_api_key(app: AppHandle, provider: ProviderKind) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let secrets = app.state::<Secrets>();
+        let key = secrets
+            .0
+            .get(provider)?
+            .ok_or_else(|| format!("Add your {} API key in Settings", provider.label()))?;
+        let http = app.state::<Http>();
+        ai::test_cloud_key(http.0.as_ref(), provider, &key).map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+fn acknowledge_cloud_notice(path: State<'_, SettingsPath>) -> Result<Settings, String> {
+    let mut settings = Settings::load(&path.0);
+    settings.cloud_notice_acknowledged = true;
+    settings.save(&path.0).map_err(|error| error.to_string())?;
+    Ok(settings)
 }
 
 #[tauri::command]
@@ -1676,6 +1701,8 @@ fn open_meeting_folder(state: State<'_, LibraryState>, meeting_id: String) -> Re
 enum OutsideLink {
     Privacy,
     Support,
+    Groq,
+    Gemini,
 }
 
 /// Opens an outside link in the default browser or mail app.
@@ -1684,6 +1711,8 @@ fn open_link(link: OutsideLink) -> Result<(), String> {
     let url = match link {
         OutsideLink::Privacy => "https://meeting-minutes.tech/privacy",
         OutsideLink::Support => "mailto:admin@meeting-minutes.tech",
+        OutsideLink::Groq => "https://console.groq.com/keys",
+        OutsideLink::Gemini => "https://aistudio.google.com/app/apikey",
     };
     #[cfg(target_os = "windows")]
     {
@@ -2658,6 +2687,8 @@ fn main() {
             installed_models,
             ai_status,
             list_ai_models,
+            test_cloud_api_key,
+            acknowledge_cloud_notice,
             save_api_key,
             delete_api_key,
             update_ai_settings,

@@ -10,6 +10,8 @@ use std::{
 #[serde(default)]
 pub struct Settings {
     pub recording_notice_acknowledged: bool,
+    #[serde(default)]
+    pub cloud_notice_acknowledged: bool,
     pub auto_process: bool,
     pub model: String,
     pub vocabulary: Vec<String>,
@@ -24,6 +26,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             recording_notice_acknowledged: false,
+            cloud_notice_acknowledged: false,
             auto_process: true,
             model: "small".into(),
             vocabulary: Vec::new(),
@@ -51,6 +54,7 @@ impl AiSettings {
             ProviderKind::Anthropic => {
                 Some(self.anthropic_model.as_deref().unwrap_or("claude-opus-5-5"))
             }
+            ProviderKind::Groq | ProviderKind::Gemini => None,
         }
     }
     pub fn set_model(&mut self, kind: ProviderKind, model: String) {
@@ -58,6 +62,7 @@ impl AiSettings {
             ProviderKind::Ollama => &mut self.ollama_model,
             ProviderKind::Openai => &mut self.openai_model,
             ProviderKind::Anthropic => &mut self.anthropic_model,
+            ProviderKind::Groq | ProviderKind::Gemini => return,
         };
         *field = Some(model);
     }
@@ -116,5 +121,20 @@ mod tests {
         assert_eq!(settings.model, "small");
         assert!(settings.vocabulary.is_empty());
         assert_eq!(settings.language, None);
+    }
+
+    #[test]
+    fn pre_cloud_settings_load_without_changing_existing_values() {
+        let settings: Settings = serde_json::from_str(r#"{"recording_notice_acknowledged":true,"auto_process":false,"model":"small","vocabulary":["Lan"],"your_name":"Minh","language":"vi","ai":{"provider":"openai","openai_model":"gpt-4o"}}"#).unwrap();
+        assert!(settings.recording_notice_acknowledged);
+        assert!(!settings.cloud_notice_acknowledged);
+        assert!(!settings.auto_process);
+        assert_eq!(settings.vocabulary, ["Lan"]);
+        assert_eq!(settings.your_name.as_deref(), Some("Minh"));
+        assert_eq!(settings.language, Some(Language::Vi));
+        assert_eq!(settings.ai.provider, Some(ProviderKind::Openai));
+        assert_eq!(settings.ai.openai_model.as_deref(), Some("gpt-4o"));
+        let json = serde_json::to_string(&settings).unwrap();
+        assert!(!json.contains("secret"));
     }
 }

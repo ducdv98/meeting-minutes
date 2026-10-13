@@ -11,7 +11,8 @@ use serde_json::Value;
 mod http;
 pub use http::OLLAMA_CONTEXT_TOKENS;
 pub use http::{
-    list_models, HttpClient, HttpProvider, HttpRequest, HttpResponse, Method, UreqClient,
+    list_models, test_cloud_key, HttpClient, HttpProvider, HttpRequest, HttpResponse, Method,
+    UreqClient,
 };
 
 pub fn context_tokens(kind: ProviderKind) -> usize {
@@ -19,6 +20,7 @@ pub fn context_tokens(kind: ProviderKind) -> usize {
         ProviderKind::Ollama => OLLAMA_CONTEXT_TOKENS as usize,
         ProviderKind::Openai => 128_000,
         ProviderKind::Anthropic => 200_000,
+        ProviderKind::Groq | ProviderKind::Gemini => 0,
     }
 }
 
@@ -28,6 +30,8 @@ pub enum ProviderKind {
     Ollama,
     Openai,
     Anthropic,
+    Groq,
+    Gemini,
 }
 impl ProviderKind {
     pub fn is_cloud(self) -> bool {
@@ -38,6 +42,8 @@ impl ProviderKind {
             Self::Ollama => "Ollama",
             Self::Openai => "OpenAI",
             Self::Anthropic => "Anthropic",
+            Self::Groq => "Groq",
+            Self::Gemini => "Gemini",
         }
     }
 }
@@ -93,6 +99,7 @@ pub enum AiError {
     Refused,
     Truncated,
     InvalidOutput(String),
+    Unsupported(String),
     Cancelled,
     Io(io::Error),
 }
@@ -108,6 +115,7 @@ impl fmt::Display for AiError {
             Self::Refused => f.write_str("The model declined to answer"),
             Self::Truncated => f.write_str("The response was cut off (output limit reached)"),
             Self::InvalidOutput(message) => write!(f, "Invalid model output: {message}"),
+            Self::Unsupported(message) => f.write_str(message),
             Self::Cancelled => f.write_str("Cancelled"),
             Self::Io(error) => write!(f, "AI I/O error: {error}"),
         }
@@ -205,6 +213,8 @@ pub struct AiStatus {
     pub configured: bool,
     pub has_openai_key: bool,
     pub has_anthropic_key: bool,
+    pub has_groq_key: bool,
+    pub has_gemini_key: bool,
 }
 pub fn ai_status(settings: &AiSettings, secrets: &dyn SecretStore) -> AiStatus {
     let has_openai_key = secrets.get(ProviderKind::Openai).ok().flatten().is_some();
@@ -213,6 +223,8 @@ pub fn ai_status(settings: &AiSettings, secrets: &dyn SecretStore) -> AiStatus {
         .ok()
         .flatten()
         .is_some();
+    let has_groq_key = secrets.get(ProviderKind::Groq).ok().flatten().is_some();
+    let has_gemini_key = secrets.get(ProviderKind::Gemini).ok().flatten().is_some();
     let model = settings
         .provider
         .and_then(|kind| settings.model_for(kind))
@@ -222,6 +234,7 @@ pub fn ai_status(settings: &AiSettings, secrets: &dyn SecretStore) -> AiStatus {
         Some(ProviderKind::Ollama) => model.is_some(),
         Some(ProviderKind::Openai) => model.is_some() && has_openai_key,
         Some(ProviderKind::Anthropic) => model.is_some() && has_anthropic_key,
+        Some(ProviderKind::Groq | ProviderKind::Gemini) => false,
         None => false,
     };
     AiStatus {
@@ -230,6 +243,8 @@ pub fn ai_status(settings: &AiSettings, secrets: &dyn SecretStore) -> AiStatus {
         configured,
         has_openai_key,
         has_anthropic_key,
+        has_groq_key,
+        has_gemini_key,
     }
 }
 pub fn configured_provider(
@@ -238,6 +253,12 @@ pub fn configured_provider(
     http: Arc<dyn HttpClient>,
 ) -> Result<HttpProvider, AiError> {
     let kind = settings.provider.ok_or(AiError::NotConfigured)?;
+    if matches!(kind, ProviderKind::Groq | ProviderKind::Gemini) {
+        return Err(AiError::Unsupported(format!(
+            "{} is not supported for Summary or Ask yet",
+            kind.label()
+        )));
+    }
     let model = settings
         .model_for(kind)
         .filter(|model| !model.trim().is_empty())
@@ -256,6 +277,12 @@ pub fn configured_provider(
         ProviderKind::Ollama => HttpProvider::ollama(http, model),
         ProviderKind::Openai => HttpProvider::openai(http, model, key.expect("cloud key")),
         ProviderKind::Anthropic => HttpProvider::anthropic(http, model, key.expect("cloud key")),
+        ProviderKind::Groq | ProviderKind::Gemini => {
+            return Err(AiError::Unsupported(format!(
+                "{} is not supported for Summary or Ask yet",
+                kind.label()
+            )))
+        }
     })
 }
 #[derive(Clone, Debug, PartialEq, Serialize)]

@@ -10,6 +10,23 @@ fn key_is_trimmed_and_hidden_and_empty_key_is_rejected() {
 }
 
 #[test]
+fn cloud_transcription_keys_are_stored_independently() {
+    let store = MemorySecretStore::default();
+    for kind in [ProviderKind::Groq, ProviderKind::Gemini] {
+        assert!(kind.is_cloud());
+        let key = ApiKey::new(&format!("{kind:?}-secret")).unwrap();
+        use meeting_minutes_core::ai::SecretStore;
+        store.set(kind, &key).unwrap();
+        assert_eq!(store.get(kind).unwrap().unwrap().expose(), key.expose());
+    }
+    let status = ai_status(&AiSettings::default(), &store);
+    assert!(status.has_groq_key && status.has_gemini_key);
+    store.delete(ProviderKind::Groq).unwrap();
+    assert!(store.get(ProviderKind::Groq).unwrap().is_none());
+    assert!(store.get(ProviderKind::Gemini).unwrap().is_some());
+}
+
+#[test]
 fn provider_status_requires_model_and_cloud_key() {
     let secrets = MemorySecretStore::default();
     let mut settings = AiSettings::default();
@@ -18,6 +35,20 @@ fn provider_status_requires_model_and_cloud_key() {
     assert!(!ai_status(&settings, &secrets).configured);
     settings.ollama_model = Some("llama3.2".into());
     assert!(ai_status(&settings, &secrets).configured);
+}
+
+#[test]
+fn gemini_cannot_be_selected_for_summary_until_text_support_exists() {
+    let secrets = MemorySecretStore::default();
+    let settings = AiSettings {
+        provider: Some(ProviderKind::Gemini),
+        ..AiSettings::default()
+    };
+    let error = configured_provider(&settings, &secrets, Arc::new(FakeHttp::default()))
+        .err()
+        .unwrap()
+        .to_string();
+    assert_eq!(error, "Gemini is not supported for Summary or Ask yet");
 }
 
 #[test]
@@ -32,10 +63,42 @@ fn provider_context_sizes_match_generation_budgets() {
 }
 
 use meeting_minutes_core::ai::{
-    configured_provider, disclosure, generate_json, list_models, AiError, GenerateRequest,
-    HttpClient, HttpProvider, HttpRequest, HttpResponse, Message, Method, OutputSchema, Role,
-    SecretStore, TextProvider,
+    configured_provider, disclosure, generate_json, list_models, test_cloud_key, AiError,
+    GenerateRequest, HttpClient, HttpProvider, HttpRequest, HttpResponse, Message, Method,
+    OutputSchema, Role, SecretStore, TextProvider,
 };
+
+#[test]
+fn cloud_key_test_uses_one_authenticated_get_and_redacts_errors() {
+    for (kind, url, header, value) in [
+        (
+            ProviderKind::Groq,
+            "https://api.groq.com/openai/v1/models",
+            "Authorization",
+            "Bearer secret-123",
+        ),
+        (
+            ProviderKind::Gemini,
+            "https://generativelanguage.googleapis.com/v1beta/models",
+            "x-goog-api-key",
+            "secret-123",
+        ),
+    ] {
+        let http = FakeHttp::default();
+        let key = ApiKey::new("secret-123").unwrap();
+        http.reply(200, "{}");
+        test_cloud_key(&http, kind, &key).unwrap();
+        let request = http.request();
+        assert!(matches!(request.method, Method::Get));
+        assert_eq!(request.url, url);
+        assert!(request.body.is_none());
+        assert_eq!(request.headers, vec![(header.into(), value.into())]);
+        http.reply(400, r#"{"error":{"message":"secret-123 was rejected"}}"#);
+        let error = test_cloud_key(&http, kind, &key).unwrap_err().to_string();
+        assert!(error.contains("*** was rejected"));
+        assert!(!error.contains("secret-123"));
+    }
+}
 use serde::Deserialize;
 use serde_json::json;
 use std::{

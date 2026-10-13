@@ -7,7 +7,7 @@ import type { Transcript } from "./processing";
 vi.mock("./summary", () => ({ meetingSummary: vi.fn(), summaryStatus: vi.fn(), summaryParticipantsChanged: vi.fn(), summarySendPlan: vi.fn(), generateSummary: vi.fn(), cancelSummary: vi.fn(), dismissSummary: vi.fn(), onSummaryStatus: vi.fn(() => Promise.resolve(() => {})) }));
 vi.mock("./recording", async (original) => ({ ...(await original<typeof import("./recording")>()), onLibraryChanged: vi.fn(() => Promise.resolve(() => {})) }));
 const transcript: Transcript = { schema_version: 1, revision: 2, created_at: "now", model: "small", language: "en", language_detected: false, duration_ms: 30000, segments: [{ id: "s00001", start_ms: 1000, end_ms: 2500, text: "Budget", speaker: "me" }] };
-const aiStatus = { provider: "ollama" as const, model: "llama", configured: true, has_openai_key: false, has_anthropic_key: false };
+const aiStatus = { provider: "ollama" as const, model: "llama", configured: true, has_openai_key: false, has_anthropic_key: false, has_groq_key: false, has_gemini_key: false };
 const citation = { segment_id: "s00001", start_ms: 1000, end_ms: 2500 };
 beforeEach(() => { vi.mocked(meetingSummary).mockResolvedValue(null); vi.mocked(summaryParticipantsChanged).mockResolvedValue(false); vi.mocked(summaryStatus).mockResolvedValue({ jobs: [] }); vi.mocked(summarySendPlan).mockResolvedValue({ provider: "ollama", cloud: false, consented: true, disclosure: null }); vi.mocked(generateSummary).mockResolvedValue({ jobs: [] }); });
 
