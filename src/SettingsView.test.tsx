@@ -12,7 +12,7 @@ vi.mock("./app-info", () => ({ openLink: vi.fn() }));
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
 beforeEach(() => { vi.mocked(installedModels).mockResolvedValue([]); });
 
-const noAi: AiSettings = { provider: null, ollama_model: null, openai_model: null, anthropic_model: null };
+const noAi: AiSettings = { provider: null, ollama_model: null, openai_model: null, anthropic_model: null, gemini_model: null };
 const empty: AiStatus = { provider: null, model: null, configured: false, has_openai_key: false, has_anthropic_key: false, has_groq_key: false, has_gemini_key: false };
 
 const base: Settings = { recording_notice_acknowledged: true, cloud_notice_acknowledged: false, auto_process: true, model: "small", vocabulary: ["Nguyễn"], language: null, your_name: null, ai: noAi };
@@ -171,6 +171,20 @@ it("selects Ollama, lists models, and tests the selected model", async () => {
   await waitFor(() => expect(updateAiSettings).toHaveBeenCalledWith("ollama", "llama3.2"));
   fireEvent.click(await screen.findByRole("button", { name: "Test" }));
   expect((await screen.findByRole("status")).textContent).toContain("Test reply: ready");
+});
+
+it("offers Gemini for Summary and Ask with its saved key and model", async () => {
+  vi.mocked(getSettings).mockResolvedValue(base);
+  vi.mocked(aiStatus).mockResolvedValue({ ...empty, has_gemini_key: true });
+  vi.mocked(updateAiSettings).mockResolvedValue({ ...empty, provider: "gemini", model: "gemini-2.5-flash", configured: true, has_gemini_key: true });
+  vi.mocked(listAiModels).mockResolvedValue(["gemini-2.5-flash", "gemini-2.5-pro"]);
+  render(<SettingsView />);
+  fireEvent.click(await screen.findByRole("radio", { name: /^Gemini/ }));
+  await waitFor(() => expect(updateAiSettings).toHaveBeenCalledWith("gemini", null));
+  expect(await screen.findByText(/API key saved in Windows Credential Manager/)).toBeTruthy();
+  expect((screen.getByRole("combobox", { name: "Model" }) as HTMLSelectElement).value).toBe("gemini-2.5-flash");
+  fireEvent.click(screen.getByRole("button", { name: "Load models" }));
+  await waitFor(() => expect(listAiModels).toHaveBeenCalledWith("gemini"));
 });
 
 it("clears a saved key and shows the stored key status", async () => {

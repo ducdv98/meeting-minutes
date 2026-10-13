@@ -105,6 +105,7 @@ impl HttpClient for UreqClient {
 const OLLAMA_URL: &str = "http://localhost:11434";
 const OPENAI_URL: &str = "https://api.openai.com";
 const ANTHROPIC_URL: &str = "https://api.anthropic.com";
+const GEMINI_URL: &str = "https://generativelanguage.googleapis.com";
 
 pub struct HttpProvider {
     http: Arc<dyn HttpClient>,
@@ -141,9 +142,71 @@ impl HttpProvider {
             base_url: ANTHROPIC_URL.into(),
         }
     }
-    pub(super) fn endpoint(&self) -> String {
-        format!("{}{}", self.base_url, endpoint(self.kind))
+    pub fn gemini(http: Arc<dyn HttpClient>, model: impl Into<String>, key: ApiKey) -> Self {
+        Self {
+            http,
+            kind: ProviderKind::Gemini,
+            model: model.into(),
+            key: Some(key),
+            base_url: GEMINI_URL.into(),
+        }
     }
+    pub(super) fn endpoint(&self) -> String {
+        if self.kind == ProviderKind::Gemini {
+            format!("{}/v1beta/models/{}:streamGenerateContent?alt=sse", self.base_url, self.model)
+        } else {
+            format!("{}{}", self.base_url, endpoint(self.kind))
+        }
+    }
+    fn generate_endpoint(&self, structured: bool) -> String {
+        if self.kind == ProviderKind::Gemini && structured {
+            format!("{}/v1beta/models/{}:generateContent", self.base_url, self.model)
+        } else {
+            self.endpoint()
+        }
+    }
+}
+fn gemini_schema(schema: &Value) -> Value {
+    let Some(object) = schema.as_object() else {
+        return schema.clone();
+    };
+    let mut supported = serde_json::Map::new();
+    for (key, value) in object {
+        match key.as_str() {
+            "properties" => {
+                if let Some(properties) = value.as_object() {
+                    supported.insert(key.clone(), Value::Object(properties.iter().map(|(name, schema)| (name.clone(), gemini_schema(schema))).collect()));
+                }
+            }
+            "items" => { supported.insert(key.clone(), gemini_schema(value)); }
+            "type" | "description" | "format" | "enum" | "required" | "nullable" | "minimum" | "maximum" | "minItems" | "maxItems" => { supported.insert(key.clone(), value.clone()); }
+            _ => {}
+        }
+    }
+    Value::Object(supported)
+}
+fn gemini_response_text(value: &Value) -> Result<String, AiError> {
+    if value.pointer("/error/code") == Some(&json!(429)) || value.pointer("/error/status") == Some(&json!("RESOURCE_EXHAUSTED")) {
+        return Err(AiError::GeminiLimit);
+    }
+    if value.get("error").is_some_and(|error| !error.is_null()) {
+        return Err(AiError::Http { status: 200, message: "Gemini could not generate a response".into() });
+    }
+    match value.pointer("/candidates/0/finishReason").and_then(Value::as_str) {
+        Some("MAX_TOKENS") => return Err(AiError::Truncated),
+        Some("STOP") | None => {},
+        Some(_) => return Err(AiError::Refused),
+    }
+    if value.pointer("/promptFeedback/blockReason").is_some() {
+        return Err(AiError::Refused);
+    }
+    Ok(value.pointer("/candidates/0/content/parts")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|part| part["thought"] != true)
+        .filter_map(|part| part["text"].as_str())
+        .collect())
 }
 fn endpoint(kind: ProviderKind) -> &'static str {
     match kind {
@@ -205,6 +268,9 @@ fn checked_response(
         crate::diagnostics::log_provider_status(kind, status);
         let mut raw = String::new();
         response.body.take(64 * 1024).read_to_string(&mut raw)?;
+        if kind == ProviderKind::Gemini && (status == 429 || raw.to_ascii_lowercase().contains("quota")) {
+            return Err(AiError::GeminiLimit);
+        }
         return Err(AiError::Http {
             status,
             message: error_message(&raw, kind, key),
@@ -254,7 +320,8 @@ pub fn list_models(
         ProviderKind::Ollama => format!("{OLLAMA_URL}/api/tags"),
         ProviderKind::Openai => format!("{OPENAI_URL}/v1/models"),
         ProviderKind::Anthropic => format!("{ANTHROPIC_URL}/v1/models?limit=100"),
-        ProviderKind::Groq | ProviderKind::Gemini => {
+        ProviderKind::Gemini => format!("{GEMINI_URL}/v1beta/models"),
+        ProviderKind::Groq => {
             return Err(AiError::Unsupported(format!(
                 "{} models are not available for Summary or Ask yet",
                 kind.label()
@@ -277,12 +344,12 @@ pub fn list_models(
     response.body.read_to_string(&mut raw)?;
     let value: Value =
         serde_json::from_str(&raw).map_err(|error| AiError::InvalidOutput(error.to_string()))?;
-    let field = if kind == ProviderKind::Ollama {
+    let field = if matches!(kind, ProviderKind::Ollama | ProviderKind::Gemini) {
         "models"
     } else {
         "data"
     };
-    let name = if kind == ProviderKind::Ollama {
+    let name = if matches!(kind, ProviderKind::Ollama | ProviderKind::Gemini) {
         "name"
     } else {
         "id"
@@ -291,7 +358,9 @@ pub fn list_models(
         .as_array()
         .ok_or_else(|| AiError::InvalidOutput("Missing models array".into()))?
         .iter()
+        .filter(|item| kind != ProviderKind::Gemini || item["supportedGenerationMethods"].as_array().is_some_and(|methods| methods.iter().any(|method| method == "generateContent")))
         .filter_map(|item| item[name].as_str())
+        .filter_map(|id| if kind == ProviderKind::Gemini { id.strip_prefix("models/") } else { Some(id) })
         .filter(|id| {
             if kind != ProviderKind::Openai {
                 return true;
@@ -335,6 +404,9 @@ impl TextProvider for HttpProvider {
         on_delta: &mut dyn FnMut(&str),
         cancel: &AtomicBool,
     ) -> Result<String, AiError> {
+        if cancel.load(Ordering::SeqCst) {
+            return Err(AiError::Cancelled);
+        }
         let body = match self.kind {
             ProviderKind::Ollama => {
                 let mut messages = vec![json!({"role":"system", "content":request.system})];
@@ -362,7 +434,16 @@ impl TextProvider for HttpProvider {
                 }
                 body
             }
-            ProviderKind::Groq | ProviderKind::Gemini => {
+            ProviderKind::Gemini => {
+                let contents: Vec<Value> = request.messages.iter().map(|message| json!({"role":if message.role == super::Role::Assistant { "model" } else { "user" }, "parts":[{"text":message.content}]})).collect();
+                let mut body = json!({"systemInstruction":{"parts":[{"text":request.system}]},"contents":contents,"generationConfig":{"maxOutputTokens":request.max_tokens}});
+                if let Some(schema) = &request.schema {
+                    body["generationConfig"]["responseMimeType"] = json!("application/json");
+                    body["generationConfig"]["responseSchema"] = gemini_schema(&schema.schema);
+                }
+                body
+            }
+            ProviderKind::Groq => {
                 return Err(AiError::Unsupported(format!(
                     "{} is not supported for Summary or Ask yet",
                     self.kind.label()
@@ -373,7 +454,7 @@ impl TextProvider for HttpProvider {
             .http
             .send(HttpRequest {
                 method: Method::Post,
-                url: self.endpoint(),
+                url: self.generate_endpoint(request.schema.is_some()),
                 headers: headers(self.kind, self.key.as_ref())?,
                 body: Some(HttpBody::Json(body)),
             })
@@ -382,6 +463,17 @@ impl TextProvider for HttpProvider {
                 unreachable(error, self.kind)
             })?;
         let mut response = checked_response(response, self.kind, self.key.as_ref())?;
+        if self.kind == ProviderKind::Gemini && request.schema.is_some() {
+            if cancel.load(Ordering::SeqCst) { return Err(AiError::Cancelled); }
+            let mut raw = String::new();
+            response.body.read_to_string(&mut raw)?;
+            if cancel.load(Ordering::SeqCst) { return Err(AiError::Cancelled); }
+            let value: Value = serde_json::from_str(&raw).map_err(|error| AiError::InvalidOutput(error.to_string()))?;
+            let output = gemini_response_text(&value)?;
+            if !output.is_empty() { on_delta(&output); }
+            if cancel.load(Ordering::SeqCst) { return Err(AiError::Cancelled); }
+            return Ok(output);
+        }
         let mut output = String::new();
         let mut line = String::new();
         let mut event = String::new();
@@ -418,6 +510,9 @@ impl TextProvider for HttpProvider {
                 || event == "error"
                 || value["type"] == "error"
             {
+                if self.kind == ProviderKind::Gemini && (value.pointer("/error/code") == Some(&json!(429)) || value.pointer("/error/status") == Some(&json!("RESOURCE_EXHAUSTED"))) {
+                    return Err(AiError::GeminiLimit);
+                }
                 return Err(AiError::Http {
                     status: 200,
                     message: error_message(data, self.kind, self.key.as_ref()),
@@ -465,7 +560,15 @@ impl TextProvider for HttpProvider {
                         None
                     }
                 }
-                ProviderKind::Groq | ProviderKind::Gemini => {
+                ProviderKind::Gemini => {
+                    let delta = gemini_response_text(&value)?;
+                    if !delta.is_empty() {
+                        on_delta(&delta);
+                        output.push_str(&delta);
+                    }
+                    continue;
+                }
+                ProviderKind::Groq => {
                     return Err(AiError::Unsupported(format!(
                         "{} is not supported for Summary or Ask yet",
                         self.kind.label()

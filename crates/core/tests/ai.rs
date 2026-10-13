@@ -38,17 +38,26 @@ fn provider_status_requires_model_and_cloud_key() {
 }
 
 #[test]
-fn gemini_cannot_be_selected_for_summary_until_text_support_exists() {
+fn gemini_can_be_selected_for_summary_with_a_saved_key_and_default_model() {
     let secrets = MemorySecretStore::default();
-    let settings = AiSettings {
+    let mut settings = AiSettings {
         provider: Some(ProviderKind::Gemini),
         ..AiSettings::default()
     };
-    let error = configured_provider(&settings, &secrets, Arc::new(FakeHttp::default()))
-        .err()
-        .unwrap()
-        .to_string();
-    assert_eq!(error, "Gemini is not supported for Summary or Ask yet");
+    assert_eq!(settings.model_for(ProviderKind::Gemini), Some("gemini-2.5-flash"));
+    assert!(matches!(configured_provider(&settings, &secrets, Arc::new(FakeHttp::default())), Err(AiError::MissingKey(ProviderKind::Gemini))));
+    secrets.set(ProviderKind::Gemini, &ApiKey::new("secret-123").unwrap()).unwrap();
+    let status = ai_status(&settings, &secrets);
+    assert!(status.configured);
+    assert_eq!(status.model.as_deref(), Some("gemini-2.5-flash"));
+    let provider = configured_provider(&settings, &secrets, Arc::new(FakeHttp::default())).unwrap();
+    assert_eq!(provider.kind(), ProviderKind::Gemini);
+    assert_eq!(provider.model(), "gemini-2.5-flash");
+    assert!(disclosure(&provider, &prompt()).endpoint.ends_with("/models/gemini-2.5-flash:streamGenerateContent?alt=sse"));
+    settings.set_model(ProviderKind::Gemini, "gemini-2.5-pro".into());
+    let provider = configured_provider(&settings, &secrets, Arc::new(FakeHttp::default())).unwrap();
+    assert_eq!(provider.model(), "gemini-2.5-pro");
+    assert!(!serde_json::to_string(&settings).unwrap().contains("secret-123"));
 }
 
 #[test]
@@ -354,6 +363,77 @@ fn anthropic_ignores_thinking_and_honors_stop_reasons() {
     assert!(
         matches!(generate(&provider), Err(AiError::Http { status: 200, message }) if message == "failed")
     );
+}
+#[test]
+fn gemini_lists_generation_models_and_streams_text() {
+    let http = Arc::new(FakeHttp::default());
+    let key = ApiKey::new("secret-123").unwrap();
+    http.reply(200, r#"{"models":[{"name":"models/gemini-2.5-flash","supportedGenerationMethods":["generateContent"]},{"name":"models/embed-1","supportedGenerationMethods":["embedContent"]}]}"#);
+    assert_eq!(list_models(http.as_ref(), ProviderKind::Gemini, Some(&key)).unwrap(), ["gemini-2.5-flash"]);
+    let listed = http.request();
+    assert_eq!(listed.url, "https://generativelanguage.googleapis.com/v1beta/models");
+    assert_eq!(listed.headers, [("x-goog-api-key".into(), "secret-123".into())]);
+
+    http.reply(200, "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Hel\"}]}}]}\n\ndata: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"lo\"}]},\"finishReason\":\"STOP\"}]}\n\n");
+    let provider = HttpProvider::gemini(http.clone(), "gemini-2.5-flash", key);
+    assert_eq!(generate(&provider).unwrap(), ("Hello".into(), vec!["Hel".into(), "lo".into()]));
+    let sent = http.request();
+    assert_eq!(sent.url, "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse");
+    assert!(!sent.url.contains("secret-123"));
+    assert_eq!(sent.headers, [("x-goog-api-key".into(), "secret-123".into())]);
+    let body = sent.body.unwrap();
+    assert_eq!(body["systemInstruction"]["parts"][0]["text"], "Be concise");
+    assert_eq!(body["contents"][0], json!({"role":"user","parts":[{"text":"Hi"}]}));
+    assert_eq!(body["generationConfig"]["maxOutputTokens"], 16);
+}
+
+#[test]
+fn gemini_generate_json_sends_supported_schema_and_parses_response() {
+    let http = Arc::new(FakeHttp::default());
+    http.reply(200, r#"{"candidates":[{"content":{"parts":[{"text":"{\"ok\":true}"}]},"finishReason":"STOP"}]}"#);
+    let provider = HttpProvider::gemini(http.clone(), "gemini-2.5-flash", ApiKey::new("secret").unwrap());
+    let mut request = prompt();
+    request.schema = Some(OutputSchema { name: "answer".into(), schema: json!({"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","additionalProperties":false,"properties":{"ok":{"type":"boolean","additionalProperties":false}},"required":["ok"]}) });
+    assert_eq!(generate_json::<Answer>(&provider, &request, &mut |_| {}, &AtomicBool::new(false)).unwrap(), Answer { ok: true });
+    let sent = http.request();
+    assert_eq!(sent.url, "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent");
+    let body = sent.body.unwrap();
+    assert_eq!(body["generationConfig"]["responseMimeType"], "application/json");
+    assert_eq!(body["generationConfig"]["responseSchema"], json!({"type":"object","properties":{"ok":{"type":"boolean"}},"required":["ok"]}));
+}
+
+#[test]
+fn gemini_maps_limits_and_honors_cancel_and_finish_reason() {
+    let http = Arc::new(FakeHttp::default());
+    let provider = HttpProvider::gemini(http.clone(), "gemini-2.5-flash", ApiKey::new("secret").unwrap());
+    let already_cancelled = AtomicBool::new(true);
+    assert!(matches!(provider.generate(&prompt(), &mut |_| {}, &already_cancelled), Err(AiError::Cancelled)));
+    assert!(http.requests.lock().unwrap().is_empty());
+    http.reply(429, r#"{"error":{"message":"Quota exhausted"}}"#);
+    assert_eq!(generate(&provider).unwrap_err().to_string(), "Gemini free limit reached, try later or pick another provider");
+    http.request();
+    http.reply(200, "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"first\"}]}}]}\n\ndata: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"second\"}]}}]}\n\n");
+    let cancel = AtomicBool::new(false);
+    let mut deltas = Vec::new();
+    let result = provider.generate(&prompt(), &mut |delta| { deltas.push(delta.to_owned()); cancel.store(true, Ordering::SeqCst); }, &cancel);
+    assert!(matches!(result, Err(AiError::Cancelled)));
+    assert_eq!(deltas, ["first"]);
+    http.request();
+    http.reply(200, "data: {\"candidates\":[{\"finishReason\":\"MAX_TOKENS\"}]}\n\n");
+    assert!(matches!(generate(&provider), Err(AiError::Truncated)));
+}
+#[test]
+#[ignore = "requires GEMINI_API_KEY and makes a live API request"]
+fn gemini_generate_json_live() {
+    let key = std::env::var("GEMINI_API_KEY").expect("GEMINI_API_KEY is required");
+    let provider = HttpProvider::gemini(Arc::new(meeting_minutes_core::ai::UreqClient), "gemini-2.5-flash", ApiKey::new(&key).unwrap());
+    let request = GenerateRequest {
+        system: "Return the requested JSON object.".into(),
+        messages: vec![Message { role: Role::User, content: "Set ok to true.".into() }],
+        schema: Some(schema()),
+        max_tokens: 1024,
+    };
+    assert_eq!(generate_json::<Answer>(&provider, &request, &mut |_| {}, &AtomicBool::new(false)).unwrap(), Answer { ok: true });
 }
 struct FakeProvider {
     output: String,

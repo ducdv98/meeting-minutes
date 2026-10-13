@@ -201,6 +201,26 @@ fn answers_only_accept_citations_from_the_current_evidence() {
     }
 }
 #[test]
+fn gemini_ask_rejects_citations_outside_the_meeting() {
+    let transcript = transcript(2);
+    let ask = build_ask(&transcript, &Participants::new(Default::default(), None, None, false), &AskHistory::default(), "What was discussed?", &AskOptions::for_provider(ProviderKind::Gemini));
+    let provider = GeminiProvider(FakeProvider::answer(response("Schedule", &["s00001"], false, false)));
+    let good = run_ask(&provider, &ask, &transcript, &mut |_| {}, &AtomicBool::new(false));
+    assert_eq!(good.state, AnswerState::Answered);
+    assert_eq!(good.citations[0].start_ms, 1000);
+    let provider = GeminiProvider(FakeProvider::answer(response("Invented", &["s99999"], false, false)));
+    let bad = run_ask(&provider, &ask, &transcript, &mut |_| {}, &AtomicBool::new(false));
+    assert_eq!(bad.state, AnswerState::Unverified);
+    assert_eq!(bad.invalid_citations, ["s99999"]);
+}
+
+struct GeminiProvider(FakeProvider);
+impl TextProvider for GeminiProvider {
+    fn kind(&self) -> ProviderKind { ProviderKind::Gemini }
+    fn model(&self) -> &str { "gemini-2.5-flash" }
+    fn generate(&self, request: &GenerateRequest, on_delta: &mut dyn FnMut(&str), cancel: &AtomicBool) -> Result<String, AiError> { self.0.generate(request, on_delta, cancel) }
+}
+#[test]
 fn retrieval_keeps_relevant_segments_neighbours_and_timeline_order() {
     let mut transcript = transcript(20);
     transcript.segments[10].text = "Ngân sách quý ba được duyệt".into();
