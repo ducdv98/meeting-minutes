@@ -183,7 +183,12 @@ pub fn ends_sentence(word: &str) -> bool {
 
 pub fn segment_sentences(placed: Vec<PlacedSegment>) -> Vec<PlacedSegment> {
     let mut by_source: [Vec<RawWord>; 3] = std::array::from_fn(|_| Vec::new());
+    let mut result = Vec::new();
     for segment in placed {
+        if segment.words.is_empty() {
+            result.push(segment);
+            continue;
+        }
         let index = match segment.speaker {
             Speaker::Me => 0,
             Speaker::Remote => 1,
@@ -191,7 +196,6 @@ pub fn segment_sentences(placed: Vec<PlacedSegment>) -> Vec<PlacedSegment> {
         };
         by_source[index].extend(segment.words);
     }
-    let mut result = Vec::new();
     for (index, mut words) in by_source.into_iter().enumerate() {
         let speaker = match index {
             0 => Speaker::Me,

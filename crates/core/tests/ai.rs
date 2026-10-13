@@ -190,7 +190,19 @@ fn prompt() -> GenerateRequest {
         }],
         schema: None,
         max_tokens: 16,
+        inline_audio: None,
     }
+}
+
+#[test]
+fn inline_audio_is_not_serialized_or_exposed_by_debug() {
+    let mut request = prompt();
+    request.inline_audio = Some(meeting_minutes_core::ai::InlineAudio {
+        mime_type: "audio/flac".into(),
+        data: "private-meeting-audio".into(),
+    });
+    assert!(!serde_json::to_string(&request).unwrap().contains("private-meeting-audio"));
+    assert!(!format!("{request:?}").contains("private-meeting-audio"));
 }
 fn schema() -> OutputSchema {
     OutputSchema {
@@ -533,6 +545,7 @@ fn gemini_generate_json_live() {
         }],
         schema: Some(schema()),
         max_tokens: 1024,
+        inline_audio: None,
     };
     assert_eq!(
         generate_json::<Answer>(&provider, &request, &mut |_| {}, &AtomicBool::new(false)).unwrap(),

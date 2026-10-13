@@ -325,6 +325,7 @@ pub fn build_ask(
             messages,
             schema: Some(schema()),
             max_tokens: options.max_tokens,
+            inline_audio: None,
         },
         allowed,
     }

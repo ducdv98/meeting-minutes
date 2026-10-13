@@ -139,6 +139,7 @@ pub fn correct_with_budget(
             }],
             schema: Some(schema()),
             max_tokens: output_chars.clamp(256, 65_536) as u32,
+            inline_audio: None,
         };
         let response: CorrectionResponse = generate_json(provider, &request, &mut |_| {}, cancel)?;
         let ids: HashSet<&str> = batch.iter().map(|segment| segment.id.as_str()).collect();

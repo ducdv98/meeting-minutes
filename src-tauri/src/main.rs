@@ -19,7 +19,7 @@ use meeting_minutes_core::{
     },
     ask::{self, AskOptions},
     background,
-    cloud::{groq::GroqEngine, CloudEngine},
+    cloud::{gemini::GeminiEngine, groq::GroqEngine, CloudEngine},
     capture::{audio_devices, QpcClock, Source, WasapiOpener},
     diagnostics::{build_diagnostics, log_event, DiagnosticsInput, LogEvent},
     import::import_extension,
@@ -780,6 +780,7 @@ async fn test_ai_provider(app: AppHandle) -> Result<String, String> {
             schema: None,
             // Reasoning models spend output tokens on thinking before the reply.
             max_tokens: 1024,
+            inline_audio: None,
         };
         let answer = provider
             .generate(&request, &mut |_| {}, &AtomicBool::new(false))
@@ -1462,6 +1463,10 @@ fn processing_worker(app: AppHandle) {
             let mut cloud: Vec<Box<dyn CloudEngine>> = Vec::new();
             if let Some(key) = app.state::<Secrets>().0.get(ProviderKind::Groq).map_err(processing::ProcessingError::Engine)? {
                 cloud.push(Box::new(GroqEngine::new(app.state::<Http>().0.clone(), key)));
+            }
+            if let Some(key) = app.state::<Secrets>().0.get(ProviderKind::Gemini).map_err(processing::ProcessingError::Engine)? {
+                let gemini_model = settings.ai.model_for(ProviderKind::Gemini).unwrap_or("gemini-2.5-flash");
+                cloud.push(Box::new(GeminiEngine::new(app.state::<Http>().0.clone(), key, gemini_model)));
             }
             let mut engine = processing::EngineChain::new(cloud, model.name, Box::new(|| {
                 let needs_model_download = !models::is_installed(models_dir, model);
