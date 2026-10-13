@@ -1,6 +1,6 @@
 # Import an audio file as a Meeting
 
-Status: ready-for-human
+Status: resolved
 Blocked by: 09
 Spec: ../spec.md
 
@@ -10,8 +10,8 @@ Import mp3/m4a/wav/flac (file picker and drag-and-drop) as a new Meeting: copy t
 
 ## Acceptance criteria
 
-- [ ] Imported Meeting appears in the Library, plays, and gets a Transcript.
-- [ ] The original file is copied, never moved or modified.
+- [x] Imported Meeting appears in the Library, plays, and gets a Transcript.
+- [x] The original file is copied, never moved or modified.
 
 ## Comments
 
@@ -38,3 +38,7 @@ Code is done and tested on Linux. The design is in `../11-core-design.md`.
   1. Import a real m4a (for example a Windows Voice Recorder file) with the button, and an mp3 by dropping it on the window. Both should appear in the Library, play, and get a Transcript with Unknown speakers.
   2. Check that the original files are unchanged (same size and modified time) and still in place.
   3. Drop a non-audio file. You should see an error and no new Meeting.
+
+### 2026-10-13: laptop check passed
+
+The owner ran the manual checks on the laptop and all passed. Resolved.

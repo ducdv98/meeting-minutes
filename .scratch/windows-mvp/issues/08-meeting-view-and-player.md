@@ -1,6 +1,6 @@
 # Meeting view with Timeline player
 
-Status: ready-for-human
+Status: resolved
 Blocked by: 05
 Spec: ../spec.md
 
@@ -41,3 +41,7 @@ Code is done and tested on Linux. The Windows build passes `cargo clippy --targe
   2. Rename it while the audio is playing. The folder in `Documents\Meeting Minutes` should be renamed, the title updated, and playback should work again.
   3. Rename it to the title of another Meeting from the same minute. You should get a ` (2)` folder, and the other folder should be untouched.
 
+
+### 2026-10-13: laptop check passed
+
+The owner ran the manual checks on the laptop and all passed. Resolved.

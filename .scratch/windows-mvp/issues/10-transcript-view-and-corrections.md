@@ -1,6 +1,6 @@
 # Transcript view, edits and re-transcribe
 
-Status: ready-for-human
+Status: resolved
 Blocked by: 09
 Spec: ../spec.md
 
@@ -37,3 +37,7 @@ Code is done and tested on Linux. The design is in `../10-core-design.md`.
   1. Open a transcribed Meeting and click a few Segments. Each should play from about 0.5 s before it starts and stop at its end. During normal playback, the highlight should follow the audio.
   2. Edit a Segment and save. Check that `transcript.r1.json` and `transcript.md` show the new text and the Segment ID is unchanged.
   3. Re-transcribe with another model. `transcript.r2.json` should appear, `transcript.r1.json` should be unchanged, and the header should show revision 2 with the new model.
+
+### 2026-10-13: laptop check passed
+
+The owner ran the manual checks on the laptop and all passed. Resolved.

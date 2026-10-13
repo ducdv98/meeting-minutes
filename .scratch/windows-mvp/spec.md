@@ -59,7 +59,7 @@ Record (Microphone + System audio) → Stop → Meeting saved to Library → loc
 - Keyword search over all current Transcripts; results jump to the Segment and can play it.
 
 ## Out of scope (v1)
-Cross-meeting Ask, calendar, bots joining calls, live transcription, identifying individual remote speakers, echo cancellation, meeting auto-detection, editable summary templates, bundled llama.cpp, Arm64, code signing, billing, Microsoft Store.
+Cross-meeting Ask, calendar, bots joining calls, live transcription, identifying individual remote speakers, echo cancellation, meeting auto-detection, editable summary templates, bundled llama.cpp, Arm64, code signing, billing, Microsoft Store. (The public Free Beta is planned in `.scratch/public-beta/`; code signing comes before leaving Beta, ADR-0007.)
 
 ## Testing
 - Rust core: unit tests for Timeline maths, Chunk recovery, Library index rebuild, citation validation, Segment normalisation.

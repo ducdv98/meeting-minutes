@@ -1,6 +1,6 @@
 # Summary and Action items with Citations
 
-Status: ready-for-human
+Status: resolved
 Blocked by: 09, 12
 Spec: ../spec.md
 
@@ -10,9 +10,9 @@ Generate the Summary (Overview, Key points, Decisions, Action items with owner/d
 
 ## Acceptance criteria
 
-- [ ] Summary appears after Processing on the laptop with Ollama.
-- [ ] Every visible item has ≥1 Citation that resolves in this Meeting and Revision; invented IDs are dropped (unit test).
-- [ ] Long transcripts that exceed the model context are handled (chunked map-reduce or retrieval), not silently truncated.
+- [x] Summary appears after Processing on the laptop with Ollama.
+- [x] Every visible item has ≥1 Citation that resolves in this Meeting and Revision; invented IDs are dropped (unit test).
+- [x] Long transcripts that exceed the model context are handled (chunked map-reduce or retrieval), not silently truncated.
 
 ## Comments
 
@@ -24,3 +24,7 @@ Code is done and tested on Linux. The design is in `../13-core-design.md`.
 - App: the Summary panel shows Overview, Key points, Decisions and Action items (owner/due when stated), each Citation plays its span, and it notes when the Summary is from an older Revision. After a transcription the Summary runs on its own only when the provider is Ollama. Cloud providers need a click, with the disclosure shown and consent recorded the first time.
 - Decision: once consent is recorded for a Meeting and provider, later cloud sends need the click but don't show the disclosure again (as designed in ticket 12).
 - Manual check on the laptop: with Ollama set up, record or import a Meeting. The Summary should appear after transcription, and each Citation should play its span. With OpenAI/Anthropic nothing is sent until you click "Generate Summary with …" and then Send.
+
+### 2026-10-13: laptop check passed
+
+The owner ran the manual checks on the laptop and all passed. Resolved.

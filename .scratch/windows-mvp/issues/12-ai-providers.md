@@ -1,6 +1,6 @@
 # AI provider setup: Ollama and BYOK
 
-Status: ready-for-human
+Status: resolved
 Blocked by: 01
 Spec: ../spec.md
 
@@ -10,9 +10,9 @@ Settings for text-generation providers used by Summary and Ask: detect Ollama at
 
 ## Acceptance criteria
 
-- [ ] With Ollama running, its models are listed and one can be selected; a test prompt succeeds.
+- [x] With Ollama running, its models are listed and one can be selected; a test prompt succeeds.
 - [x] API keys never appear in files, logs or the index.
-- [ ] No provider configured → Summary/Ask show setup guidance; recording and transcription still work.
+- [x] No provider configured → Summary/Ask show setup guidance; recording and transcription still work.
 - [x] Unit tests with a fake provider for streaming, schema output and errors.
 
 ## Comments
@@ -42,3 +42,7 @@ Code is done and tested on Linux. The design is in `../12-core-design.md`. Codex
   2. Stop Ollama and click Find Ollama models again. You should see the "not running" guidance.
   3. Choose OpenAI or Anthropic, paste a key, Save key, Load models, then Send test message. Check that the key is listed in Credential Manager under "Meeting Minutes", and is not in `settings.json` in app data or any Meeting folder.
   4. With Provider = None, open a Meeting. You should see the "Summary and Ask" setup guidance, and recording and transcription should still work.
+
+### 2026-10-13: laptop check passed
+
+The owner ran the manual checks on the laptop and all passed. Resolved.

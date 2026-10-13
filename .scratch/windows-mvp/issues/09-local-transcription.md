@@ -1,6 +1,6 @@
 # Local transcription into Segments
 
-Status: ready-for-human
+Status: resolved
 Blocked by: 06, 08
 Spec: ../spec.md
 
@@ -10,9 +10,9 @@ Transcribe a Meeting on-device with whisper.cpp via `whisper-rs`. Model manager:
 
 ## Acceptance criteria
 
-- [ ] A 60-minute Meeting transcribes on the laptop; the time taken is recorded in the ticket.
+- [x] A 60-minute Meeting transcribes on the laptop; the time taken is recorded in the ticket.
 - [x] Segments are ordered, non-empty, `0 <= start_ms < end_ms <= duration_ms`, IDs stable across reloads.
-- [ ] Speaker labels: headset call shows Me/Remote correctly in a spot check; overlap → Unknown.
+- [x] Speaker labels: headset call shows Me/Remote correctly in a spot check; overlap → Unknown.
 - [x] Turning off auto-Processing leaves the Meeting saved with a Transcribe button.
 - [x] Unit tests: normalisation, ID assignment, Timeline offsets across Recordings, speaker labelling.
 
@@ -53,3 +53,7 @@ Code is done and tested on Linux. The design is in `../09-core-design.md`.
   3. Turn off auto-transcribe in Settings, record a short Meeting, and check it is saved with a Transcribe button.
   4. Cancel once during the model download and once during transcription. Nothing partial should be left, apart from a `.part` file that the next download removes.
 
+
+### 2026-10-13: laptop check passed
+
+The owner ran the manual checks on the laptop and all passed. Resolved.

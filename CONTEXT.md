@@ -1,6 +1,6 @@
 # Meeting Minutes
 
-A personal, local-first Windows app that records calls from any meeting app, turns them into timed transcripts, and answers cited questions about one meeting at a time.
+A single-user, local-first Windows app (no accounts, sharing or sync) that records calls from any meeting app, turns them into timed transcripts, and answers cited questions about one meeting at a time.
 
 ## Language
 
