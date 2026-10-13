@@ -2418,8 +2418,12 @@ name = "meeting_minutes_whisper"
 version = "0.1.0"
 dependencies = [
  "ash",
+ "chrono",
  "meeting_minutes_core",
+ "serde",
+ "serde_json",
  "sysinfo",
+ "tempfile",
  "whisper-rs",
  "whisper-rs-sys",
 ]

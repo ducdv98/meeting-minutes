@@ -3,6 +3,7 @@ use meeting_minutes_core::{
     processing::{ProcessingError, SpeechEngine},
     transcript::{Language, RawSegment},
 };
+pub mod benchmark;
 use std::{
     path::Path,
     sync::{
@@ -99,6 +100,28 @@ fn selected_device(devices: &[whisper_rs::vulkan::VkDeviceInfo]) -> BackendPlan 
     plan_backend(&memory)
 }
 
+#[cfg(any(windows, test))]
+fn requested_plan(
+    setting: Option<&str>,
+    available_ids: &[i32],
+    automatic: BackendPlan,
+) -> Result<BackendPlan, String> {
+    match setting {
+        None | Some("auto") => Ok(automatic),
+        Some("cpu") => Ok(BackendPlan::Cpu),
+        Some(value) => {
+            let id = value
+                .parse::<i32>()
+                .map_err(|_| format!("Invalid MM_WHISPER_DEVICE: {value}"))?;
+            if available_ids.contains(&id) {
+                Ok(BackendPlan::Vulkan(id))
+            } else {
+                Err(format!("Vulkan device {id} is unavailable"))
+            }
+        }
+    }
+}
+
 // whisper.cpp#3750: in static MSVC builds the Vulkan backend can fail to register during
 // static initialization, so ggml silently loads on CPU. After list_devices() has set up
 // the Vulkan instance, registering it again succeeds.
@@ -121,7 +144,10 @@ fn load_context(model_path: &Path) -> Result<(WhisperContext, &'static str), Str
     #[cfg(windows)]
     {
         let devices = available_devices();
-        match selected_device(&devices) {
+        let setting = std::env::var("MM_WHISPER_DEVICE").ok();
+        let ids = devices.iter().map(|device| device.id).collect::<Vec<_>>();
+        let selected = requested_plan(setting.as_deref(), &ids, selected_device(&devices))?;
+        match selected {
             BackendPlan::Vulkan(id) if ensure_vulkan_registered() => {
                 let mut params = WhisperContextParameters::default();
                 params.use_gpu(true).gpu_device(id).flash_attn(true);
@@ -131,6 +157,13 @@ fn load_context(model_path: &Path) -> Result<(WhisperContext, &'static str), Str
                 log_event(LogEvent::GpuLoadFailed);
             }
             _ => log_event(LogEvent::GpuUnavailable),
+        }
+    }
+
+    #[cfg(not(windows))]
+    if let Ok(value) = std::env::var("MM_WHISPER_DEVICE") {
+        if value != "auto" && value != "cpu" {
+            return Err("Vulkan device selection needs a Windows Vulkan build".into());
         }
     }
 
@@ -268,11 +301,26 @@ impl WhisperEngine {
         whisper_rs::print_system_info()
     }
 
+    pub fn available_device_descriptions() -> Vec<String> {
+        #[cfg(windows)]
+        {
+            return available_devices()
+                .iter()
+                .map(|device| format!("{}: {}", device.id, device.name))
+                .collect();
+        }
+        #[cfg(not(windows))]
+        Vec::new()
+    }
+
     pub fn backend_description() -> String {
         #[cfg(windows)]
         {
             let devices = available_devices();
-            if let BackendPlan::Vulkan(id) = selected_device(&devices) {
+            let setting = std::env::var("MM_WHISPER_DEVICE").ok();
+            let ids = devices.iter().map(|device| device.id).collect::<Vec<_>>();
+            let selected = requested_plan(setting.as_deref(), &ids, selected_device(&devices));
+            if let Ok(BackendPlan::Vulkan(id)) = selected {
                 if let Some(device) = devices.iter().find(|device| device.id == id) {
                     return format!("Vulkan ({})", device.name);
                 }
@@ -456,6 +504,19 @@ mod tests {
     #[test]
     fn uses_cpu_without_a_device() {
         assert_eq!(plan_backend(&[]), BackendPlan::Cpu);
+    }
+
+    #[test]
+    fn benchmark_device_override_requires_an_available_id() {
+        assert_eq!(
+            requested_plan(Some("cpu"), &[0, 1], BackendPlan::Vulkan(1)).unwrap(),
+            BackendPlan::Cpu
+        );
+        assert_eq!(
+            requested_plan(Some("0"), &[0, 1], BackendPlan::Vulkan(1)).unwrap(),
+            BackendPlan::Vulkan(0)
+        );
+        assert!(requested_plan(Some("2"), &[0, 1], BackendPlan::Vulkan(1)).is_err());
     }
 
     #[test]
