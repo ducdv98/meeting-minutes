@@ -1,6 +1,7 @@
 use meeting_minutes_core::ai::{AiError, ProviderKind};
 use meeting_minutes_core::ask::AnswerState;
-use meeting_minutes_core::diagnostics::{build_diagnostics, DiagnosticsInput, LogEvent};
+use meeting_minutes_core::diagnostics::{build_diagnostics, DiagnosticsInput, LogEvent, TranscriptionEnvironment};
+use meeting_minutes_core::processing::PowerState;
 use std::time::Duration;
 
 #[test]
@@ -14,7 +15,47 @@ fn transcription_event_formats_timings_and_rtf_without_meeting_content() {
         Duration::from_millis(320),
         Duration::from_millis(4_000),
     );
-    assert_eq!(event.to_string(), "transcription_completed model=small backend=CPU threads=8 audio_ms=16000 audio_after_vad_ms=none preparation_ms=320 whisper_ms=4000 rtf=0.250");
+    assert_eq!(event.to_string(), "transcription_completed model=small backend=CPU device=\"none\" power=unknown threads=8 audio_ms=16000 audio_after_vad_ms=none preparation_ms=320 whisper_ms=4000 rtf=0.250");
+}
+
+#[test]
+fn diagnostics_keeps_selected_device_and_power_in_completed_transcription() {
+    let event = LogEvent::transcription_completed_with_device(
+        "small",
+        TranscriptionEnvironment {
+            backend: "Vulkan",
+            device: Some("NVIDIA GeForce RTX 4050 Laptop GPU"),
+            power: PowerState::Ac,
+        },
+        8,
+        16_000,
+        None,
+        Duration::ZERO,
+        Duration::from_millis(800),
+    );
+    let line = format!("[2026-10-13][10:47:02][meeting_minutes_events][INFO] {event}");
+    assert!(event
+        .to_string()
+        .contains("backend=Vulkan device=\"NVIDIA GeForce RTX 4050 Laptop GPU\" power=ac"));
+    let text = build_diagnostics(&DiagnosticsInput {
+        version: "0.1.0".into(),
+        windows_version: "Windows 11".into(),
+        cpu: "CPU".into(),
+        ram_mb: 1024,
+        audio_devices: Ok(vec![]),
+        selected_model: None,
+        provider: None,
+        whisper_system_info: None,
+        transcription_backend: Some(
+            "Vulkan device=\"NVIDIA GeForce RTX 4050 Laptop GPU\" power=ac".into(),
+        ),
+        recent_log_lines: vec![line.clone()],
+    });
+    assert!(text.contains(
+        "Transcription backend: Vulkan device=\"NVIDIA GeForce RTX 4050 Laptop GPU\" power=ac"
+    ));
+    assert!(text.contains(&line));
+    assert!(text.contains("Last transcription RTF: 0.050x"));
 }
 
 #[test]
@@ -44,7 +85,7 @@ fn transcription_event_handles_zero_audio_and_does_not_echo_unknown_model() {
 #[test]
 fn diagnostics_shows_whisper_info_backend_and_latest_rtf() {
     let line = |rtf: &str| {
-        format!("[2026-10-13][10:47:02][meeting_minutes_events][INFO] transcription_completed model=small backend=CPU threads=8 audio_ms=16000 audio_after_vad_ms=none preparation_ms=320 whisper_ms=4000 rtf={rtf}")
+        format!("[2026-10-13][10:47:02][meeting_minutes_events][INFO] transcription_completed model=small backend=CPU device=\"none\" power=unknown threads=8 audio_ms=16000 audio_after_vad_ms=none preparation_ms=320 whisper_ms=4000 rtf={rtf}")
     };
     let text = build_diagnostics(&DiagnosticsInput {
         version: "0.1.0".into(),
@@ -66,7 +107,7 @@ fn diagnostics_shows_whisper_info_backend_and_latest_rtf() {
 
 #[test]
 fn diagnostics_finds_last_rtf_before_recent_log_window() {
-    let completed = "[2026-10-13][10:47:02][meeting_minutes_events][INFO] transcription_completed model=small backend=CPU threads=8 audio_ms=16000 audio_after_vad_ms=none preparation_ms=320 whisper_ms=4000 rtf=0.250";
+    let completed = "[2026-10-13][10:47:02][meeting_minutes_events][INFO] transcription_completed model=small backend=CPU device=\"none\" power=unknown threads=8 audio_ms=16000 audio_after_vad_ms=none preparation_ms=320 whisper_ms=4000 rtf=0.250";
     let mut lines = vec![completed.to_owned()];
     lines.extend(std::iter::repeat_n(
         "[2026-10-13][10:47:03][meeting_minutes_events][INFO] startup".to_owned(),
@@ -154,8 +195,8 @@ fn diagnostics_rejects_non_plugin_headers_and_noncanonical_events() {
         "[2026-10-13][10:47:02][meeting_minutes_events][DEBUG] startup",
         "[2026-10-13][10:47:02][meeting_minutes_events][INFO] provider_error provider=openai status=+401",
         "[2026-10-13][10:47:02][meeting_minutes_events][INFO] unknown_event",
-        "[2026-10-13][10:47:02][meeting_minutes_events][INFO] transcription_completed model=small backend=CPU threads=8 audio_ms=16000 audio_after_vad_ms=none preparation_ms=320 whisper_ms=4000 rtf=0.250 title=private",
-        "[2026-10-13][10:47:02][meeting_minutes_events][INFO] transcription_completed model=private backend=CPU threads=8 audio_ms=16000 audio_after_vad_ms=none preparation_ms=320 whisper_ms=4000 rtf=0.250",
+        "[2026-10-13][10:47:02][meeting_minutes_events][INFO] transcription_completed model=small backend=CPU device=\"none\" power=unknown threads=8 audio_ms=16000 audio_after_vad_ms=none preparation_ms=320 whisper_ms=4000 rtf=0.250 title=private",
+        "[2026-10-13][10:47:02][meeting_minutes_events][INFO] transcription_completed model=private backend=CPU device=\"none\" power=unknown threads=8 audio_ms=16000 audio_after_vad_ms=none preparation_ms=320 whisper_ms=4000 rtf=0.250",
     ];
     let text = build_diagnostics(&DiagnosticsInput {
         version: "0.1.0".into(),

@@ -1,6 +1,6 @@
 use crate::{
     audio_prep::{prepare_import, prepare_recording, PreparedRecording},
-    diagnostics::{log_event, LogEvent},
+    diagnostics::{log_event, LogEvent, TranscriptionEnvironment},
     meeting_file::{MeetingFile, RecordingEntry},
     transcript::{
         assign_ids, place_segments, Language, PlacedSegment, RawSegment,
@@ -23,6 +23,13 @@ use std::{
 pub trait SpeechEngine {
     fn backend(&self) -> &str;
     fn thread_count(&self) -> usize;
+    /// Name of the device the engine runs on, such as the GPU name; None when unknown.
+    fn device(&self) -> Option<&str> {
+        None
+    }
+    fn power_state(&self) -> PowerState {
+        PowerState::Unknown
+    }
     /// Duration sent to Whisper after VAD for the latest `transcribe` call; None without VAD.
     fn audio_after_vad_ms(&self) -> Option<u64> {
         None
@@ -36,6 +43,39 @@ pub trait SpeechEngine {
         progress: &mut dyn FnMut(f32),
         cancel: &AtomicBool,
     ) -> Result<Vec<RawSegment>, ProcessingError>;
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PowerState {
+    Ac,
+    Battery,
+    Unknown,
+}
+
+impl PowerState {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Ac => "ac",
+            Self::Battery => "battery",
+            Self::Unknown => "unknown",
+        }
+    }
+
+    pub fn current() -> Self {
+        #[cfg(windows)]
+        {
+            use windows::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS};
+            let mut status = SYSTEM_POWER_STATUS::default();
+            if unsafe { GetSystemPowerStatus(&mut status) }.is_ok() {
+                return match status.ACLineStatus {
+                    0 => Self::Battery,
+                    1 => Self::Ac,
+                    _ => Self::Unknown,
+                };
+            }
+        }
+        Self::Unknown
+    }
 }
 
 #[derive(Debug)]
@@ -318,9 +358,13 @@ pub fn transcribe_meeting_named(
         return Err(error);
     }
     progress(1.0);
-    log_event(LogEvent::transcription_completed(
+    log_event(LogEvent::transcription_completed_with_device(
         request.model,
-        engine.backend(),
+        TranscriptionEnvironment {
+            backend: engine.backend(),
+            device: engine.device(),
+            power: engine.power_state(),
+        },
         engine.thread_count(),
         transcribed_ms,
         audio_after_vad_ms,
