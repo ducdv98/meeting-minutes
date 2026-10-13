@@ -43,7 +43,7 @@ beforeEach(() => {
   vi.mocked(renameParticipant).mockResolvedValue();
   vi.mocked(removeParticipant).mockResolvedValue();
   vi.mocked(assignSegments).mockResolvedValue();
-  vi.mocked(getSettings).mockResolvedValue({ recording_notice_acknowledged: true, cloud_notice_acknowledged: false, auto_process: true, model: "small", vocabulary: [], language: null, your_name: "Duc", ai: { provider: null, ollama_model: null, openai_model: null, anthropic_model: null } });
+  vi.mocked(getSettings).mockResolvedValue({ recording_notice_acknowledged: true, cloud_notice_acknowledged: false, auto_process: true, model: "small", vocabulary: [], language: null, your_name: "Duc", ai: { provider: null, ollama_model: null, openai_model: null, anthropic_model: null, gemini_model: null } });
   vi.mocked(processingStatus).mockResolvedValue({ jobs: [] });
   vi.mocked(transcriptDraft).mockResolvedValue([]);
   vi.mocked(meetingTranscript).mockResolvedValue(null);
@@ -78,7 +78,7 @@ it("names Participants for present Speaker labels while Processing is busy", asy
 
 it("names only the user in a Voice note with Unknown Segments", async () => {
   vi.mocked(meetingDetail).mockResolvedValue({ ...detail, sources: ["microphone"], voice_note: true });
-  vi.mocked(getSettings).mockResolvedValue({ recording_notice_acknowledged: true, cloud_notice_acknowledged: false, auto_process: true, model: "small", vocabulary: [], language: null, your_name: "Duc", ai: { provider: null, ollama_model: null, openai_model: null, anthropic_model: null } });
+  vi.mocked(getSettings).mockResolvedValue({ recording_notice_acknowledged: true, cloud_notice_acknowledged: false, auto_process: true, model: "small", vocabulary: [], language: null, your_name: "Duc", ai: { provider: null, ollama_model: null, openai_model: null, anthropic_model: null, gemini_model: null } });
   vi.mocked(meetingTranscript).mockResolvedValue({ schema_version: 1, revision: 1, created_at: "2026-10-12T10:00:00Z", model: "small", language: "en", language_detected: false, duration_ms: 1000, segments: [{ id: "s00001", start_ms: 0, end_ms: 500, text: "Note to self", speaker: "unknown" }] });
   render(<MeetingView id="old" onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
   const me = await screen.findByRole("combobox", { name: "Me Participant" });

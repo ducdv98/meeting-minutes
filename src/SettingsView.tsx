@@ -20,7 +20,7 @@ const PROVIDER_NOTES: Record<ProviderKind, string> = {
   openai: "Sends the Transcript to OpenAI when you click. Key kept in Windows Credential Manager.",
   anthropic: "Sends the Transcript to Anthropic when you click. Key kept in Windows Credential Manager.",
   groq: "Transcription key",
-  gemini: "Correction key",
+  gemini: "Sends the Transcript to Gemini when you click. Also used for Correction. Key kept in Windows Credential Manager.",
 };
 
 /** Settings with the typed Vocabulary, or null when it matches what is saved. */
@@ -101,8 +101,8 @@ export default function SettingsView() {
     finally { setAiBusy(false); }
   }
   const provider = providerStatus?.provider ?? null;
-  const isCloud = provider === "openai" || provider === "anthropic";
-  const hasKey = (kind: ProviderKind) => kind === "openai" ? providerStatus?.has_openai_key : kind === "anthropic" ? providerStatus?.has_anthropic_key : false;
+  const isCloud = provider === "openai" || provider === "anthropic" || provider === "gemini";
+  const hasKey = (kind: ProviderKind) => kind === "openai" ? providerStatus?.has_openai_key : kind === "anthropic" ? providerStatus?.has_anthropic_key : kind === "gemini" ? providerStatus?.has_gemini_key : false;
   const selectedLabel = provider ? PROVIDER_NAMES[provider] : "";
   const cloudNoticeVisible = !!settings && !settings.cloud_notice_acknowledged && !!(providerStatus?.has_groq_key || providerStatus?.has_gemini_key);
   async function saveCloudKey(kind: "groq" | "gemini") {

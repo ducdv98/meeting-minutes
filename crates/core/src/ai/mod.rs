@@ -20,7 +20,8 @@ pub fn context_tokens(kind: ProviderKind) -> usize {
         ProviderKind::Ollama => OLLAMA_CONTEXT_TOKENS as usize,
         ProviderKind::Openai => 128_000,
         ProviderKind::Anthropic => 200_000,
-        ProviderKind::Groq | ProviderKind::Gemini => 0,
+        ProviderKind::Gemini => 1_000_000,
+        ProviderKind::Groq => 0,
     }
 }
 
@@ -95,6 +96,7 @@ pub enum AiError {
     Unreachable(String),
     KeyStore(String),
     Auth(ProviderKind),
+    GeminiLimit,
     Http { status: u16, message: String },
     Refused,
     Truncated,
@@ -111,6 +113,7 @@ impl fmt::Display for AiError {
             Self::Unreachable(message) => f.write_str(message),
             Self::KeyStore(message) => write!(f, "Could not read the API key: {message}"),
             Self::Auth(kind) => write!(f, "{} rejected the API key", kind.label()),
+            Self::GeminiLimit => f.write_str("Gemini free limit reached, try later or pick another provider"),
             Self::Http { status, message } => write!(f, "AI provider error ({status}): {message}"),
             Self::Refused => f.write_str("The model declined to answer"),
             Self::Truncated => f.write_str("The response was cut off (output limit reached)"),
@@ -234,7 +237,8 @@ pub fn ai_status(settings: &AiSettings, secrets: &dyn SecretStore) -> AiStatus {
         Some(ProviderKind::Ollama) => model.is_some(),
         Some(ProviderKind::Openai) => model.is_some() && has_openai_key,
         Some(ProviderKind::Anthropic) => model.is_some() && has_anthropic_key,
-        Some(ProviderKind::Groq | ProviderKind::Gemini) => false,
+        Some(ProviderKind::Gemini) => model.is_some() && has_gemini_key,
+        Some(ProviderKind::Groq) => false,
         None => false,
     };
     AiStatus {
@@ -253,7 +257,7 @@ pub fn configured_provider(
     http: Arc<dyn HttpClient>,
 ) -> Result<HttpProvider, AiError> {
     let kind = settings.provider.ok_or(AiError::NotConfigured)?;
-    if matches!(kind, ProviderKind::Groq | ProviderKind::Gemini) {
+    if kind == ProviderKind::Groq {
         return Err(AiError::Unsupported(format!(
             "{} is not supported for Summary or Ask yet",
             kind.label()
@@ -277,7 +281,8 @@ pub fn configured_provider(
         ProviderKind::Ollama => HttpProvider::ollama(http, model),
         ProviderKind::Openai => HttpProvider::openai(http, model, key.expect("cloud key")),
         ProviderKind::Anthropic => HttpProvider::anthropic(http, model, key.expect("cloud key")),
-        ProviderKind::Groq | ProviderKind::Gemini => {
+        ProviderKind::Gemini => HttpProvider::gemini(http, model, key.expect("cloud key")),
+        ProviderKind::Groq => {
             return Err(AiError::Unsupported(format!(
                 "{} is not supported for Summary or Ask yet",
                 kind.label()

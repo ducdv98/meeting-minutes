@@ -44,6 +44,7 @@ pub struct AiSettings {
     pub ollama_model: Option<String>,
     pub openai_model: Option<String>,
     pub anthropic_model: Option<String>,
+    pub gemini_model: Option<String>,
 }
 
 impl AiSettings {
@@ -54,7 +55,8 @@ impl AiSettings {
             ProviderKind::Anthropic => {
                 Some(self.anthropic_model.as_deref().unwrap_or("claude-opus-5-5"))
             }
-            ProviderKind::Groq | ProviderKind::Gemini => None,
+            ProviderKind::Gemini => Some(self.gemini_model.as_deref().unwrap_or("gemini-2.5-flash")),
+            ProviderKind::Groq => None,
         }
     }
     pub fn set_model(&mut self, kind: ProviderKind, model: String) {
@@ -62,7 +64,8 @@ impl AiSettings {
             ProviderKind::Ollama => &mut self.ollama_model,
             ProviderKind::Openai => &mut self.openai_model,
             ProviderKind::Anthropic => &mut self.anthropic_model,
-            ProviderKind::Groq | ProviderKind::Gemini => return,
+            ProviderKind::Gemini => &mut self.gemini_model,
+            ProviderKind::Groq => return,
         };
         *field = Some(model);
     }

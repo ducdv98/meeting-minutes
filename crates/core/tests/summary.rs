@@ -199,6 +199,24 @@ fn single_chunk_drops_unsupported_items_and_keeps_transcript_times() {
     assert_eq!(result.revision, 3);
 }
 #[test]
+fn gemini_summary_keeps_only_citations_to_this_meeting() {
+    let output = raw(json!([{"text":"Decision","citations":["s00001"]},{"text":"Invented","citations":["s99999"]}]), json!([]));
+    let provider = FakeProvider::with(&[&output]);
+    let provider = GeminiProvider(provider);
+    let result = summarize(&provider, &transcript(2, Language::En), &Participants::new(Default::default(), None, None, false), &SummaryOptions::for_provider(ProviderKind::Gemini), &mut |_, _| {}, &AtomicBool::new(false)).unwrap();
+    assert_eq!(result.provider, ProviderKind::Gemini);
+    assert_eq!(result.overview.len(), 1);
+    assert_eq!(result.overview[0].citations[0].start_ms, 65_000);
+    assert_eq!(result.dropped_items, 1);
+}
+
+struct GeminiProvider(FakeProvider);
+impl TextProvider for GeminiProvider {
+    fn kind(&self) -> ProviderKind { ProviderKind::Gemini }
+    fn model(&self) -> &str { "gemini-2.5-flash" }
+    fn generate(&self, request: &GenerateRequest, on_delta: &mut dyn FnMut(&str), cancel: &AtomicBool) -> Result<String, AiError> { self.0.generate(request, on_delta, cancel) }
+}
+#[test]
 fn long_transcript_is_chunked_without_losing_late_segments_and_reduced() {
     let transcript = transcript(30, Language::En);
     let options = SummaryOptions {
