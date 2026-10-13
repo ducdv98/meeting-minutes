@@ -1,0 +1,18 @@
+// Serves website/dist as a static-only Worker on meeting-minutes.tech.
+// Deployed by .github/workflows/website.yml once the site is ready to publish.
+{
+  "name": "meeting-minutes-website",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "directory": "./dist",
+    // /privacy/ serves privacy/index.html; unknown paths get dist/404.html with a 404 status.
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "404-page"
+  },
+  "routes": [
+    { "pattern": "meeting-minutes.tech", "custom_domain": true }
+  ],
+  // Only the custom domain serves the site: no *.workers.dev or preview copies.
+  "workers_dev": false,
+  "preview_urls": false
+}

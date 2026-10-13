@@ -17,8 +17,11 @@ Run `node website/build.mjs --check-ready` to list missing publish prerequisites
 
 ## One-time owner setup
 
-1. In repository Settings → Pages, choose **GitHub Actions** as the build and deployment source. Set the custom domain to `meeting-minutes.tech`. The build writes `dist/CNAME`, though GitHub Pages custom domain settings are authoritative for Actions deployments.
-2. At the DNS provider, point the apex (`@`) to GitHub Pages with these four `A` records: `185.199.108.153`, `185.199.109.153`, `185.199.110.153`, `185.199.111.153`. Remove conflicting apex records. GitHub also documents optional IPv6 `AAAA` records and `ALIAS`/`ANAME` alternatives: [custom domain instructions](https://docs.github.com/en/pages/configuring-a-custom-domain-for-your-github-pages-site/managing-a-custom-domain-for-your-github-pages-site).
-3. After DNS and the certificate settle, enable **Enforce HTTPS** in Settings → Pages. Confirm the domain and HTTPS status there before sharing the site.
+The site is served by a static-only Cloudflare Worker (`wrangler.jsonc`) on the `meeting-minutes.tech` zone, which is already on Cloudflare DNS.
+
+1. In the Cloudflare dashboard, create an API token from the **Edit Cloudflare Workers** template, limited to your account and the `meeting-minutes.tech` zone. Add it to the repository secrets as `CLOUDFLARE_API_TOKEN`, and your account ID as `CLOUDFLARE_ACCOUNT_ID`.
+2. Remove any existing record for the apex `meeting-minutes.tech` (a CNAME there blocks the Custom Domain). The first deploy creates the DNS record and certificate itself.
+3. Keep **Web Analytics** and **Bot Fight Mode** off for the zone: the privacy policy promises no analytics, and Bot Fight Mode sets a `__cf_bm` cookie.
+4. Run the **Website** workflow (or push to `main`). While screenshots are missing, the deploy job lists them in the run summary and skips deploying. After the first deploy, open https://meeting-minutes.tech/ and check HTTPS.
 
 Publishing a Release triggers the website workflow so the download URL, version, size, roadmap and Changelog refresh from GitHub Releases. Do not deploy a `--draft` build.
