@@ -3,7 +3,7 @@ use std::{fmt, time::Duration};
 use crate::{
     ai::{AiError, ProviderKind},
     ask::AnswerState,
-    processing::PowerState,
+    processing::{PowerState, ProcessingError, ProcessingStage},
 };
 
 pub struct DiagnosticsInput {
@@ -40,7 +40,24 @@ pub enum LogEvent {
     ProcessingDownloading,
     ProcessingTranscribing,
     ProcessingCompleted,
-    ProcessingFailed,
+    ProcessingFailed {
+        stage: ProcessingStage,
+        kind: &'static str,
+        message: String,
+        backend: &'static str,
+        device: String,
+        audio_ms: u64,
+        total_ms: u64,
+        whisper_ms: u128,
+    },
+    ProcessingCancelled {
+        stage: ProcessingStage,
+        backend: &'static str,
+        device: String,
+        audio_ms: u64,
+        total_ms: u64,
+        whisper_ms: u128,
+    },
     VadUnavailable,
     GpuUnavailable,
     GpuLoadFailed,
@@ -82,7 +99,98 @@ pub struct TranscriptionEnvironment<'a> {
     pub power: PowerState,
 }
 
+/// A device name as the driver reports it, or None when it holds anything a GPU name would not, such as a path.
+pub fn safe_device_name(name: &str) -> Option<&str> {
+    (!name.is_empty()
+        && name.len() <= 128
+        && name
+            .chars()
+            .all(|c| c.is_alphanumeric() || matches!(c, ' ' | '-' | '_' | '.' | '(' | ')' | '+')))
+    .then_some(name)
+}
+
+fn safe_engine_message(message: &str) -> String {
+    // Only fixed engine diagnostics can be copied into logs; arbitrary errors may echo audio text.
+    let first = message.lines().next().unwrap_or("").trim();
+    if let Some(code) =
+        first.strip_prefix("Generic whisper error. Varies depending on the function. Error code: ")
+    {
+        if let Ok(code) = code.parse::<i32>() {
+            return format!("whisper_error_code_{code}");
+        }
+    }
+    match first {
+        "Whisper worker panicked" => "whisper_worker_panicked",
+        "Transcript revision overflow" => "transcript_revision_overflow",
+        "Transcript revision collision limit" => "transcript_revision_collision_limit",
+        "English language id unavailable" => "english_language_id_unavailable",
+        "Vietnamese language id unavailable" => "vietnamese_language_id_unavailable",
+        "Failed to create a new whisper context." => "failed_to_create_whisper_context",
+        "Failed to calculate the spectrogram for some reason." => "failed_to_calculate_spectrogram",
+        "Failed to evaluate model." => "failed_to_evaluate_model",
+        "Failed to run the encoder." => "failed_to_run_encoder",
+        "Failed to run the decoder." => "failed_to_run_decoder",
+        "Invalid number of mel bands." => "invalid_mel_bands",
+        "Invalid thread count." => "invalid_thread_count",
+        "Whisper returned a null pointer." => "whisper_null_pointer",
+        "Whisper failed to convert the provided text into tokens." => "whisper_tokenization_failed",
+        "Creating a state pointer failed." => "failed_to_create_whisper_state",
+        "Input sample buffer was empty." => "empty_sample_buffer",
+        _ => "redacted",
+    }
+    .to_owned()
+}
+
 impl LogEvent {
+    pub fn processing_result(
+        error: &ProcessingError,
+        stage: ProcessingStage,
+        backend: Option<&str>,
+        device: Option<&str>,
+        audio_ms: u64,
+        total_ms: u64,
+        whisper: Duration,
+    ) -> Self {
+        let backend = TRANSCRIPTION_BACKENDS
+            .iter()
+            .copied()
+            .find(|known| Some(*known) == backend)
+            .unwrap_or("unknown");
+        let device = device.and_then(safe_device_name).unwrap_or("none").to_owned();
+        let audio_ms = audio_ms.min(total_ms);
+        if matches!(error, ProcessingError::Cancelled) {
+            return Self::ProcessingCancelled {
+                stage,
+                backend,
+                device,
+                audio_ms,
+                total_ms,
+                whisper_ms: whisper.as_millis(),
+            };
+        }
+        let (kind, message) = match error {
+            ProcessingError::Io(_) => ("io", "none".into()),
+            ProcessingError::Json(_) => ("json", "none".into()),
+            ProcessingError::Audio(_) => ("audio", "none".into()),
+            ProcessingError::Unsupported(_) => ("unsupported", "none".into()),
+            ProcessingError::Engine(message) => ("engine", safe_engine_message(message)),
+            ProcessingError::Download(_) => ("download", "none".into()),
+            ProcessingError::Checksum => ("checksum", "none".into()),
+            ProcessingError::NoAudio => ("no_audio", "none".into()),
+            ProcessingError::Cancelled => unreachable!(),
+        };
+        Self::ProcessingFailed {
+            stage,
+            kind,
+            message,
+            backend,
+            device,
+            audio_ms,
+            total_ms,
+            whisper_ms: whisper.as_millis(),
+        }
+    }
+
     pub fn transcription_completed(
         model: &str,
         backend: &str,
@@ -128,16 +236,7 @@ impl LogEvent {
         Self::TranscriptionCompleted {
             model: model.to_owned(),
             backend: (*backend).to_owned(),
-            device: environment.device
-                .filter(|name| {
-                    !name.is_empty()
-                        && name.len() <= 128
-                        && name.chars().all(|c| {
-                            c.is_alphanumeric()
-                                || matches!(c, ' ' | '-' | '_' | '.' | '(' | ')' | '+')
-                        })
-                })
-                .map(str::to_owned),
+            device: environment.device.and_then(safe_device_name).map(str::to_owned),
             power: environment.power,
             threads,
             audio_ms,
@@ -193,7 +292,28 @@ impl fmt::Display for LogEvent {
             Self::ProcessingDownloading => "processing_downloading",
             Self::ProcessingTranscribing => "processing_transcribing",
             Self::ProcessingCompleted => "processing_completed",
-            Self::ProcessingFailed => "processing_failed",
+            Self::ProcessingFailed {
+                stage,
+                kind,
+                message,
+                backend,
+                device,
+                audio_ms,
+                total_ms,
+                whisper_ms,
+            } => {
+                return write!(f, "processing_failed stage={} kind={kind} message={message} backend={backend} device=\"{device}\" audio_ms={audio_ms} total_ms={total_ms} whisper_ms={whisper_ms}", stage.as_str());
+            }
+            Self::ProcessingCancelled {
+                stage,
+                backend,
+                device,
+                audio_ms,
+                total_ms,
+                whisper_ms,
+            } => {
+                return write!(f, "processing_cancelled stage={} backend={backend} device=\"{device}\" audio_ms={audio_ms} total_ms={total_ms} whisper_ms={whisper_ms}", stage.as_str());
+            }
             Self::VadUnavailable => "vad_unavailable",
             Self::GpuUnavailable => "gpu_unavailable",
             Self::GpuLoadFailed => "gpu_load_failed",
@@ -312,7 +432,6 @@ fn safe_log_line(line: &str) -> bool {
             | "processing_downloading"
             | "processing_transcribing"
             | "processing_completed"
-            | "processing_failed"
             | "vad_unavailable"
             | "gpu_unavailable"
             | "gpu_load_failed"
@@ -328,6 +447,9 @@ fn safe_log_line(line: &str) -> bool {
             | "ask_off_topic"
             | "ask_failed"
     ) {
+        return true;
+    }
+    if parse_processing_event(event) {
         return true;
     }
     if parse_transcription_rtf(event).is_some() {
@@ -346,6 +468,105 @@ fn safe_log_line(line: &str) -> bool {
                 .is_ok_and(|value| value.to_string() == status))
 }
 
+fn parse_processing_event(event: &str) -> bool {
+    let (failed, rest) = if let Some(rest) = event.strip_prefix("processing_failed stage=") {
+        (true, rest)
+    } else if let Some(rest) = event.strip_prefix("processing_cancelled stage=") {
+        (false, rest)
+    } else {
+        return false;
+    };
+    let Some((stage, rest)) = rest.split_once(' ') else {
+        return false;
+    };
+    if !matches!(
+        stage,
+        "downloading" | "preparing" | "transcribing" | "publishing"
+    ) {
+        return false;
+    }
+    let rest = if failed {
+        let Some((kind, rest)) = rest
+            .strip_prefix("kind=")
+            .and_then(|rest| rest.split_once(" message="))
+        else {
+            return false;
+        };
+        if !matches!(
+            kind,
+            "io" | "json"
+                | "audio"
+                | "unsupported"
+                | "engine"
+                | "download"
+                | "checksum"
+                | "no_audio"
+        ) {
+            return false;
+        }
+        let Some((message, rest)) = rest.split_once(" backend=") else {
+            return false;
+        };
+        if !matches!(
+            message,
+            "none"
+                | "redacted"
+                | "whisper_worker_panicked"
+                | "transcript_revision_overflow"
+                | "transcript_revision_collision_limit"
+                | "english_language_id_unavailable"
+                | "vietnamese_language_id_unavailable"
+                | "failed_to_create_whisper_context"
+                | "failed_to_calculate_spectrogram"
+                | "failed_to_evaluate_model"
+                | "failed_to_run_encoder"
+                | "failed_to_run_decoder"
+                | "invalid_mel_bands"
+                | "invalid_thread_count"
+                | "whisper_null_pointer"
+                | "whisper_tokenization_failed"
+                | "failed_to_create_whisper_state"
+                | "empty_sample_buffer"
+        ) && !message
+            .strip_prefix("whisper_error_code_")
+            .is_some_and(|code| {
+                code.parse::<i32>()
+                    .is_ok_and(|value| value.to_string() == code)
+            })
+        {
+            return false;
+        }
+        rest
+    } else {
+        rest
+    };
+    let rest = if failed {
+        rest
+    } else {
+        rest.strip_prefix("backend=").unwrap_or("")
+    };
+    let Some((backend, rest)) = rest.split_once(" device=\"") else {
+        return false;
+    };
+    if !TRANSCRIPTION_BACKENDS.contains(&backend) {
+        return false;
+    }
+    let Some((device, rest)) = rest.split_once("\" audio_ms=") else {
+        return false;
+    };
+    if device != "none" && safe_device_name(device).is_none() {
+        return false;
+    }
+    let Some((audio, rest)) = rest.split_once(" total_ms=") else {
+        return false;
+    };
+    let Some((total, whisper)) = rest.split_once(" whisper_ms=") else {
+        return false;
+    };
+    let number = |s: &str| s.parse::<u128>().is_ok_and(|n| n.to_string() == s);
+    number(audio) && number(total) && number(whisper)
+}
+
 fn parse_transcription_rtf(event: &str) -> Option<&str> {
     let rest = event.strip_prefix("transcription_completed model=")?;
     let (model, rest) = rest.split_once(" backend=")?;
@@ -360,11 +581,7 @@ fn parse_transcription_rtf(event: &str) -> Option<&str> {
         return None;
     }
     let (device, rest) = rest.split_once("\" power=")?;
-    if device.len() > 128
-        || !device
-            .chars()
-            .all(|c| c.is_alphanumeric() || matches!(c, ' ' | '-' | '_' | '.' | '(' | ')' | '+'))
-    {
+    if device != "none" && safe_device_name(device).is_none() {
         return None;
     }
     let (power, rest) = rest.split_once(" threads=")?;
@@ -428,8 +645,20 @@ pub fn build_diagnostics(input: &DiagnosticsInput) -> String {
             parse_transcription_rtf(event)
         })
         .unwrap_or("None");
+    let last_failure = input
+        .recent_log_lines
+        .iter()
+        .rev()
+        .find(|line| {
+            if !safe_log_line(line) {
+                return false;
+            }
+            line.split_once("] ")
+                .is_some_and(|(_, event)| event.starts_with("processing_failed "))
+        })
+        .map_or("None", String::as_str);
     format!(
-        "Meeting Minutes {} Beta\nWindows: {}\nCPU: {}\nRAM: {} MB\nAudio devices:\n{}\nSelected model: {}\nProvider: {}\nwhisper.cpp system info: {}\nTranscription backend: {}\nLast transcription RTF: {}\nRecent log lines:\n{}",
+        "Meeting Minutes {} Beta\nWindows: {}\nCPU: {}\nRAM: {} MB\nAudio devices:\n{}\nSelected model: {}\nProvider: {}\nwhisper.cpp system info: {}\nTranscription backend: {}\nLast transcription RTF: {}\nLast processing failure: {}\nRecent log lines:\n{}",
         input.version,
         input.windows_version,
         input.cpu,
@@ -440,6 +669,7 @@ pub fn build_diagnostics(input: &DiagnosticsInput) -> String {
         input.whisper_system_info.as_deref().unwrap_or("Unavailable"),
         input.transcription_backend.as_deref().unwrap_or("Unavailable"),
         if last_rtf == "None" || last_rtf == "none" { "None".to_owned() } else { format!("{last_rtf}x") },
+        last_failure,
         lines,
     )
 }

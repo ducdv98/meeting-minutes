@@ -110,6 +110,101 @@ fn completed_transcription_reports_speech_duration_across_recordings() {
     }));
 }
 
+#[test]
+fn engine_failure_logs_transcribing_stage_and_completed_audio() {
+    struct FailingEngine {
+        calls: usize,
+    }
+    impl SpeechEngine for FailingEngine {
+        fn backend(&self) -> &str {
+            "Vulkan"
+        }
+        fn device(&self) -> Option<&str> {
+            Some("NVIDIA GeForce RTX 4050")
+        }
+        fn thread_count(&self) -> usize {
+            1
+        }
+        fn detect_language(&mut self, _: &[f32]) -> Result<Language, String> {
+            Ok(Language::En)
+        }
+        fn transcribe(
+            &mut self,
+            _: &[f32],
+            _: Language,
+            _: Option<&str>,
+            progress: &mut dyn FnMut(f32),
+            _: &AtomicBool,
+        ) -> Result<Vec<RawSegment>, ProcessingError> {
+            self.calls += 1;
+            if self.calls == 2 {
+                progress(0.5);
+                Err(ProcessingError::Engine(
+                    "Whisper worker panicked\n/private/Meeting/audio.flac secret Transcript text"
+                        .into(),
+                ))
+            } else {
+                Ok(vec![])
+            }
+        }
+    }
+    record_events();
+    let (_temp, dir) = saved_meeting();
+    let mut engine = FailingEngine { calls: 0 };
+    let result = transcribe_meeting(
+        &TranscribeRequest {
+            meeting_dir: &dir,
+            model: "small",
+            vocabulary: &[],
+            default_language: Some(Language::En),
+        },
+        &mut engine,
+        &mut |_| {},
+        &AtomicBool::new(false),
+    );
+    assert!(matches!(result, Err(ProcessingError::Engine(_))));
+    let current = std::thread::current().id();
+    let events = EVENTS.get().unwrap().lock().unwrap();
+    let event = events
+        .iter()
+        .rev()
+        .find(|(thread, event)| *thread == current && event.starts_with("processing_failed "))
+        .unwrap()
+        .1
+        .as_str();
+    assert!(event.contains("stage=transcribing kind=engine message=whisper_worker_panicked backend=Vulkan device=\"NVIDIA GeForce RTX 4050\" audio_ms=150 total_ms=400 whisper_ms="), "{event}");
+    assert!(!event.contains("/private"));
+    assert!(!event.contains("secret Transcript text"));
+}
+
+#[test]
+fn cancelled_transcription_logs_cancellation() {
+    record_events();
+    let (_temp, dir) = saved_meeting();
+    let mut engine = FakeEngine {
+        calls: 0,
+        prompts: vec![],
+        detected: 0,
+        lengths: vec![],
+    };
+    let result = transcribe_meeting(
+        &TranscribeRequest {
+            meeting_dir: &dir,
+            model: "small",
+            vocabulary: &[],
+            default_language: None,
+        },
+        &mut engine,
+        &mut |_| {},
+        &AtomicBool::new(true),
+    );
+    assert!(matches!(result, Err(ProcessingError::Cancelled)));
+    let current = std::thread::current().id();
+    let events = EVENTS.get().unwrap().lock().unwrap();
+    assert!(events.iter().any(|(thread, event)| *thread == current
+        && event.starts_with("processing_cancelled stage=preparing ")));
+}
+
 fn saved_meeting() -> (TempDir, std::path::PathBuf) {
     let temp = TempDir::new().unwrap();
     let mut library = Library::open(

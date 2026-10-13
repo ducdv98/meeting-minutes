@@ -28,15 +28,6 @@ pub struct WhisperEngine {
 
 static LAST_BACKEND: OnceLock<Mutex<String>> = OnceLock::new();
 
-#[cfg(windows)]
-fn diagnostic_device_name(name: &str) -> Option<String> {
-    (name.len() <= 128
-        && name.chars().all(|c| {
-            c.is_alphanumeric() || matches!(c, ' ' | '-' | '_' | '.' | '(' | ')' | '+')
-        }))
-    .then(|| name.to_owned())
-}
-
 const SAMPLE_RATE: usize = 16_000;
 const OVERLAP_SAMPLES: usize = SAMPLE_RATE / 10;
 const GAP_SAMPLES: usize = SAMPLE_RATE / 10;
@@ -184,7 +175,7 @@ fn load_context(
                     let name = devices
                         .iter()
                         .find(|device| device.id == id)
-                        .and_then(|device| diagnostic_device_name(&device.name));
+                        .and_then(|device| meeting_minutes_core::diagnostics::safe_device_name(&device.name).map(str::to_owned));
                     return Ok((context, "Vulkan", name, power));
                 }
                 log_event(LogEvent::GpuLoadFailed);
@@ -338,7 +329,7 @@ impl WhisperEngine {
             if let BackendPlan::Vulkan(id) = selected_device(&devices, power) {
                 if let Some(device) = devices.iter().find(|device| device.id == id) {
                     let name =
-                        diagnostic_device_name(&device.name).unwrap_or_else(|| "none".to_owned());
+                        meeting_minutes_core::diagnostics::safe_device_name(&device.name).map(str::to_owned).unwrap_or_else(|| "none".to_owned());
                     return format!("Vulkan device=\"{name}\" power={}", power.label());
                 }
             }

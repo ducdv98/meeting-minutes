@@ -115,6 +115,31 @@ impl PowerState {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub enum ProcessingStage {
+    Downloading,
+    Preparing,
+    Transcribing,
+    Publishing,
+}
+impl ProcessingStage {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Downloading => "downloading",
+            Self::Preparing => "preparing",
+            Self::Transcribing => "transcribing",
+            Self::Publishing => "publishing",
+        }
+    }
+}
+
+struct ProcessingTelemetry {
+    stage: ProcessingStage,
+    audio_ms: u64,
+    total_ms: u64,
+    whisper: Duration,
+}
+
 #[derive(Debug)]
 pub enum ProcessingError {
     Cancelled,
@@ -192,6 +217,38 @@ pub fn transcribe_meeting_named(
     cancel: &AtomicBool,
     your_name: Option<&str>,
 ) -> Result<Transcript, ProcessingError> {
+    let mut telemetry = ProcessingTelemetry {
+        stage: ProcessingStage::Preparing,
+        audio_ms: 0,
+        total_ms: 0,
+        whisper: Duration::ZERO,
+    };
+    let backend = engine.backend().to_owned();
+    let device = engine.device().map(str::to_owned);
+    let result =
+        transcribe_meeting_inner(request, engine, progress, cancel, your_name, &mut telemetry);
+    if let Err(error) = &result {
+        log_event(LogEvent::processing_result(
+            error,
+            telemetry.stage,
+            Some(&backend),
+            device.as_deref(),
+            telemetry.audio_ms,
+            telemetry.total_ms,
+            telemetry.whisper,
+        ));
+    }
+    result
+}
+
+fn transcribe_meeting_inner(
+    request: &TranscribeRequest,
+    engine: &mut dyn SpeechEngine,
+    progress: &mut dyn FnMut(f32),
+    cancel: &AtomicBool,
+    your_name: Option<&str>,
+    telemetry: &mut ProcessingTelemetry,
+) -> Result<Transcript, ProcessingError> {
     if cancel.load(Ordering::SeqCst) {
         return Err(ProcessingError::Cancelled);
     }
@@ -216,6 +273,7 @@ pub fn transcribe_meeting_named(
             .map(|r| r.duration_ms * r.files.len() as u64)
             .sum()
     };
+    telemetry.total_ms = total;
     let prompt = request
         .vocabulary
         .iter()
@@ -241,90 +299,112 @@ pub fn transcribe_meeting_named(
     let mut whisper_wall_time = Duration::ZERO;
     let mut transcribed_ms = 0u64;
     let mut audio_after_vad_ms = Some(0u64);
-    let mut process =
-        |prepared: Vec<PreparedRecording>, elapsed: u64| -> Result<(), ProcessingError> {
-            let whisper_started = Instant::now();
-            if language.is_none() {
-                if let Some(stream) = prepared
-                    .iter()
-                    .find(|stream| engine.has_speech(&stream.samples_16k))
-                {
-                    language = Some(
-                        engine
-                            .detect_language(&stream.samples_16k)
-                            .map_err(ProcessingError::Engine)?,
-                    );
-                }
-            }
-            let group_ms: u64 = prepared
+    let mut process = |prepared: Vec<PreparedRecording>,
+                       elapsed: u64,
+                       telemetry: &mut ProcessingTelemetry|
+     -> Result<(), ProcessingError> {
+        telemetry.stage = ProcessingStage::Transcribing;
+        let whisper_started = Instant::now();
+        if language.is_none() {
+            if let Some(stream) = prepared
                 .iter()
-                .map(|stream| stream.samples_16k.len() as u64 * 1000 / 16_000)
-                .sum();
-            let weight = if total == 0 {
-                1.0
-            } else {
-                group_ms as f32 / total as f32
-            };
-            let offset = if total == 0 {
-                0.0
-            } else {
-                elapsed as f32 / total as f32
-            };
-            let streams = prepared
-                .iter()
-                .map(|stream| stream.samples_16k.as_slice())
-                .collect::<Vec<_>>();
-            let results = engine.transcribe_streams(
-                &streams,
-                language.unwrap_or(Language::En),
-                prompt,
-                &mut |p| progress((offset + p.clamp(0.0, 1.0) * weight).clamp(0.0, 1.0)),
-                cancel,
-            )?;
-            if results.len() != prepared.len() {
-                return Err(ProcessingError::Engine(
-                    "Engine returned the wrong number of streams".into(),
-                ));
+                .find(|stream| engine.has_speech(&stream.samples_16k))
+            {
+                language = Some(match engine.detect_language(&stream.samples_16k) {
+                    Ok(language) => language,
+                    Err(error) => {
+                        telemetry.whisper += whisper_started.elapsed();
+                        return Err(ProcessingError::Engine(error));
+                    }
+                });
             }
-            for (stream, result) in prepared.iter().zip(results) {
-                audio_after_vad_ms = audio_after_vad_ms
-                    .and_then(|total| result.audio_after_vad_ms.map(|duration| total + duration));
-                let index = match stream.speaker {
-                    Speaker::Me => 0,
-                    Speaker::Remote => 1,
-                    Speaker::Unknown => 2,
-                };
-                per_source[index].extend(place_segments(
-                    &result.segments,
-                    stream.duration_ms,
-                    stream.timeline_start_ms,
-                    stream.speaker,
-                ));
-            }
-            whisper_wall_time += whisper_started.elapsed();
-            transcribed_ms += group_ms;
-            Ok(())
+        }
+        let group_ms: u64 = prepared
+            .iter()
+            .map(|stream| stream.samples_16k.len() as u64 * 1000 / 16_000)
+            .sum();
+        let weight = if total == 0 {
+            1.0
+        } else {
+            group_ms as f32 / total as f32
         };
+        let offset = if total == 0 {
+            0.0
+        } else {
+            elapsed as f32 / total as f32
+        };
+        let streams = prepared
+            .iter()
+            .map(|stream| stream.samples_16k.as_slice())
+            .collect::<Vec<_>>();
+        let mut group_progress = 0.0f32;
+        let result = engine.transcribe_streams(
+            &streams,
+            language.unwrap_or(Language::En),
+            prompt,
+            &mut |p| {
+                group_progress = group_progress.max(p.clamp(0.0, 1.0));
+                progress((offset + group_progress * weight).clamp(0.0, 1.0));
+            },
+            cancel,
+        );
+        let whisper_elapsed = whisper_started.elapsed();
+        telemetry.whisper += whisper_elapsed;
+        let results = match result {
+            Ok(results) => results,
+            Err(error) => {
+                telemetry.audio_ms += (group_ms as f64 * group_progress as f64) as u64;
+                return Err(error);
+            }
+        };
+        if results.len() != prepared.len() {
+            return Err(ProcessingError::Engine(
+                "Engine returned the wrong number of streams".into(),
+            ));
+        }
+        for (stream, result) in prepared.iter().zip(results) {
+            audio_after_vad_ms = audio_after_vad_ms
+                .and_then(|total| result.audio_after_vad_ms.map(|duration| total + duration));
+            let index = match stream.speaker {
+                Speaker::Me => 0,
+                Speaker::Remote => 1,
+                Speaker::Unknown => 2,
+            };
+            per_source[index].extend(place_segments(
+                &result.segments,
+                stream.duration_ms,
+                stream.timeline_start_ms,
+                stream.speaker,
+            ));
+        }
+        whisper_wall_time += whisper_elapsed;
+        transcribed_ms += group_ms;
+        telemetry.audio_ms += group_ms;
+        Ok(())
+    };
     if let Some(import) = &metadata.import {
+        telemetry.stage = ProcessingStage::Preparing;
         let preparation_started = Instant::now();
         let prepared = prepare_import(request.meeting_dir, &import.file, cancel)?;
         preparation_wall_time += preparation_started.elapsed();
-        process(vec![prepared], 0)?;
+        process(vec![prepared], 0, telemetry)?;
     } else {
         for recording in recordings {
+            telemetry.stage = ProcessingStage::Preparing;
             if cancel.load(Ordering::SeqCst) {
                 return Err(ProcessingError::Cancelled);
             }
             let preparation_started = Instant::now();
             let prepared = prepare_recording(request.meeting_dir, recording, cancel)?;
             preparation_wall_time += preparation_started.elapsed();
-            process(prepared, elapsed)?;
+            process(prepared, elapsed, telemetry)?;
             elapsed += recording.duration_ms * recording.files.len() as u64;
         }
     }
     if cancel.load(Ordering::SeqCst) {
         return Err(ProcessingError::Cancelled);
     }
+    telemetry.stage = ProcessingStage::Publishing;
     let revision = fs::read_dir(request.meeting_dir)?
         .filter_map(|entry| {
             let name = entry.ok()?.file_name();
@@ -394,31 +474,57 @@ pub fn transcribe_meeting_named(
             "Transcript revision collision limit".into(),
         ));
     }
-    let write = crate::metadata::update_metadata_and(request.meeting_dir, |metadata| {
-        let file: MeetingFile = serde_json::from_value(metadata.clone())?;
-        // Segment moves belong to the Revision they were made on; carry them onto this one by time.
-        let previous_path = file.segment_participants.as_ref().filter(|map| map.revision != transcript.revision)
-            .map(|map| request.meeting_dir.join(format!("transcript.r{}.json", map.revision)));
-        if let Some(previous_path) = previous_path.filter(|path| path.is_file()) {
-            let previous: Transcript = serde_json::from_slice(&fs::read(previous_path)?)?;
-            let participants = crate::participant::Participants::new(file.participants.clone(), file.segment_participants.clone(), your_name, file.is_voice_note());
-            metadata["segment_participants"] = serde_json::to_value(crate::participant::carry_over(&previous, &transcript, &participants))?;
-        }
-        Ok(())
-    }, |metadata| {
-        let file: MeetingFile = serde_json::from_value(metadata.clone()).map_err(io::Error::other)?;
-        let participants = crate::participant::Participants::new(file.participants.clone(), file.segment_participants.clone(), your_name, file.is_voice_note());
-        let markdown = crate::transcript::render_markdown_named(&file.title, &transcript, &participants);
-        let mut md = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(&markdown_tmp)?;
-        md.write_all(markdown.as_bytes())?;
-        md.sync_all()?;
-        fs::rename(&markdown_tmp, request.meeting_dir.join("transcript.md"))?;
-        Ok(())
-    }).map_err(ProcessingError::from);
+    let write = crate::metadata::update_metadata_and(
+        request.meeting_dir,
+        |metadata| {
+            let file: MeetingFile = serde_json::from_value(metadata.clone())?;
+            // Segment moves belong to the Revision they were made on; carry them onto this one by time.
+            let previous_path = file
+                .segment_participants
+                .as_ref()
+                .filter(|map| map.revision != transcript.revision)
+                .map(|map| {
+                    request
+                        .meeting_dir
+                        .join(format!("transcript.r{}.json", map.revision))
+                });
+            if let Some(previous_path) = previous_path.filter(|path| path.is_file()) {
+                let previous: Transcript = serde_json::from_slice(&fs::read(previous_path)?)?;
+                let participants = crate::participant::Participants::new(
+                    file.participants.clone(),
+                    file.segment_participants.clone(),
+                    your_name,
+                    file.is_voice_note(),
+                );
+                metadata["segment_participants"] = serde_json::to_value(
+                    crate::participant::carry_over(&previous, &transcript, &participants),
+                )?;
+            }
+            Ok(())
+        },
+        |metadata| {
+            let file: MeetingFile =
+                serde_json::from_value(metadata.clone()).map_err(io::Error::other)?;
+            let participants = crate::participant::Participants::new(
+                file.participants.clone(),
+                file.segment_participants.clone(),
+                your_name,
+                file.is_voice_note(),
+            );
+            let markdown =
+                crate::transcript::render_markdown_named(&file.title, &transcript, &participants);
+            let mut md = OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(&markdown_tmp)?;
+            md.write_all(markdown.as_bytes())?;
+            md.sync_all()?;
+            fs::rename(&markdown_tmp, request.meeting_dir.join("transcript.md"))?;
+            Ok(())
+        },
+    )
+    .map_err(ProcessingError::from);
     if let Err(error) = write {
         let _ = fs::remove_file(&markdown_tmp);
         return Err(error);
