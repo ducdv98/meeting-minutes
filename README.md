@@ -2,9 +2,9 @@
 
 # Meeting Minutes
 
-Meeting Minutes records your calls on a Windows PC and turns them into Meetings in a personal Library. It captures your Microphone and your PC's System audio, so it works with any calling app, and transcribes them on your PC with Whisper. You can then get a Summary with Action items and ask questions about one Meeting; answers cite the parts of the Transcript they come from, and say so when the Transcript doesn't answer the question. It is free during the Beta.
+Meeting Minutes records your calls on a Windows PC and turns them into Meetings in a personal Library. It captures your Microphone and your PC's System audio, so it works with any calling app, and transcribes them locally with Whisper by default. With your own Groq key, it uses `whisper-large-v3`; Gemini can handle fallback transcription. You can then get a Summary with Action items and ask questions about one Meeting; answers cite the parts of the Transcript they come from, and say so when the Transcript doesn't answer the question. It is free during the Beta.
 
-Your Meetings stay on your PC. Summary and Ask run on Ollama on your PC, or on OpenAI or Anthropic under your own API key; a cloud provider receives Transcript text only when you click. Audio never leaves your PC.
+Your Library stays on your PC. With your own keys, audio goes to Groq for transcription, or to Gemini for fallback transcription; Gemini also receives Transcript text for Correction. Summary, Action items and Ask can use Ollama locally or Gemini, OpenAI or Anthropic under your own key; the app asks before sending a Meeting. Gemini's free tier may use content for training. Keys stay in Windows Credential Manager, and the app has no server of its own.
 
 ## Download
 
@@ -15,7 +15,7 @@ The first Free Beta release is not published yet; it is planned for December 202
 
 ## Uninstall
 
-Use **Settings → Apps → Installed apps** in Windows. Your Library in `Documents\Meeting Minutes` is always kept. Tick the box in the uninstaller if you also want to remove the app's data (downloaded models, settings, search index and log). API keys stay in Windows Credential Manager after uninstalling, so remove them in **Settings → Summary and Ask** first.
+Use **Settings → Apps → Installed apps** in Windows. Your Library in `Documents\Meeting Minutes` is always kept. Tick the box in the uninstaller if you also want to remove the app's data (downloaded models, settings, search index and log). API keys stay in Windows Credential Manager after uninstalling, so remove them in the app's **Settings** first.
 
 ## Privacy and support
 

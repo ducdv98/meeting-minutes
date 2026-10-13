@@ -6,6 +6,8 @@ import { fileURLToPath } from 'node:url';
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const policyPath = join(repo, 'website/src/privacy.html');
+const homePath = join(repo, 'website/src/home.html');
+const readmePath = join(repo, 'README.md');
 const urlHosts = text => [...text.matchAll(/https?:\/\/([a-z0-9.-]+)(?::\d+)?/gi)]
   .map(match => match[1].toLowerCase());
 
@@ -32,6 +34,19 @@ function runtimeConfig(config) {
 test('privacy page has replaced the ticket stub', async () => {
   const policy = await readFile(policyPath, 'utf8');
   assert.doesNotMatch(policy, /PRIVACY_STUB_TICKET_14/);
+});
+
+test('public copy explains when Meeting content goes to cloud providers', async () => {
+  for (const path of [policyPath, homePath, readmePath]) {
+    const copy = await readFile(path, 'utf8');
+    assert.match(copy, /local(?:ly)?(?: by default)?/i, `${path} should describe local Processing`);
+    assert.match(copy, /Groq/, `${path} should name Groq transcription`);
+    assert.match(copy, /Gemini/, `${path} should name Gemini fallback and Correction`);
+    assert.doesNotMatch(copy, /audio never leaves your PC|transcription stays on your PC/i);
+  }
+  const policy = await readFile(policyPath, 'utf8');
+  assert.match(policy, /Gemini.{0,100}free tier.{0,100}training/is);
+  assert.match(policy, /Windows Credential Manager/);
 });
 
 test('privacy page names every URL host in app source and runtime config', async () => {
