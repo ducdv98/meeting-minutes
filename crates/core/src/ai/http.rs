@@ -19,11 +19,38 @@ pub struct HttpRequest {
     pub method: Method,
     pub url: String,
     pub headers: Vec<(String, String)>,
-    pub body: Option<Value>,
+    pub body: Option<HttpBody>,
+}
+pub enum HttpBody {
+    Json(Value),
+    Multipart { boundary: String, bytes: Vec<u8> },
+}
+impl HttpBody {
+    pub fn multipart_bytes(&self) -> Option<&[u8]> {
+        match self {
+            Self::Multipart { bytes, .. } => Some(bytes),
+            Self::Json(_) => None,
+        }
+    }
+    pub fn json(&self) -> Option<&Value> {
+        match self {
+            Self::Json(value) => Some(value),
+            Self::Multipart { .. } => None,
+        }
+    }
 }
 pub struct HttpResponse {
     pub status: u16,
+    pub headers: Vec<(String, String)>,
     pub body: Box<dyn BufRead + Send>,
+}
+impl HttpResponse {
+    pub fn header(&self, name: &str) -> Option<&str> {
+        self.headers
+            .iter()
+            .find(|(key, _)| key.eq_ignore_ascii_case(name))
+            .map(|(_, value)| value.as_str())
+    }
 }
 pub trait HttpClient: Send + Sync {
     fn send(&self, request: HttpRequest) -> Result<HttpResponse, AiError>;
@@ -43,9 +70,15 @@ impl HttpClient for UreqClient {
             call = call.set(name, value);
         }
         let result = match request.body {
-            Some(body) => call
+            Some(HttpBody::Json(body)) => call
                 .set("content-type", "application/json")
                 .send_string(&body.to_string()),
+            Some(HttpBody::Multipart { boundary, bytes }) => call
+                .set(
+                    "content-type",
+                    &format!("multipart/form-data; boundary={boundary}"),
+                )
+                .send_bytes(&bytes),
             None => call.call(),
         };
         let response = match result {
@@ -56,8 +89,14 @@ impl HttpClient for UreqClient {
                 ))
             }
         };
+        let headers = response
+            .headers_names()
+            .into_iter()
+            .filter_map(|name| response.header(&name).map(|value| (name, value.to_owned())))
+            .collect();
         Ok(HttpResponse {
             status: response.status(),
+            headers,
             body: Box::new(BufReader::new(response.into_reader())),
         })
     }
@@ -336,7 +375,7 @@ impl TextProvider for HttpProvider {
                 method: Method::Post,
                 url: self.endpoint(),
                 headers: headers(self.kind, self.key.as_ref())?,
-                body: Some(body),
+                body: Some(HttpBody::Json(body)),
             })
             .map_err(|error| {
                 crate::diagnostics::log_provider_error(self.kind, &error);

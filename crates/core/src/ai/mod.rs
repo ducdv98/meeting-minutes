@@ -11,7 +11,7 @@ use serde_json::Value;
 mod http;
 pub use http::OLLAMA_CONTEXT_TOKENS;
 pub use http::{
-    list_models, test_cloud_key, HttpClient, HttpProvider, HttpRequest, HttpResponse, Method,
+    list_models, test_cloud_key, HttpBody, HttpClient, HttpProvider, HttpRequest, HttpResponse, Method,
     UreqClient,
 };
 

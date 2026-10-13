@@ -132,6 +132,7 @@ impl HttpClient for FakeHttp {
         let (status, body) = self.responses.lock().unwrap().pop_front().unwrap()?;
         Ok(HttpResponse {
             status,
+            headers: Vec::new(),
             body: Box::new(BufReader::new(Cursor::new(body.into_bytes()))),
         })
     }
@@ -181,6 +182,7 @@ fn ollama_lists_models_and_streams_chat() {
     assert!(matches!(request.method, Method::Post));
     assert_eq!(request.url, "http://localhost:11434/api/chat");
     let body = request.body.unwrap();
+    let body = body.json().unwrap();
     assert_eq!(
         body["messages"][0],
         json!({"role":"system","content":"Be concise"})
@@ -195,7 +197,10 @@ fn ollama_lists_models_and_streams_chat() {
     provider
         .generate(&structured, &mut |_| {}, &AtomicBool::new(false))
         .unwrap();
-    assert_eq!(http.request().body.unwrap()["format"], schema().schema);
+    assert_eq!(
+        http.request().body.unwrap().json().unwrap()["format"],
+        schema().schema
+    );
     http.reply(200, "{\"done\":true,\"done_reason\":\"length\"}\n");
     assert!(matches!(generate(&provider), Err(AiError::Truncated)));
     http.reply(200, "{\"error\":\"bad model\"}\n");
@@ -258,7 +263,7 @@ fn openai_filters_models_streams_and_redacts_errors() {
         .iter()
         .any(|(name, value)| name == "Authorization" && value == "Bearer secret-123"));
     assert_eq!(
-        sent.body.unwrap()["response_format"]["json_schema"]["strict"],
+        sent.body.unwrap().json().unwrap()["response_format"]["json_schema"]["strict"],
         true
     );
     http.reply(
@@ -319,12 +324,19 @@ fn anthropic_ignores_thinking_and_honors_stop_reasons() {
         .iter()
         .any(|(name, value)| name == "anthropic-version" && value == "2023-06-01"));
     assert_eq!(
-        sent.body.unwrap()["output_config"]["format"]["type"],
+        sent.body.unwrap().json().unwrap()["output_config"]["format"]["type"],
         "json_schema"
     );
     http.reply(200, "event: message_stop\ndata: {}\n");
     generate(&provider).unwrap();
-    assert!(http.request().body.unwrap().get("output_config").is_none());
+    assert!(http
+        .request()
+        .body
+        .unwrap()
+        .json()
+        .unwrap()
+        .get("output_config")
+        .is_none());
     http.reply(
         200,
         "event: message_delta\ndata: {\"delta\":{\"stop_reason\":\"refusal\"}}\n",
