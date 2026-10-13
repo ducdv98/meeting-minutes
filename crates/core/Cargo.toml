@@ -8,6 +8,7 @@ serde = { version = "1", features = ["derive"] }
 chrono = { version = "0.4", features = ["serde"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde_json = "1"
+log = "0.4"
 flacenc = { version = "0.5", default-features = false }
 mp3lame-encoder = "0.2"
 claxon = "0.4"

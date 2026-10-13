@@ -149,10 +149,12 @@ fn checked_response(
     key: Option<&ApiKey>,
 ) -> Result<HttpResponse, AiError> {
     if response.status == 401 || response.status == 403 {
+        crate::diagnostics::log_provider_status(kind, response.status);
         return Err(AiError::Auth(kind));
     }
     if !(200..300).contains(&response.status) {
         let status = response.status;
+        crate::diagnostics::log_provider_status(kind, status);
         let mut raw = String::new();
         response.body.take(64 * 1024).read_to_string(&mut raw)?;
         return Err(AiError::Http {
@@ -186,7 +188,10 @@ pub fn list_models(
             headers: headers(kind, key)?,
             body: None,
         })
-        .map_err(|error| unreachable(error, kind))?;
+        .map_err(|error| {
+            crate::diagnostics::log_provider_error(kind, &error);
+            unreachable(error, kind)
+        })?;
     let mut response = checked_response(response, kind, key)?;
     let mut raw = String::new();
     response.body.read_to_string(&mut raw)?;
@@ -286,7 +291,10 @@ impl TextProvider for HttpProvider {
                 headers: headers(self.kind, self.key.as_ref())?,
                 body: Some(body),
             })
-            .map_err(|error| unreachable(error, self.kind))?;
+            .map_err(|error| {
+                crate::diagnostics::log_provider_error(self.kind, &error);
+                unreachable(error, self.kind)
+            })?;
         let mut response = checked_response(response, self.kind, self.key.as_ref())?;
         let mut output = String::new();
         let mut line = String::new();

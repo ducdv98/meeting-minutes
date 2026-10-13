@@ -3,7 +3,12 @@ use serde::{Deserialize, Serialize};
 #[cfg(windows)]
 mod wasapi_input;
 #[cfg(windows)]
-pub use self::wasapi_input::{QpcClock, WasapiDevice, WasapiOpener};
+pub use self::wasapi_input::{audio_devices, QpcClock, WasapiDevice, WasapiOpener};
+
+#[cfg(not(windows))]
+pub fn audio_devices() -> Result<Vec<String>, String> {
+    Err("WASAPI is only available on Windows".into())
+}
 
 pub const SAMPLE_RATE: u32 = 48_000;
 pub const CAPTURE_CHANNELS: usize = 2;

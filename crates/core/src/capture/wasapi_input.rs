@@ -11,6 +11,35 @@ use super::{
     SAMPLE_RATE,
 };
 
+/// List active capture and render endpoints for diagnostics. A failed lookup is distinct from
+/// an empty collection so diagnostics can report that device information is unavailable.
+pub fn audio_devices() -> Result<Vec<String>, String> {
+    let _ = wasapi::initialize_mta();
+    let enumerator = DeviceEnumerator::new().map_err(|error| error.to_string())?;
+    let mut names = Vec::new();
+    for (label, direction) in [
+        ("Microphone", Direction::Capture),
+        ("System audio", Direction::Render),
+    ] {
+        let devices = enumerator
+            .get_device_collection(&direction)
+            .map_err(|error| error.to_string())?;
+        let count = devices
+            .get_nbr_devices()
+            .map_err(|error| error.to_string())?;
+        for index in 0..count {
+            let device = devices
+                .get_device_at_index(index)
+                .map_err(|error| error.to_string())?;
+            let name = device
+                .get_friendlyname()
+                .map_err(|error| error.to_string())?;
+            names.push(format!("{label}: {name}"));
+        }
+    }
+    Ok(names)
+}
+
 /// QueryPerformanceCounter in 100 ns units; WASAPI packet timestamps use the same clock.
 #[derive(Clone, Copy, Debug)]
 pub struct QpcClock {

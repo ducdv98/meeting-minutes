@@ -2,6 +2,7 @@
 
 use std::{
     collections::{HashMap, VecDeque},
+    fs,
     path::PathBuf,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -17,7 +18,8 @@ use meeting_minutes_core::{
         SecretStore, TextProvider, UreqClient,
     },
     ask::{self, AskOptions},
-    capture::{QpcClock, WasapiOpener},
+    capture::{audio_devices, QpcClock, Source, WasapiOpener},
+    diagnostics::{build_diagnostics, log_event, DiagnosticsInput, LogEvent},
     import::import_extension,
     models::{self, DEFAULT_MODEL, MODELS},
     processing::{self, JobStage, ProcessingStatus, Processor, TranscribeRequest},
@@ -28,6 +30,7 @@ use meeting_minutes_core::{
     Library, LibraryError, MeetingDetail, MeetingSummary, ScanReport, SearchHit,
 };
 use meeting_minutes_whisper::WhisperEngine;
+use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind};
 use tauri::{
     image::Image,
     menu::{Menu, MenuItem, PredefinedMenuItem},
@@ -36,6 +39,7 @@ use tauri::{
 };
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_global_shortcut::{Shortcut, ShortcutState};
+use tauri_plugin_log::{RotationStrategy, Target, TargetKind};
 
 type LibraryState = Mutex<Result<Library, String>>;
 type RecorderState = Mutex<Recorder<WasapiOpener, QpcClock>>;
@@ -49,6 +53,61 @@ struct ModelsDir(PathBuf);
 struct Quitting(AtomicBool);
 struct Secrets(Box<dyn SecretStore>);
 struct Http(Arc<dyn HttpClient>);
+
+#[derive(serde::Serialize)]
+struct AppInfo {
+    version: String,
+    channel: &'static str,
+}
+
+#[tauri::command]
+fn app_info(app: AppHandle) -> AppInfo {
+    AppInfo {
+        version: app.package_info().version.to_string(),
+        channel: "Beta",
+    }
+}
+
+#[tauri::command]
+fn get_diagnostics(app: AppHandle) -> Result<String, String> {
+    let system = sysinfo::System::new_with_specifics(
+        RefreshKind::nothing()
+            .with_cpu(CpuRefreshKind::nothing())
+            .with_memory(MemoryRefreshKind::nothing().with_ram()),
+    );
+    let log_dir = app
+        .path()
+        .app_log_dir()
+        .map_err(|error| error.to_string())?;
+    let log = fs::read_to_string(log_dir.join("meeting-minutes.log")).unwrap_or_default();
+    let recent_log_lines = log
+        .lines()
+        .rev()
+        .take(100)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .map(str::to_owned)
+        .collect();
+    let settings = Settings::load(&app.state::<SettingsPath>().0);
+    Ok(build_diagnostics(&DiagnosticsInput {
+        version: app.package_info().version.to_string(),
+        windows_version: sysinfo::System::long_os_version().unwrap_or_else(|| "Unknown".into()),
+        cpu: system
+            .cpus()
+            .first()
+            .map(|cpu| cpu.brand().to_owned())
+            .unwrap_or_else(|| "Unknown".into()),
+        ram_mb: system.total_memory() / (1024 * 1024),
+        audio_devices: audio_devices(),
+        selected_model: MODELS
+            .iter()
+            .find(|model| model.name == settings.model)
+            .map(|model| model.name.to_owned()),
+        provider: settings.ai.provider,
+        recent_log_lines,
+    }))
+}
 
 #[derive(Clone, Copy, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -373,6 +432,13 @@ fn publish_processing(app: &AppHandle) -> Result<ProcessingStatus, String> {
 }
 
 fn processing_stage(app: &AppHandle, id: &str, stage: JobStage, progress: f32) {
+    if progress == 0.0 {
+        match stage {
+            JobStage::Downloading => log_event(LogEvent::ProcessingDownloading),
+            JobStage::Transcribing => log_event(LogEvent::ProcessingTranscribing),
+            _ => {}
+        }
+    }
     if let Ok(mut processor) = lock_processor(app) {
         processor.set_stage(id, stage, progress);
     }
@@ -729,6 +795,7 @@ fn start_summary(app: &AppHandle, id: String, provider: ai::HttpProvider) -> Res
         );
     }
     let _ = publish_summary(app);
+    log_event(LogEvent::SummaryStarted);
     let app = app.clone();
     thread::spawn(move || {
         let cancel = match app.state::<AiJobs>().lock() {
@@ -761,6 +828,11 @@ fn start_summary(app: &AppHandle, id: String, provider: ai::HttpProvider) -> Res
             }
             summary::write_summary(&dir, &detail.title, &summary).map_err(|error| error.to_string())
         })();
+        log_event(if result.is_ok() {
+            LogEvent::SummaryCompleted
+        } else {
+            LogEvent::SummaryFailed
+        });
         if let Ok(mut jobs) = app.state::<AiJobs>().lock() {
             match result {
                 Ok(()) => {
@@ -937,6 +1009,7 @@ fn begin_ask(
             meeting_id: id.clone(),
         },
     );
+    log_event(LogEvent::AskStarted);
     let app = app.clone();
     thread::spawn(move || {
         let outcome = (|| -> Result<ask::AskOutcome, String> {
@@ -970,6 +1043,12 @@ fn begin_ask(
                 &cancel,
             ))
         })();
+        log_event(LogEvent::from_answer_state(
+            outcome
+                .as_ref()
+                .map(|result| result.state)
+                .unwrap_or(ask::AnswerState::Failed),
+        ));
         if let Ok(mut history) = ask::read_asks(&dir) {
             history.finish(
                 &ask_id,
@@ -1034,6 +1113,7 @@ fn processing_worker(app: AppHandle) {
             Some(job) => job,
             None => continue,
         };
+        log_event(LogEvent::ProcessingQueued);
         if app.state::<Quitting>().0.load(Ordering::SeqCst) {
             if let Ok(mut processor) = lock_processor(&app) {
                 processor.finished(&id, Err(processing::ProcessingError::Cancelled));
@@ -1116,6 +1196,11 @@ fn processing_worker(app: AppHandle) {
             Ok(())
         })();
         let success = result.is_ok();
+        log_event(if success {
+            LogEvent::ProcessingCompleted
+        } else {
+            LogEvent::ProcessingFailed
+        });
         if let Ok(mut processor) = lock_processor(&app) {
             processor.finished(&id, result);
         }
@@ -1333,8 +1418,22 @@ fn with_recorder(
     app: &AppHandle,
     action: impl FnOnce(&mut Recorder<WasapiOpener, QpcClock>) -> Result<(), RecorderError>,
 ) -> Result<RecorderStatus, String> {
-    action(&mut *lock_recorder(app)?).map_err(|error| error.to_string())?;
-    publish(app)
+    let result = (|| {
+        {
+            let mut recorder = lock_recorder(app)?;
+            action(&mut recorder).map_err(|error| error.to_string())?;
+            match recorder.status().phase {
+                Phase::Paused => log_event(LogEvent::RecordingPaused),
+                Phase::Recording => log_event(LogEvent::RecordingResumed),
+                Phase::Idle => {}
+            }
+        }
+        publish(app)
+    })();
+    if result.is_err() {
+        log_event(LogEvent::RecordingFailed);
+    }
+    result
 }
 
 fn start(app: &AppHandle) -> Result<RecorderStatus, String> {
@@ -1352,28 +1451,44 @@ fn start_with(
         chrono::DateTime<chrono::FixedOffset>,
     ) -> Result<(), RecorderError>,
 ) -> Result<RecorderStatus, String> {
-    {
-        let mut recorder = lock_recorder(app)?;
-        let library_state = app.state::<LibraryState>();
-        let mut library = library_state.lock().map_err(|error| error.to_string())?;
-        let library = library.as_mut().map_err(|error| error.clone())?;
-        action(&mut recorder, library, chrono::Local::now().fixed_offset())
-            .map_err(|error| error.to_string())?;
+    let result = (|| {
+        {
+            let mut recorder = lock_recorder(app)?;
+            let library_state = app.state::<LibraryState>();
+            let mut library = library_state.lock().map_err(|error| error.to_string())?;
+            let library = library.as_mut().map_err(|error| error.clone())?;
+            action(&mut recorder, library, chrono::Local::now().fixed_offset())
+                .map_err(|error| error.to_string())?;
+        }
+        let _ = app.emit("library-changed", ());
+        log_event(LogEvent::RecordingStarted);
+        publish(app)
+    })();
+    if result.is_err() {
+        log_event(LogEvent::RecordingFailed);
     }
-    let _ = app.emit("library-changed", ());
-    publish(app)
+    result
 }
 
 fn stop(app: &AppHandle) -> Result<RecorderStatus, String> {
-    let stopped = lock_recorder(app)?.stop();
-    match stopped {
-        Ok(job) => spawn_save(app.clone(), job),
-        Err(error) => {
-            let _ = publish(app);
-            return Err(error.to_string());
+    let result = (|| {
+        let stopped = lock_recorder(app)?.stop();
+        match stopped {
+            Ok(job) => {
+                log_event(LogEvent::RecordingStopped);
+                spawn_save(app.clone(), job)
+            }
+            Err(error) => {
+                let _ = publish(app);
+                return Err(error.to_string());
+            }
         }
+        publish(app)
+    })();
+    if result.is_err() {
+        log_event(LogEvent::RecordingFailed);
     }
-    publish(app)
+    result
 }
 
 /// Writes the FLAC, MP3 and meeting.json off the UI thread; a failure keeps the Chunks for Retry save.
@@ -1572,6 +1687,17 @@ fn recording_icon(icon: &Image<'_>) -> Image<'static> {
 
 fn main() {
     tauri::Builder::default()
+        .plugin(
+            tauri_plugin_log::Builder::new()
+                .clear_targets()
+                .target(Target::new(TargetKind::LogDir {
+                    file_name: Some("meeting-minutes".into()),
+                }))
+                .rotation_strategy(RotationStrategy::KeepOne)
+                .max_file_size(512 * 1024)
+                .filter(|metadata| metadata.target() == "meeting_minutes_events")
+                .build(),
+        )
         .plugin(tauri_plugin_dialog::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
@@ -1592,6 +1718,7 @@ fn main() {
                 .build(),
         )
         .setup(|app| {
+            log_event(LogEvent::Startup);
             let library = (|| -> Result<Library, String> {
                 let root = app
                     .path()
@@ -1690,7 +1817,14 @@ fn main() {
                 thread::sleep(Duration::from_millis(500));
                 if matches!(status(&handle), Ok(status) if status.phase == Phase::Recording) {
                     if let Ok(mut recorder) = lock_recorder(&handle) {
+                        let before = recorder.status().device_switches.len();
                         let _ = recorder.collect_device_switches();
+                        for switch in recorder.status().device_switches.iter().skip(before) {
+                            log_event(match switch.source {
+                                Source::Microphone => LogEvent::DeviceSwitchMicrophone,
+                                Source::SystemAudio => LogEvent::DeviceSwitchSystemAudio,
+                            });
+                        }
                     }
                     let _ = publish(&handle);
                 }
@@ -1718,6 +1852,8 @@ fn main() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            app_info,
+            get_diagnostics,
             pick_audio_files,
             import_status,
             dismiss_import_errors,

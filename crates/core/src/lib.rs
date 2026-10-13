@@ -12,6 +12,7 @@ pub mod ask;
 pub mod audio_prep;
 pub mod capture;
 pub mod citation;
+pub mod diagnostics;
 pub mod import;
 pub mod models;
 pub mod processing;
