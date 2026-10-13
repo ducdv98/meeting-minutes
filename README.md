@@ -62,7 +62,7 @@ powershell -File scripts/copy-vulkan-loader.ps1
 pnpm tauri build --bundles nsis --config src-tauri/tauri.vulkan.conf.json
 ```
 
-The installer is written to `target/release/bundle/nsis/`. The extra config bundles the Vulkan loader (`vulkan-1.dll`) next to the exe, so the app also starts on PCs without a GPU driver and transcribes on the CPU.
+The installer is written to `target/release/bundle/nsis/`. The Vulkan build of whisper.cpp fails on paths longer than 260 characters, so clone to a short path or set `CARGO_TARGET_DIR` to one (CI uses `D:\t`). The extra config bundles the Vulkan loader (`vulkan-1.dll`) next to the exe, so the app also starts on PCs without a GPU driver and transcribes on the CPU.
 
 ### Release
 

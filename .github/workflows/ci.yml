@@ -32,6 +32,9 @@ jobs:
   windows:
     runs-on: windows-2022
     env:
+      # whisper.cpp's Vulkan shader generator builds under MSBuild, whose file tracker
+      # fails on paths over 260 characters; a short target dir keeps them under it.
+      CARGO_TARGET_DIR: 'D:\t'
       GGML_NATIVE: "OFF"
       GGML_AVX: "ON"
       GGML_AVX2: "ON"
@@ -71,10 +74,10 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: capture-spike-windows
-          path: target/release/capture-spike.exe
+          path: D:/t/release/capture-spike.exe
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
           name: meeting-minutes-windows-installer
-          path: target/release/bundle/nsis/*.exe
+          path: D:/t/release/bundle/nsis/*.exe
           if-no-files-found: error

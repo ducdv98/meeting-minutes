@@ -9,6 +9,9 @@ jobs:
   draft:
     runs-on: windows-2022
     env:
+      # whisper.cpp's Vulkan shader generator builds under MSBuild, whose file tracker
+      # fails on paths over 260 characters; a short target dir keeps them under it.
+      CARGO_TARGET_DIR: 'D:\t'
       RELEASE_TAG: ${{ github.ref_name }}
       GGML_NATIVE: "OFF"
       GGML_AVX: "ON"
