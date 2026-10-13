@@ -6,7 +6,7 @@ Spec: ../spec.md
 
 ## What
 
-Add Tailwind and Radix-based (shadcn/ui-style) components with the design tokens from ticket 06. Light/dark theme follows Windows. Shared building blocks for loading, empty and error states. The window remembers its size and position, with a larger default. Derive any extra brand variants (white wordmark for dark mode) via `scripts/build-brand-assets.py` (ADR-0004).
+Add Tailwind and Radix-based (shadcn/ui-style) components with the tokens from `docs/design/visual-identity.md` as CSS variables and the Tailwind theme. Bundle Be Vietnam Pro and Inter (no network font loading). Light/dark theme follows Windows. Shared building blocks for loading, empty and error states. The window remembers its size and position, with a larger default. Derive any extra brand variants (white wordmark for dark mode) via `scripts/build-brand-assets.py` (ADR-0004).
 
 ## Acceptance criteria
 

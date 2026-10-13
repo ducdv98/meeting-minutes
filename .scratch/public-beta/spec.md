@@ -30,7 +30,7 @@ Someone who finds `meeting-minutes.tech` downloads the beta, gets past SmartScre
 - Help → Copy diagnostics: app version, Windows version, CPU/RAM, audio devices, selected model and provider kind, recent log lines. The user pastes it into an email or GitHub issue.
 
 ### App UI
-- Visual direction: neutral modern, in the spirit of Linear and Notion. Calm, lots of whitespace, strong type hierarchy, mostly monochrome with one restrained accent (selection, links, Citations). Recording state is always red.
+- Visual identity: `docs/design/visual-identity.md`, shared by the app and the website. Calm, in the spirit of Linear and Notion: ink on paper from the brand pack, one ink-blue accent (actions, selection, links, Citations), red only for recording and destructive actions. Fonts Be Vietnam Pro and Inter, bundled.
 - Built on Tailwind with Radix-based (shadcn/ui-style) components. Light and dark themes follow Windows.
 - Window remembers size and position; larger default than 900×650.
 - Consistent loading, empty and error states across every panel.
@@ -42,7 +42,7 @@ Someone who finds `meeting-minutes.tech` downloads the beta, gets past SmartScre
 - Replaces the separate first-Recording notice for users who complete it.
 
 ### Website (`website/` in this repo)
-- Static site on `meeting-minutes.tech`, deployed by GitHub Actions. Same visual language as the app.
+- Static site on `meeting-minutes.tech`, deployed by GitHub Actions. Design spec: `website/DESIGN.md`, built on the same visual identity as the app. No third-party requests in the browser.
 - Pages: Home (what it does, "Free Beta · Windows 11" status, download button for the latest Release, SmartScreen note, dated roadmap: Mac App Store Dec 2026, Windows Free Beta Dec 2026, later months marked "target"), Privacy, Support (`support@meeting-minutes.tech`, GitHub issues, how to Copy diagnostics), Changelog (from Releases), `llms.txt`. Maker (Duc Dao) named in the footer and About.
 - Never overstate availability: no download button until a Release is published.
 - The privacy policy is written from the code and states: everything stays on the PC; nothing is sent without a click; cloud Summary/Ask sends Transcript text to OpenAI or Anthropic under the user's own key; models download from Hugging Face; no telemetry.
