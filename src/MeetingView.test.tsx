@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import MeetingView from "./MeetingView";
-import { deleteMeeting, meetingDetail, openMeetingFolder, renameMeeting, setParticipantName, participantNames, type MeetingDetail } from "./library";
+import { deleteMeeting, meetingDetail, openMeetingFolder, renameMeeting, setParticipantName, participantNames, renameParticipant, removeParticipant, assignSegments, type MeetingDetail } from "./library";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { onLibraryChanged } from "./recording";
 import { processingStatus, meetingTranscript, enqueueTranscription, cancelProcessing, onProcessingStatus, setMeetingLanguage, getSettings, type ProcessingStatus } from "./processing";
@@ -13,7 +13,7 @@ import { meetingAsks } from "./ask";
 vi.mock("./ai", async (original) => ({ ...(await original<typeof import("./ai")>()), aiStatus: vi.fn() }));
 vi.mock("./summary", () => ({ meetingSummary: vi.fn(), summaryStatus: vi.fn(), onSummaryStatus: vi.fn(() => Promise.resolve(() => {})) }));
 vi.mock("./ask", () => ({ meetingAsks: vi.fn(), onAskDelta: vi.fn(() => Promise.resolve(() => {})), onAsksChanged: vi.fn(() => Promise.resolve(() => {})), answerLabel: () => "" }));
-vi.mock("./library", () => ({ meetingDetail: vi.fn(), openMeetingFolder: vi.fn(), renameMeeting: vi.fn(), deleteMeeting: vi.fn(), setParticipantName: vi.fn(), participantNames: vi.fn() }));
+vi.mock("./library", () => ({ meetingDetail: vi.fn(), openMeetingFolder: vi.fn(), renameMeeting: vi.fn(), deleteMeeting: vi.fn(), setParticipantName: vi.fn(), participantNames: vi.fn(), renameParticipant: vi.fn(), removeParticipant: vi.fn(), assignSegments: vi.fn() }));
 vi.mock("./processing", async (importOriginal) => ({ ...(await importOriginal<typeof import("./processing")>()), processingStatus: vi.fn(), meetingTranscript: vi.fn(), enqueueTranscription: vi.fn(), cancelProcessing: vi.fn(), dismissProcessing: vi.fn(), setMeetingLanguage: vi.fn(), getSettings: vi.fn(), onProcessingStatus: vi.fn(() => Promise.resolve(() => {})) }));
 vi.mock("./recording", async (importOriginal) => ({ ...(await importOriginal<typeof import("./recording")>()), onLibraryChanged: vi.fn(() => Promise.resolve(() => {})) }));
 vi.mock("./transcript", async (importOriginal) => ({ ...(await importOriginal<typeof import("./transcript")>()), editSegment: vi.fn() }));
@@ -40,6 +40,9 @@ beforeEach(() => {
   vi.mocked(meetingDetail).mockResolvedValue(detail);
   vi.mocked(participantNames).mockResolvedValue(["Anna"]);
   vi.mocked(setParticipantName).mockResolvedValue();
+  vi.mocked(renameParticipant).mockResolvedValue();
+  vi.mocked(removeParticipant).mockResolvedValue();
+  vi.mocked(assignSegments).mockResolvedValue();
   vi.mocked(getSettings).mockResolvedValue({ recording_notice_acknowledged: true, auto_process: true, model: "small", vocabulary: [], language: null, your_name: "Duc", ai: { provider: null, ollama_model: null, openai_model: null, anthropic_model: null } });
   vi.mocked(processingStatus).mockResolvedValue({ jobs: [] });
   vi.mocked(meetingTranscript).mockResolvedValue(null);
@@ -60,13 +63,14 @@ it("names Participants for present Speaker labels while Processing is busy", asy
     { id: "s00001", start_ms: 0, end_ms: 500, text: "Hello", speaker: "me" },
     { id: "s00002", start_ms: 600, end_ms: 1000, text: "Hi", speaker: "remote" },
   ] });
+  vi.mocked(meetingDetail).mockResolvedValueOnce(detail).mockResolvedValue({ ...detail, participants: { remote: "Anna" } });
   render(<MeetingView id="old" onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
   await screen.findByText("Participants");
   const remote = await screen.findByRole("combobox", { name: "Remote Participant" });
   expect((remote as HTMLInputElement).disabled).toBe(false);
   fireEvent.change(remote, { target: { value: "Anna" } });
   fireEvent.blur(remote);
-  await waitFor(() => expect(setParticipantName).toHaveBeenCalledWith("old", "remote", "Anna"));
+  await waitFor(() => expect(renameParticipant).toHaveBeenCalledWith("old", "Remote", "Anna"));
   expect(await screen.findByText("Anna")).toBeTruthy();
   expect(screen.queryByRole("combobox", { name: "Unknown Participant" })).toBeNull();
 });
@@ -78,10 +82,39 @@ it("names only the user in a Voice note with Unknown Segments", async () => {
   render(<MeetingView id="old" onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
   const me = await screen.findByRole("combobox", { name: "Me Participant" });
   await waitFor(() => expect((me as HTMLInputElement).value).toBe("Duc"));
+  expect(screen.queryByRole("checkbox", { name: "Select Segment s00001" })).toBeNull();
   expect(screen.queryByRole("combobox", { name: "Unknown Participant" })).toBeNull();
   fireEvent.change(me, { target: { value: "Duc D" } });
   fireEvent.blur(me);
-  await waitFor(() => expect(setParticipantName).toHaveBeenCalledWith("old", "me", "Duc D"));
+  await waitFor(() => expect(renameParticipant).toHaveBeenCalledWith("old", "Duc", "Duc D"));
+});
+
+it("renames a Segment Participant onto an existing name and removes it", async () => {
+  vi.mocked(meetingDetail).mockResolvedValueOnce({ ...detail, participants: { remote: "Anna" }, segment_participants: { revision: 1, segments: { s00002: "Bao" } } }).mockResolvedValue({ ...detail, participants: { remote: "Anna" }, segment_participants: null });
+  vi.mocked(meetingTranscript).mockResolvedValue({ schema_version: 1, revision: 1, created_at: "now", model: "small", language: "en", language_detected: false, duration_ms: 2000, segments: [
+    { id: "s00001", start_ms: 0, end_ms: 800, text: "One", speaker: "remote" },
+    { id: "s00002", start_ms: 900, end_ms: 1700, text: "Two", speaker: "remote" },
+  ] });
+  render(<MeetingView id="old" onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
+  const bao = await screen.findByRole("combobox", { name: "Bao Participant" });
+  fireEvent.change(bao, { target: { value: "Anna" } });
+  fireEvent.blur(bao);
+  await waitFor(() => expect(renameParticipant).toHaveBeenCalledWith("old", "Bao", "Anna"));
+  expect(screen.queryByRole("combobox", { name: "Bao Participant" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Remove Anna" }));
+  await waitFor(() => expect(removeParticipant).toHaveBeenCalledWith("old", "Anna"));
+});
+
+it("moves selected Segments through the Meeting command", async () => {
+  vi.mocked(meetingTranscript).mockResolvedValue({ schema_version: 1, revision: 3, created_at: "now", model: "small", language: "en", language_detected: false, duration_ms: 1000, segments: [{ id: "s00001", start_ms: 0, end_ms: 800, text: "One", speaker: "unknown" }] });
+  vi.mocked(meetingDetail).mockResolvedValueOnce(detail).mockResolvedValue({ ...detail, segment_participants: { revision: 3, segments: { s00001: "Bao" } } });
+  render(<MeetingView id="old" onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
+  fireEvent.click(await screen.findByRole("checkbox", { name: "Select Segment s00001" }));
+  fireEvent.change(screen.getByRole("combobox", { name: "Move to Participant" }), { target: { value: "__new__" } });
+  fireEvent.change(screen.getByRole("textbox", { name: "New Participant name" }), { target: { value: "Bao" } });
+  fireEvent.click(screen.getByRole("button", { name: "Move" }));
+  await waitFor(() => expect(assignSegments).toHaveBeenCalledWith("old", 3, ["s00001"], "Bao"));
+  expect(await screen.findByRole("combobox", { name: "Bao Participant" })).toBeTruthy();
 });
 
 it("plays and highlights a search result once the Transcript and player load", async () => {

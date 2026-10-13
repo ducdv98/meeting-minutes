@@ -32,6 +32,7 @@ export interface MeetingDetail extends MeetingSummary {
   sources?: ("microphone" | "system_audio")[];
   voice_note: boolean;
   participants: Partial<Record<Speaker, string>>;
+  segment_participants?: { revision: number; segments: Record<string, string> } | null;
 }
 
 export interface MalformedFolder {
@@ -66,6 +67,18 @@ export function renameMeeting(id: string, title: string): Promise<MeetingSummary
 
 export function setParticipantName(id: string, label: Speaker, name: string | null): Promise<void> {
   return invoke<void>("set_participant_name", { meetingId: id, label, name });
+}
+
+export function assignSegments(id: string, revision: number, segmentIds: string[], name: string | null): Promise<void> {
+  return invoke<void>("assign_segments", { meetingId: id, revision, segmentIds, name });
+}
+
+export function renameParticipant(id: string, from: string, to: string): Promise<void> {
+  return invoke<void>("rename_participant", { meetingId: id, from, to });
+}
+
+export function removeParticipant(id: string, name: string): Promise<void> {
+  return invoke<void>("remove_participant", { meetingId: id, name });
 }
 
 export function participantNames(): Promise<string[]> {

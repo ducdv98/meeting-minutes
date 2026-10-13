@@ -1479,6 +1479,45 @@ fn set_participant_name(app: AppHandle, meeting_id: String, label: Speaker, name
 }
 
 #[tauri::command]
+fn assign_segments(app: AppHandle, meeting_id: String, revision: u32, segment_ids: Vec<String>, name: Option<String>) -> Result<(), String> {
+    let settings = Settings::load(&app.state::<SettingsPath>().0);
+    let state = app.state::<LibraryState>();
+    let mut guard = state.lock().map_err(|error| error.to_string())?;
+    let library = guard.as_mut().map_err(|error| error.clone())?;
+    library.set_your_name(settings.your_name.as_deref());
+    library.assign_segments(&meeting_id, revision, &segment_ids, name.as_deref()).map_err(|error| error.to_string())?;
+    drop(guard);
+    let _ = app.emit("library-changed", ());
+    Ok(())
+}
+
+#[tauri::command]
+fn rename_participant(app: AppHandle, meeting_id: String, from: String, to: String) -> Result<(), String> {
+    let settings = Settings::load(&app.state::<SettingsPath>().0);
+    let state = app.state::<LibraryState>();
+    let mut guard = state.lock().map_err(|error| error.to_string())?;
+    let library = guard.as_mut().map_err(|error| error.clone())?;
+    library.set_your_name(settings.your_name.as_deref());
+    library.rename_participant(&meeting_id, &from, &to).map_err(|error| error.to_string())?;
+    drop(guard);
+    let _ = app.emit("library-changed", ());
+    Ok(())
+}
+
+#[tauri::command]
+fn remove_participant(app: AppHandle, meeting_id: String, name: String) -> Result<(), String> {
+    let settings = Settings::load(&app.state::<SettingsPath>().0);
+    let state = app.state::<LibraryState>();
+    let mut guard = state.lock().map_err(|error| error.to_string())?;
+    let library = guard.as_mut().map_err(|error| error.clone())?;
+    library.set_your_name(settings.your_name.as_deref());
+    library.remove_participant(&meeting_id, &name).map_err(|error| error.to_string())?;
+    drop(guard);
+    let _ = app.emit("library-changed", ());
+    Ok(())
+}
+
+#[tauri::command]
 fn list_participant_names(state: State<'_, LibraryState>) -> Result<Vec<String>, String> {
     let guard = state.lock().map_err(|error| error.to_string())?;
     guard.as_ref().map_err(Clone::clone)?.participant_names().map_err(|error| error.to_string())
@@ -2335,6 +2374,9 @@ fn main() {
             open_link,
             rename_meeting,
             set_participant_name,
+            assign_segments,
+            rename_participant,
+            remove_participant,
             list_participant_names,
             delete_meeting,
             recording_status,

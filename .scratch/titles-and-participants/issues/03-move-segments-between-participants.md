@@ -22,3 +22,14 @@ Let the user attribute single Segments to any Participant. This covers group cal
 - [ ] Removing "Bao" returns Bao's Segments to their label's default Participant.
 - [ ] After re-transcribing, Segments covering the same time as before keep their Participant (core test with overlapping old and new Segments, including a tie or no-majority case).
 - [ ] Core and frontend tests cover moving, removing and carrying over.
+
+## Comments
+
+### 2026-10-13: implemented
+
+- `meeting.json` gains `"segment_participants": {"revision": N, "segments": {id: name}}`, used only for Revision N and holding only assignments that differ from the Segment's label Participant. `Participants` in `crates/core/src/participant.rs` is the single resolver (segment assignment, then label override, then default); `src/transcript.ts` mirrors it for the view.
+- Library: `assign_segments` (current Revision only; refused for Voice notes), `rename_participant` (rename everywhere; onto an existing name merges), `remove_participant` (Segments go back to their label's default). Each re-renders `transcript.md`.
+- Carry-over on re-transcription: from the Revision the moves were made on (not just N−1); only old Segments with the same Speaker label count, overlapping old Segments count their time once, and a Participant needs more than half of the new Segment's time.
+- UI: Participants panel lists every Participant in use plus each present label's Participant (rename, merge, remove); Transcript Segments have checkboxes and a "Move to" bar with "New Participant…". Voice notes have neither moves nor checkboxes. After each change the view reloads the Meeting instead of re-applying the rules itself.
+- Checks: core tests and clippy, `pnpm typecheck`, Vitest, Windows-gnu clippy of `src-tauri`.
+- Review notes left as is: no dedicated Import test (the all-Unknown case is covered on a recorded Meeting); `Participants::new(...)` from a `MeetingFile` repeats in a few places.

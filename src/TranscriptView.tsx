@@ -3,6 +3,8 @@ import type { TimelinePlayer } from "./timeline";
 import type { Speaker, Transcript } from "./processing";
 import { formatElapsed } from "./recording";
 import { currentSegmentId, participantName, speakerName } from "./transcript";
+import { participantList } from "./transcript";
+import type { MeetingDetail } from "./library";
 import { CircleHelp } from "lucide-react";
 import { Button } from "./components/ui/Button";
 import { Textarea } from "./components/ui/Textarea";
@@ -13,16 +15,21 @@ interface Props {
   player: TimelinePlayer | null;
   editable: boolean;
   onEdit(segmentId: string, text: string): Promise<void>;
+  onMove?(segmentIds: string[], name: string): Promise<void>;
   participants?: Partial<Record<Speaker, string>>;
+  segmentParticipants?: MeetingDetail["segment_participants"];
   yourName?: string | null;
   isVoiceNote?: boolean;
 }
 
-export default function TranscriptView({ transcript, positionMs, player, editable, onEdit, participants = {}, yourName = null, isVoiceNote = false }: Props) {
+export default function TranscriptView({ transcript, positionMs, player, editable, onEdit, onMove, participants = {}, segmentParticipants, yourName = null, isVoiceNote = false }: Props) {
   const [editing, setEditing] = useState<string | null>(null);
   const [text, setText] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [newParticipant, setNewParticipant] = useState(false);
+  const [newName, setNewName] = useState("");
   const currentId = currentSegmentId(transcript.segments, positionMs);
   const currentRow = useRef<HTMLLIElement>(null);
 
@@ -46,14 +53,23 @@ export default function TranscriptView({ transcript, positionMs, player, editabl
 
   function cancel() { setEditing(null); setError(null); }
 
-  return <ol aria-label="Segments" className="m-0 list-none p-0">
+  async function move(name: string) {
+    if (!editable || !onMove || !name.trim() || selected.length === 0 || saving) return;
+    setSaving(true); setError(null);
+    try { await onMove(selected, name.trim()); setSelected([]); setNewParticipant(false); setNewName(""); }
+    catch (reason) { setError(String(reason)); }
+    finally { setSaving(false); }
+  }
+
+  return <><div className="sticky top-11 z-10 bg-canvas">{selected.length > 0 && <div className="mb-2 flex flex-wrap items-center gap-2 rounded-md border border-line bg-raised p-2 text-xs"><span>{selected.length} selected</span><span aria-hidden="true">·</span><label>Move to <select aria-label="Move to Participant" className="rounded-sm border border-line-strong bg-raised px-2 py-1" value={newParticipant ? "__new__" : ""} disabled={!editable || saving} onChange={(event) => { if (event.target.value === "__new__") setNewParticipant(true); else void move(event.target.value); }}><option value="">Participant</option>{participantList(transcript, participants, segmentParticipants, yourName, isVoiceNote).map((name) => <option key={name} value={name}>{name}</option>)}<option value="__new__">New Participant…</option></select></label>{newParticipant && <><input autoFocus aria-label="New Participant name" className="rounded-sm border border-line-strong bg-raised px-2 py-1" value={newName} onChange={(event) => setNewName(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void move(newName); }} /><Button disabled={!newName.trim() || saving} onClick={() => void move(newName)}>Move</Button></>}<span aria-hidden="true">·</span><Button variant="ghost" onClick={() => { setSelected([]); setNewParticipant(false); }}>Clear</Button></div>}</div><ol aria-label="Segments" className="m-0 list-none p-0">
     {transcript.segments.map((segment) => {
       const current = segment.id === currentId;
       const elapsed = formatElapsed(segment.start_ms);
       const time = elapsed.startsWith("00:") ? elapsed.slice(3) : elapsed;
-      const name = participantName(segment.speaker, participants, yourName, isVoiceNote);
-      const defaultUnknown = !isVoiceNote && segment.speaker === "unknown" && !participants.unknown;
-      return <li key={segment.id} ref={current ? currentRow : undefined} className={`group -mx-2 grid grid-cols-[52px_68px_minmax(0,1fr)] gap-3 rounded-sm px-2 py-2 transition-colors duration-panel hover:bg-panel ${current ? "current bg-accent-soft hover:bg-accent-soft" : ""}`} aria-current={current ? "true" : undefined}>
+      const name = participantName(segment, transcript.revision, participants, segmentParticipants, yourName, isVoiceNote);
+      const defaultUnknown = !isVoiceNote && segment.speaker === "unknown" && name === "Unknown";
+      return <li key={segment.id} ref={current ? currentRow : undefined} className={`group -mx-2 grid grid-cols-[18px_52px_68px_minmax(0,1fr)] gap-3 rounded-sm px-2 py-2 transition-colors duration-panel hover:bg-panel ${current ? "current bg-accent-soft hover:bg-accent-soft" : ""}`} aria-current={current ? "true" : undefined}>
+        {onMove ? <input type="checkbox" aria-label={`Select Segment ${segment.id}`} disabled={!editable || !onMove} checked={selected.includes(segment.id)} onChange={(event) => setSelected((current) => event.target.checked ? [...current, segment.id] : current.filter((id) => id !== segment.id))} className={`mt-1 accent-accent ${selected.length ? "opacity-100" : "opacity-0 group-hover:opacity-100 focus:opacity-100"}`} /> : <span aria-hidden="true" />}
         <button type="button" disabled={!player} className="self-start pt-[3px] text-left text-xs tabular-nums text-ink-faint hover:text-accent disabled:opacity-50" aria-label={`Play Segment at ${time}, ${name}`} onClick={() => player?.playSpan(segment.start_ms, segment.end_ms)}>{time}</button>
         <span title={`Speaker label: ${speakerName(segment.speaker)}`} className={`flex items-start gap-1 pt-[3px] text-xs font-medium ${defaultUnknown ? "text-ink-faint" : segment.speaker === "me" ? "text-ink" : "text-ink-muted"}`}>{defaultUnknown && <CircleHelp size={13} strokeWidth={1.5} className="mt-0.5" aria-hidden="true" />}{name}</span>
         {editing === segment.id ? <div className="min-w-0">
@@ -66,5 +82,5 @@ export default function TranscriptView({ transcript, positionMs, player, editabl
         </div> : <div className="flex min-w-0 items-start gap-2"><p className={`m-0 min-w-0 flex-1 text-read leading-[26px] ${defaultUnknown ? "text-ink-muted" : ""}`}>{segment.text}</p><Button variant="ghost" size="icon" className="h-7 w-auto px-1 text-xs opacity-0 group-hover:opacity-100 focus:opacity-100" disabled={!editable} onClick={() => { setEditing(segment.id); setText(segment.text); setError(null); }}>Edit</Button></div>}
       </li>;
     })}
-  </ol>;
+  </ol>{error && !editing && <p role="alert" className="text-sm text-record">{error}</p>}</>;
 }

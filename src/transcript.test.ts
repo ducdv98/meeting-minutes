@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { currentSegmentId, speakerName } from "./transcript";
+import { currentSegmentId, participantList, participantName, speakerName } from "./transcript";
 import type { Segment } from "./processing";
 
 const segments: Segment[] = [
@@ -22,4 +22,12 @@ it("uses the domain Speaker labels", () => {
   expect(speakerName("me")).toBe("Me");
   expect(speakerName("remote")).toBe("Remote");
   expect(speakerName("unknown")).toBe("Unknown");
+});
+
+it("resolves revision-scoped assignments without trimming stored Participant names", () => {
+  const transcript = { schema_version: 1, revision: 2, created_at: "now", model: "small", language: "en" as const, language_detected: false, duration_ms: 900, segments };
+  const overrides = { revision: 2, segments: { first: "  Anna  ", overlap: "  Anna  " } };
+  expect(participantName(segments[0], 2, {}, overrides, " Duc ")).toBe("  Anna  ");
+  expect(participantName(segments[0], 1, {}, overrides, " Duc ")).toBe("Duc");
+  expect(participantList(transcript, {}, overrides, " Duc ")).toEqual(["  Anna  ", "Duc", "Remote", "Unknown"]);
 });

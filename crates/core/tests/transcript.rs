@@ -3,22 +3,22 @@ use meeting_minutes_core::transcript::{
     RawSegment, Speaker, Transcript,
 };
 use meeting_minutes_core::Library;
-use meeting_minutes_core::participant::{participant_name, MeetingParticipants};
+use meeting_minutes_core::participant::{MeetingParticipants, Participants};
 use tempfile::TempDir;
 
 #[test]
 fn participants_follow_settings_merge_and_voice_note_rules() {
     let segment = |speaker| meeting_minutes_core::transcript::Segment { id: "s00001".into(), start_ms: 0, end_ms: 100, text: "Hi".into(), speaker };
     let mut names = MeetingParticipants::new();
-    assert_eq!(participant_name(&names, None, false, &segment(Speaker::Me)), "Me");
-    assert_eq!(participant_name(&names, Some("Duc"), false, &segment(Speaker::Me)), "Duc");
-    assert_eq!(participant_name(&names, None, false, &segment(Speaker::Remote)), "Remote");
-    assert_eq!(participant_name(&names, None, false, &segment(Speaker::Unknown)), "Unknown");
+    assert_eq!(Participants::new(names.clone(), None, None, false).name(&segment(Speaker::Me), 1), "Me");
+    assert_eq!(Participants::new(names.clone(), None, Some("Duc"), false).name(&segment(Speaker::Me), 1), "Duc");
+    assert_eq!(Participants::new(names.clone(), None, None, false).name(&segment(Speaker::Remote), 1), "Remote");
+    assert_eq!(Participants::new(names.clone(), None, None, false).name(&segment(Speaker::Unknown), 1), "Unknown");
     names.insert("remote".into(), "Anna".into());
     names.insert("unknown".into(), "Anna".into());
-    assert_eq!(participant_name(&names, None, false, &segment(Speaker::Remote)), "Anna");
-    assert_eq!(participant_name(&names, None, false, &segment(Speaker::Unknown)), "Anna");
-    assert_eq!(participant_name(&names, Some("Duc"), true, &segment(Speaker::Unknown)), "Duc");
+    assert_eq!(Participants::new(names.clone(), None, None, false).name(&segment(Speaker::Remote), 1), "Anna");
+    assert_eq!(Participants::new(names.clone(), None, None, false).name(&segment(Speaker::Unknown), 1), "Anna");
+    assert_eq!(Participants::new(names, None, Some("Duc"), true).name(&segment(Speaker::Unknown), 1), "Duc");
 }
 
 #[test]

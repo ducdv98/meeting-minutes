@@ -279,9 +279,21 @@ pub fn transcribe_meeting_named(
             "Transcript revision collision limit".into(),
         ));
     }
-    let write = crate::metadata::with_current_metadata(request.meeting_dir, |metadata| {
+    let write = crate::metadata::update_metadata_and(request.meeting_dir, |metadata| {
+        let file: MeetingFile = serde_json::from_value(metadata.clone())?;
+        // Segment moves belong to the Revision they were made on; carry them onto this one by time.
+        let previous_path = file.segment_participants.as_ref().filter(|map| map.revision != transcript.revision)
+            .map(|map| request.meeting_dir.join(format!("transcript.r{}.json", map.revision)));
+        if let Some(previous_path) = previous_path.filter(|path| path.is_file()) {
+            let previous: Transcript = serde_json::from_slice(&fs::read(previous_path)?)?;
+            let participants = crate::participant::Participants::new(file.participants.clone(), file.segment_participants.clone(), your_name, file.is_voice_note());
+            metadata["segment_participants"] = serde_json::to_value(crate::participant::carry_over(&previous, &transcript, &participants))?;
+        }
+        Ok(())
+    }, |metadata| {
         let file: MeetingFile = serde_json::from_value(metadata.clone()).map_err(io::Error::other)?;
-        let markdown = crate::transcript::render_markdown_named(&file.title, &transcript, &file.participants, your_name, file.is_voice_note());
+        let participants = crate::participant::Participants::new(file.participants.clone(), file.segment_participants.clone(), your_name, file.is_voice_note());
+        let markdown = crate::transcript::render_markdown_named(&file.title, &transcript, &participants);
         let mut md = OpenOptions::new()
             .write(true)
             .create(true)
@@ -291,10 +303,14 @@ pub fn transcribe_meeting_named(
         md.sync_all()?;
         fs::rename(&markdown_tmp, request.meeting_dir.join("transcript.md"))?;
         Ok(())
+    }).map_err(|error| match error {
+        crate::library::LibraryError::Io(error) => ProcessingError::Io(error),
+        crate::library::LibraryError::Json(error) => ProcessingError::Json(error),
+        error => ProcessingError::Engine(error.to_string()),
     });
     if let Err(error) = write {
         let _ = fs::remove_file(&markdown_tmp);
-        return Err(error.into());
+        return Err(error);
     }
     progress(1.0);
     log_event(LogEvent::transcription_completed(

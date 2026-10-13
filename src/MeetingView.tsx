@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { deleteMeeting, meetingDetail, openMeetingFolder, renameMeeting, setParticipantName, participantNames, type MeetingDetail, type SearchHit } from "./library";
+import { assignSegments, deleteMeeting, meetingDetail, openMeetingFolder, renameMeeting, renameParticipant, removeParticipant, participantNames, type MeetingDetail, type SearchHit } from "./library";
 import Player, { PlayerContext, type PlayerHandle } from "./Player";
 import type { TimelinePlayer } from "./timeline";
 import { formatElapsed } from "./recording";
 import { onLibraryChanged } from "./recording";
 import { cancelProcessing, dismissProcessing, enqueueTranscription, getSettings, meetingTranscript, MODELS, onProcessingStatus, processingStageLabel, processingStatus, setMeetingLanguage, type Language, type ProcessingJob, type Speaker, type Transcript } from "./processing";
 import TranscriptView from "./TranscriptView";
-import { editSegment, participantName, speakerName } from "./transcript";
+import { editSegment, labelParticipantName, participantList, speakerName } from "./transcript";
 import { aiStatus, type AiStatus } from "./ai";
 import AiSetupGuidance from "./AiSetupGuidance";
 import ConfirmDelete from "./ConfirmDelete";
@@ -57,7 +57,7 @@ export default function MeetingView({ id, onBack, onRenamed, onOpenSettings, ope
   const [detail, setDetail] = useState<MeetingDetail | null>(null);
   const [yourName, setYourName] = useState<string | null>(null);
   const [suggestions, setSuggestions] = useState<string[]>([]);
-  const [participantDrafts, setParticipantDrafts] = useState<Partial<Record<Speaker, string>>>({});
+  const [participantDrafts, setParticipantDrafts] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [staleSearchResult, setStaleSearchResult] = useState(false);
   const [renaming, setRenaming] = useState(false);
@@ -162,19 +162,38 @@ export default function MeetingView({ id, onBack, onRenamed, onOpenSettings, ope
     } catch (reason) { setError(String(reason)); }
   }
 
-  async function saveParticipant(label: Speaker) {
+  // The Library decides merges and defaults; show what it stored.
+  async function reloadParticipants() {
+    const next = await meetingDetail(id);
+    setDetail((current) => current ? { ...current, participants: next.participants, segment_participants: next.segment_participants } : next);
+  }
+
+  async function saveParticipant(from: string) {
     if (!detail) return;
-    const value = participantDrafts[label];
-    if (value === undefined) return;
-    const defaultName = label === "me" ? yourName?.trim() || "Me" : speakerName(label);
-    const name = value.trim() && value.trim() !== defaultName ? value.trim() : null;
+    const name = participantDrafts[from]?.trim();
+    if (!name || name === from) { setParticipantDrafts((current) => { const next = { ...current }; delete next[from]; return next; }); return; }
     setError(null);
     try {
-      await setParticipantName(id, label, name);
-      setDetail((current) => current ? { ...current, participants: { ...current.participants, [label]: name || undefined } } : current);
-      setParticipantDrafts((current) => { const next = { ...current }; delete next[label]; return next; });
-      setSuggestions((current) => name && !current.includes(name) ? [...current, name].sort() : current);
+      await renameParticipant(id, from, name);
+      await reloadParticipants();
+      setParticipantDrafts((current) => { const next = { ...current }; delete next[from]; return next; });
+      setSuggestions((current) => !current.includes(name) ? [...current, name].sort() : current);
     } catch (reason) { setError(String(reason)); }
+  }
+
+  async function removeName(name: string) {
+    setError(null);
+    try {
+      await removeParticipant(id, name);
+      await reloadParticipants();
+    } catch (reason) { setError(String(reason)); }
+  }
+
+  async function moveSegments(segmentIds: string[], name: string) {
+    if (!transcript) return;
+    await assignSegments(id, transcript.revision, segmentIds, name);
+    await reloadParticipants();
+    setSuggestions((current) => !current.includes(name) ? [...current, name].sort() : current);
   }
 
   function cancelRename() {
@@ -223,6 +242,7 @@ export default function MeetingView({ id, onBack, onRenamed, onOpenSettings, ope
   const isVoiceNote = !!detail?.voice_note;
   // Every Segment of a Voice note belongs to the user, so only Me is named.
   const speakerLabels: Speaker[] = !transcript ? [] : isVoiceNote ? ["me"] : ["me", "remote", "unknown"].filter((label): label is Speaker => transcript.segments.some((segment) => segment.speaker === label));
+  const meetingParticipants = transcript && detail ? participantList(transcript, detail.participants, detail.segment_participants, yourName, isVoiceNote) : [];
   return <PlayerContext.Provider value={player}><section className="flex min-h-0 min-w-0 flex-1 flex-col" aria-label="Meeting">
     <span className="sr-only" aria-live="polite" aria-atomic="true">{stageAnnouncement}</span>
     {error && <div className="mx-7 mt-4"><ErrorState title="Couldn't update the Meeting" guidance={error} /></div>}
@@ -260,13 +280,13 @@ export default function MeetingView({ id, onBack, onRenamed, onOpenSettings, ope
             {transcript && !job && <Button variant="ghost" onClick={() => void runTranscription(model || undefined)}><RefreshCw size={16} strokeWidth={1.5} />Re-transcribe</Button>}
           </div>
           {transcript && <p className="sr-only">Transcript revision {transcript.revision} · model {transcript.model} · {transcript.segments.length} segments · {languageName(transcript.language)}</p>}
-          {transcript && speakerLabels.length > 0 && <div className="mb-4 grid gap-2 rounded-md border border-line bg-raised p-3"><h3 className="m-0 text-sm font-medium">Participants</h3><datalist id="participant-names">{suggestions.map((name) => <option key={name} value={name} />)}</datalist><div className="flex flex-wrap gap-3">{speakerLabels.map((label) => <label key={label} className="grid min-w-[130px] flex-1 gap-1 text-xs text-ink-muted">{speakerName(label)} Participant<Input aria-label={`${speakerName(label)} Participant`} list="participant-names" value={participantDrafts[label] ?? participantName(label, detail.participants, yourName, isVoiceNote)} onChange={(event) => setParticipantDrafts((current) => ({ ...current, [label]: event.target.value }))} onBlur={() => void saveParticipant(label)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); event.currentTarget.blur(); } }} /></label>)}</div></div>}
+          {transcript && meetingParticipants.length > 0 && <div className="mb-4 grid gap-2 rounded-md border border-line bg-raised p-3"><h3 className="m-0 text-sm font-medium">Participants</h3><datalist id="participant-names">{suggestions.map((name) => <option key={name} value={name} />)}</datalist><div className="flex flex-wrap gap-3">{meetingParticipants.map((name) => { const labels = speakerLabels.filter((label) => labelParticipantName(label, detail.participants, yourName, isVoiceNote) === name); const removable = Object.values(detail.participants).includes(name) || Object.values(detail.segment_participants?.segments ?? {}).includes(name); return <div key={name} className="grid min-w-[130px] flex-1 gap-1 text-xs text-ink-muted"><label>{labels.length ? labels.map(speakerName).join(", ") : name} Participant<Input aria-label={`${labels.length === 1 ? speakerName(labels[0]) : name} Participant`} list="participant-names" value={participantDrafts[name] ?? name} onChange={(event) => setParticipantDrafts((current) => ({ ...current, [name]: event.target.value }))} onBlur={() => void saveParticipant(name)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); event.currentTarget.blur(); } }} /></label>{labels.length > 0 && <span className="text-ink-faint">Speaker labels: {labels.map(speakerName).join(", ")}</span>}{removable && <Button variant="ghost" className="justify-self-start px-0 text-xs" onClick={() => void removeName(name)}>Remove {name}</Button>}</div>; })}</div></div>}
           {transcript && !job && <div className="mb-3 flex items-center gap-2 text-xs text-ink-muted"><label htmlFor="meeting-model">Model</label><select id="meeting-model" className="rounded-sm border border-line-strong bg-raised px-2 py-1 text-xs outline-none focus:border-accent" value={model} onChange={(event) => setModel(event.target.value)}><option value="">Model from Settings</option>{MODELS.map((option) => <option key={option.name} value={option.name}>{option.name}</option>)}</select><span>Re-transcribing adds a new Revision.</span></div>}
           {job && job.stage !== "failed" && <div role="status" className="mb-4"><Loading message={processingStageLabel(job)} rows={2} /><p className="text-sm text-ink-muted">{processingStageLabel(job)}</p>{job.stage !== "queued" && <div role="progressbar" aria-label={processingStageLabel(job)} aria-valuenow={Math.round(job.progress * 100)} aria-valuemin={0} aria-valuemax={100} className="mt-2 h-1.5 max-w-md rounded-sm bg-page-shadow"><div className="h-full rounded-sm bg-accent" style={{ width: `${Math.round(job.progress * 100)}%` }} /></div>}<Button variant="ghost" className="mt-2" onClick={() => void cancelJob()}>Cancel processing</Button></div>}
           {job?.stage === "failed" && <div className="mb-4"><ErrorState title="Transcription failed" guidance={job.error ?? "Try again."} onRetry={() => void runTranscription()} /><Button variant="ghost" onClick={() => void dismissJob()}>Dismiss</Button></div>}
           {!transcriptLoaded && <Loading message="Loading Transcript…" />}
           {transcriptLoaded && !job && !transcript && <EmptyState title="No Transcript yet" description="Transcribe this Meeting to see its Segments." action={<Button onClick={() => void runTranscription()}>Transcribe</Button>} />}
-          {transcript && <TranscriptView key={`${id}:${transcript.revision}`} transcript={transcript} positionMs={positionMs} player={player} editable={!job || job.stage === "failed"} onEdit={saveSegment} participants={detail.participants} yourName={yourName} isVoiceNote={isVoiceNote} />}
+          {transcript && <TranscriptView key={`${id}:${transcript.revision}`} transcript={transcript} positionMs={positionMs} player={player} editable={!job || job.stage === "failed"} onEdit={saveSegment} onMove={isVoiceNote ? undefined : moveSegments} participants={detail.participants} segmentParticipants={detail.segment_participants} yourName={yourName} isVoiceNote={isVoiceNote} />}
         </section>
         <aside className="flex min-h-0 min-w-0 flex-col border-l border-line max-[680px]:border-l-0 max-[680px]:border-t" aria-label="Summary and Ask">
           {!providerStatus && <div className="px-5 py-4"><Loading message="Loading Summary and Ask…" /></div>}

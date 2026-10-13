@@ -211,6 +211,7 @@ fn transcribes_two_recordings_on_timeline_and_creates_revisions() {
         library.transcript(id).unwrap().unwrap().segments,
         first.segments
     );
+    library.assign_segments(id, 1, &["s00001".into()], Some("Anna")).unwrap();
     let second =
         transcribe_meeting(&request, &mut engine, &mut |_| {}, &AtomicBool::new(false)).unwrap();
     assert_eq!(second.revision, 2);
@@ -222,6 +223,23 @@ fn transcribes_two_recordings_on_timeline_and_creates_revisions() {
     assert!(std::fs::read_to_string(dir.join("transcript.md"))
         .unwrap()
         .contains("Transcript revision 2"));
+    assert!(std::fs::read_to_string(dir.join("transcript.md")).unwrap().contains("Anna:** words"));
+    let carried = library.meeting(id).unwrap().segment_participants.unwrap();
+    assert_eq!(carried.revision, 2);
+    assert_eq!(carried.segments.get("s00001").map(String::as_str), Some("Anna"));
+    // Moves made on an older Revision still carry when that Revision is not the previous file.
+    let mut moved: serde_json::Value = serde_json::from_slice(&std::fs::read(dir.join("transcript.r2.json")).unwrap()).unwrap();
+    moved["revision"] = serde_json::json!(5);
+    std::fs::write(dir.join("transcript.r5.json"), serde_json::to_vec(&moved).unwrap()).unwrap();
+    std::fs::remove_file(dir.join("transcript.r2.json")).unwrap();
+    let mut metadata: serde_json::Value = serde_json::from_slice(&std::fs::read(dir.join("meeting.json")).unwrap()).unwrap();
+    metadata["segment_participants"]["revision"] = serde_json::json!(5);
+    std::fs::write(dir.join("meeting.json"), serde_json::to_vec(&metadata).unwrap()).unwrap();
+    let third = transcribe_meeting(&request, &mut engine, &mut |_| {}, &AtomicBool::new(false)).unwrap();
+    assert_eq!(third.revision, 6);
+    let carried = library.meeting(id).unwrap().segment_participants.unwrap();
+    assert_eq!(carried.revision, 6);
+    assert_eq!(carried.segments.get("s00001").map(String::as_str), Some("Anna"));
 }
 
 #[test]

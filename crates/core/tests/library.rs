@@ -20,6 +20,51 @@ fn write_transcript(library: &Library, id: &str, revision: u32, text: &str) {
 }
 
 #[test]
+fn import_segments_can_be_moved_in_groups_and_return_to_unknown() {
+    let temp = TempDir::new().unwrap();
+    let mut library = Library::open(temp.path().join("Library"), temp.path().join("index.sqlite3")).unwrap();
+    let meeting = library.create_meeting("Import", at("2026-10-12T09:30:00Z")).unwrap();
+    let folder = library.meeting_dir(&meeting.id);
+    let transcript = serde_json::json!({"schema_version":1,"revision":1,"created_at":"now","model":"small","language":"en","language_detected":false,"duration_ms":3000,"segments":[
+        {"id":"s00001","start_ms":0,"end_ms":800,"text":"First","speaker":"unknown"},
+        {"id":"s00002","start_ms":900,"end_ms":1700,"text":"Second","speaker":"unknown"},
+        {"id":"s00003","start_ms":1800,"end_ms":2600,"text":"Third","speaker":"unknown"}
+    ]});
+    std::fs::write(folder.join("transcript.r1.json"), serde_json::to_vec(&transcript).unwrap()).unwrap();
+    library.assign_segments(&meeting.id, 1, &["s00001".into(), "s00003".into()], Some("Anna")).unwrap();
+    library.assign_segments(&meeting.id, 1, &["s00002".into()], Some("Bao")).unwrap();
+    assert_eq!(library.participant_names().unwrap(), vec!["Anna", "Bao"]);
+    assert!(matches!(library.assign_segments(&meeting.id, 0, &["s00001".into()], Some("Bao")), Err(LibraryError::StaleRevision)));
+    assert_eq!(library.meeting(&meeting.id).unwrap().segment_participants.unwrap().segments.len(), 3);
+    let markdown = std::fs::read_to_string(folder.join("transcript.md")).unwrap();
+    assert!(markdown.contains("Anna:** First"));
+    assert!(markdown.contains("Bao:** Second"));
+    assert!(markdown.contains("Anna:** Third"));
+    library.remove_participant(&meeting.id, "Bao").unwrap();
+    assert!(std::fs::read_to_string(folder.join("transcript.md")).unwrap().contains("Unknown:** Second"));
+    library.assign_segments(&meeting.id, 1, &["s00003".into()], None).unwrap();
+    assert!(std::fs::read_to_string(folder.join("transcript.md")).unwrap().contains("Unknown:** Third"));
+    assert_eq!(library.meeting(&meeting.id).unwrap().segment_participants.unwrap().segments.len(), 1);
+}
+
+#[test]
+fn rename_participant_merges_defaults_labels_and_segment_assignments() {
+    let temp = TempDir::new().unwrap();
+    let mut library = Library::open(temp.path().join("Library"), temp.path().join("index.sqlite3")).unwrap();
+    library.set_your_name(Some("Duc"));
+    let meeting = library.create_meeting("Call", at("2026-10-12T09:30:00Z")).unwrap();
+    write_transcript(&library, &meeting.id, 1, "Hello");
+    library.set_participant_name(&meeting.id, Speaker::Remote, Some("Anna")).unwrap();
+    library.assign_segments(&meeting.id, 1, &["s00001".into()], Some("Bao")).unwrap();
+    library.rename_participant(&meeting.id, "Bao", "Anna").unwrap();
+    assert!(std::fs::read_to_string(library.meeting_dir(&meeting.id).join("transcript.md")).unwrap().contains("Anna:** Hello"));
+    library.rename_participant(&meeting.id, "Duc", "Anna").unwrap();
+    assert_eq!(library.meeting(&meeting.id).unwrap().participants.get("me").map(String::as_str), Some("Anna"));
+    library.remove_participant(&meeting.id, "Anna").unwrap();
+    assert!(std::fs::read_to_string(library.meeting_dir(&meeting.id).join("transcript.md")).unwrap().contains("Duc:** Hello"));
+}
+
+#[test]
 fn participant_names_survive_rescan_and_update_transcript_markdown() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().join("Library");
@@ -57,9 +102,9 @@ fn participant_defaults_merging_and_voice_notes_use_meeting_sources() {
     assert!(markdown.contains("Anna:** Hi"));
     assert!(markdown.contains("Anna:** Maybe"));
     library.set_participant_name(&meeting.id, Speaker::Remote, Some("Remote")).unwrap();
-    assert!(library.meeting(&meeting.id).unwrap().participants.get("remote").is_none());
+    assert!(!library.meeting(&meeting.id).unwrap().participants.contains_key("remote"));
     library.set_participant_name(&meeting.id, Speaker::Me, Some("Duc")).unwrap();
-    assert!(library.meeting(&meeting.id).unwrap().participants.get("me").is_none());
+    assert!(!library.meeting(&meeting.id).unwrap().participants.contains_key("me"));
     let mut metadata: serde_json::Value = serde_json::from_slice(&std::fs::read(path.join("meeting.json")).unwrap()).unwrap();
     metadata["recordings"] = serde_json::json!([{"number":1,"started_at":"2026-10-12T09:30:00Z","timeline_start_ms":0,"duration_ms":3000,"files":[{"source":"microphone","file":"mic.flac","channels":1}]}]);
     assert!(!library.meeting(&meeting.id).unwrap().voice_note);

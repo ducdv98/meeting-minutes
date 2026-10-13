@@ -17,7 +17,7 @@ use crate::{
     index::Index,
     meeting_file::{ImportFile, MeetingDetail, MeetingFile, RecordingEntry},
     metadata::{update_metadata, update_metadata_and, with_current_metadata},
-    participant::{default_name, label_key},
+    participant::{default_name, label_key, Participants, SegmentParticipants},
     recording::{write_manifest, RecordingManifest},
     summary::{read_summary, render_summary_markdown},
     transcript::{render_markdown_named, Language, Speaker, Transcript},
@@ -355,6 +355,11 @@ impl Library {
         for meeting in self.index.list()? {
             let file: MeetingFile = serde_json::from_slice(&fs::read(self.meeting_dir(&meeting.id).join("meeting.json"))?)?;
             names.extend(file.participants.into_values());
+            if let Some(assignments) = file.segment_participants {
+                if highest_transcript_revision(&self.meeting_dir(&meeting.id))? == Some(assignments.revision) {
+                    names.extend(assignments.segments.into_values());
+                }
+            }
         }
         if let Some(name) = &self.your_name { names.insert(name.clone()); }
         Ok(names.into_iter().collect())
@@ -390,6 +395,7 @@ impl Library {
                 .collect(),
             voice_note,
             participants: file.participants,
+            segment_participants: file.segment_participants,
         })
     }
 
@@ -478,7 +484,7 @@ impl Library {
                 Some(name) => { participants.insert(label_key(label).into(), serde_json::json!(name)); }
                 None => { participants.remove(label_key(label)); }
             }
-            Ok(())
+            normalize_assignments(&folder, metadata, self.your_name.as_deref())
         }, |metadata| {
             if let Some(transcript) = self.transcript(id)? {
                 let markdown = markdown_from_metadata(metadata, &transcript, self.your_name.as_deref())?;
@@ -486,6 +492,76 @@ impl Library {
             }
             Ok(())
         })
+    }
+
+    pub fn assign_segments(&self, id: &str, revision: u32, segment_ids: &[String], name: Option<&str>) -> Result<(), LibraryError> {
+        let folder = self.checked_meeting_dir(id)?;
+        let name = name.map(str::trim).filter(|name| !name.is_empty());
+        update_metadata_and(&folder, |metadata| {
+            if highest_transcript_revision(&folder)? != Some(revision) { return Err(LibraryError::StaleRevision); }
+            let transcript = read_transcript_revision(&folder, revision)?;
+            let file: MeetingFile = serde_json::from_value(metadata.clone())?;
+            if file.is_voice_note() { return Err(LibraryError::Encode("Every Segment of a Voice note belongs to you".into())); }
+            let resolver = Participants::new(file.participants.clone(), file.segment_participants.clone(), self.your_name.as_deref(), file.is_voice_note());
+            let mut assignments = file.segment_participants.filter(|map| map.revision == revision).unwrap_or(SegmentParticipants { revision, segments: Default::default() });
+            for segment_id in segment_ids {
+                let segment = transcript.segment(segment_id).ok_or(LibraryError::SegmentNotFound)?;
+                match name.filter(|name| *name != resolver.label_name(segment.speaker)) {
+                    Some(name) => { assignments.segments.insert(segment_id.clone(), name.to_owned()); }
+                    None => { assignments.segments.remove(segment_id); }
+                }
+            }
+            metadata["segment_participants"] = serde_json::to_value(assignments)?;
+            Ok(())
+        }, |metadata| self.write_participant_markdown(&folder, id, metadata))
+    }
+
+    pub fn rename_participant(&self, id: &str, from: &str, to: &str) -> Result<(), LibraryError> {
+        let folder = self.checked_meeting_dir(id)?;
+        let to = to.trim();
+        if to.is_empty() { return Err(LibraryError::Encode("A Participant name cannot be empty".into())); }
+        update_metadata_and(&folder, |metadata| {
+            let file: MeetingFile = serde_json::from_value(metadata.clone())?;
+            let voice_note = file.is_voice_note();
+            let resolver = Participants::new(file.participants.clone(), file.segment_participants.clone(), self.your_name.as_deref(), file.is_voice_note());
+            let mut labels = file.participants;
+            for label in [Speaker::Me, Speaker::Remote, Speaker::Unknown] {
+                if voice_note && label != Speaker::Me { continue; }
+                if resolver.label_name(label) == from {
+                    if to == default_name(label, self.your_name.as_deref()) { labels.remove(label_key(label)); }
+                    else { labels.insert(label_key(label).into(), to.into()); }
+                }
+            }
+            let mut assignments = file.segment_participants;
+            if let Some(map) = &mut assignments {
+                for name in map.segments.values_mut() { if name == from { *name = to.into(); } }
+            }
+            metadata["participants"] = serde_json::to_value(labels)?;
+            metadata["segment_participants"] = serde_json::to_value(assignments)?;
+            normalize_assignments(&folder, metadata, self.your_name.as_deref())
+        }, |metadata| self.write_participant_markdown(&folder, id, metadata))
+    }
+
+    pub fn remove_participant(&self, id: &str, name: &str) -> Result<(), LibraryError> {
+        let folder = self.checked_meeting_dir(id)?;
+        update_metadata_and(&folder, |metadata| {
+            let file: MeetingFile = serde_json::from_value(metadata.clone())?;
+            let mut labels = file.participants;
+            labels.retain(|_, value| value != name);
+            let mut assignments = file.segment_participants;
+            if let Some(map) = &mut assignments { map.segments.retain(|_, value| value != name); }
+            metadata["participants"] = serde_json::to_value(labels)?;
+            metadata["segment_participants"] = serde_json::to_value(assignments)?;
+            normalize_assignments(&folder, metadata, self.your_name.as_deref())
+        }, |metadata| self.write_participant_markdown(&folder, id, metadata))
+    }
+
+    fn write_participant_markdown(&self, folder: &Path, id: &str, metadata: &serde_json::Value) -> Result<(), LibraryError> {
+        if let Some(transcript) = self.transcript(id)? {
+            let markdown = markdown_from_metadata(metadata, &transcript, self.your_name.as_deref())?;
+            write_transcript_markdown(folder, &markdown)?;
+        }
+        Ok(())
     }
 
     pub fn cloud_consent(&self, id: &str, provider: ProviderKind) -> Result<bool, LibraryError> {
@@ -715,7 +791,22 @@ impl Library {
 
 fn markdown_from_metadata(metadata: &serde_json::Value, transcript: &Transcript, your_name: Option<&str>) -> io::Result<String> {
     let file: MeetingFile = serde_json::from_value(metadata.clone()).map_err(io::Error::other)?;
-    Ok(render_markdown_named(&file.title, transcript, &file.participants, your_name, file.is_voice_note()))
+    Ok(render_markdown_named(&file.title, transcript, &Participants::new(file.participants.clone(), file.segment_participants.clone(), your_name, file.is_voice_note())))
+}
+
+fn normalize_assignments(folder: &Path, metadata: &mut serde_json::Value, your_name: Option<&str>) -> Result<(), LibraryError> {
+    let file: MeetingFile = serde_json::from_value(metadata.clone())?;
+    let voice_note = file.is_voice_note();
+    let Some(mut assignments) = file.segment_participants else { return Ok(()); };
+    let transcript = match read_transcript_revision(folder, assignments.revision) {
+        Ok(transcript) => transcript,
+        Err(LibraryError::Io(error)) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    let participants = Participants::new(file.participants, None, your_name, voice_note);
+    assignments.segments.retain(|id, name| transcript.segment(id).is_none_or(|segment| *name != participants.label_name(segment.speaker)));
+    metadata["segment_participants"] = serde_json::to_value(assignments)?;
+    Ok(())
 }
 
 fn write_current_transcript_markdown(folder: &Path, transcript: &Transcript, your_name: Option<&str>) -> io::Result<()> {

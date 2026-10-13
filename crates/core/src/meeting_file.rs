@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use crate::ai::ProviderKind;
-use crate::participant::MeetingParticipants;
+use crate::participant::{MeetingParticipants, SegmentParticipants};
 use crate::{capture::Source, recording::Marker};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -39,6 +39,7 @@ pub struct MeetingDetail {
     pub sources: Vec<Source>,
     pub voice_note: bool,
     pub participants: MeetingParticipants,
+    pub segment_participants: Option<SegmentParticipants>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -95,6 +96,8 @@ pub(crate) struct MeetingFile {
     pub markers: Vec<Marker>,
     #[serde(default, skip_serializing_if = "MeetingParticipants::is_empty")]
     pub participants: MeetingParticipants,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub segment_participants: Option<SegmentParticipants>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cloud_consent: Vec<CloudConsent>,
 }
@@ -112,6 +115,7 @@ impl MeetingFile {
             recordings: Vec::new(),
             markers: Vec::new(),
             participants: MeetingParticipants::new(),
+            segment_participants: None,
             cloud_consent: Vec::new(),
         }
     }

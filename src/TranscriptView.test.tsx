@@ -70,3 +70,24 @@ it("stops an open editor from saving when Processing begins", () => {
   fireEvent.keyDown(input, { key: "Enter", ctrlKey: true });
   expect(onEdit).not.toHaveBeenCalled();
 });
+
+it("moves selected Segments together and clears the selection", async () => {
+  const onMove = vi.fn().mockResolvedValue(undefined);
+  render(<TranscriptView transcript={transcript} positionMs={0} player={null} editable onEdit={vi.fn()} onMove={onMove} />);
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select Segment s00001" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select Segment s00002" }));
+  expect(screen.getByText("2 selected")).toBeTruthy();
+  fireEvent.change(screen.getByRole("combobox", { name: "Move to Participant" }), { target: { value: "Remote" } });
+  await waitFor(() => expect(onMove).toHaveBeenCalledWith(["s00001", "s00002"], "Remote"));
+  expect(screen.queryByText("2 selected")).toBeNull();
+});
+
+it("moves one Segment to a new Participant entered inline", async () => {
+  const onMove = vi.fn().mockResolvedValue(undefined);
+  render(<TranscriptView transcript={transcript} positionMs={0} player={null} editable onEdit={vi.fn()} onMove={onMove} />);
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select Segment s00002" }));
+  fireEvent.change(screen.getByRole("combobox", { name: "Move to Participant" }), { target: { value: "__new__" } });
+  fireEvent.change(screen.getByRole("textbox", { name: "New Participant name" }), { target: { value: " Bao " } });
+  fireEvent.click(screen.getByRole("button", { name: "Move" }));
+  await waitFor(() => expect(onMove).toHaveBeenCalledWith(["s00002"], "Bao"));
+});
