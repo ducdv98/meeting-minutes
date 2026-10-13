@@ -1160,6 +1160,11 @@ fn processing_worker(app: AppHandle) {
         };
         log_event(LogEvent::ProcessingQueued);
         if app.state::<Quitting>().0.load(Ordering::SeqCst) {
+            log_event(LogEvent::processing_result(
+                &processing::ProcessingError::Cancelled,
+                processing::ProcessingStage::Preparing,
+                None, None, 0, 0, Duration::ZERO,
+            ));
             if let Ok(mut processor) = lock_processor(&app) {
                 processor.finished(&id, Err(processing::ProcessingError::Cancelled));
             }
@@ -1170,6 +1175,8 @@ fn processing_worker(app: AppHandle) {
             Ok(p) => p.cancel_flag(),
             Err(_) => continue,
         };
+        let mut failure_stage = processing::ProcessingStage::Preparing;
+        let mut transcription_started = false;
         let result = (|| -> Result<(), processing::ProcessingError> {
             let meeting_dir = {
                 let library_state = app.state::<LibraryState>();
@@ -1195,6 +1202,7 @@ fn processing_worker(app: AppHandle) {
             let needs_model_download = !models::is_installed(models_dir, model);
             let needs_vad_download = !models::is_installed(models_dir, &models::VAD_MODEL);
             if needs_model_download || needs_vad_download {
+                failure_stage = processing::ProcessingStage::Downloading;
                 processing_stage(&app, &id, JobStage::Downloading, 0.0);
             }
             let model_path = if !needs_model_download {
@@ -1255,6 +1263,7 @@ fn processing_worker(app: AppHandle) {
             } else {
                 Some(models::model_path(models_dir, &models::VAD_MODEL))
             };
+            failure_stage = processing::ProcessingStage::Preparing;
             if cancel.load(std::sync::atomic::Ordering::SeqCst) {
                 return Err(processing::ProcessingError::Cancelled);
             }
@@ -1272,6 +1281,7 @@ fn processing_worker(app: AppHandle) {
             let mut engine = WhisperEngine::load_with_vad(&model_path, vad_path.as_deref())
                 .map_err(processing::ProcessingError::Engine)?;
             let mut last = 0u32;
+            transcription_started = true;
             processing::transcribe_meeting_named(
                 &TranscribeRequest {
                     meeting_dir: &meeting_dir,
@@ -1293,11 +1303,15 @@ fn processing_worker(app: AppHandle) {
             Ok(())
         })();
         let success = result.is_ok();
-        log_event(if success {
-            LogEvent::ProcessingCompleted
-        } else {
-            LogEvent::ProcessingFailed
-        });
+        if success {
+            log_event(LogEvent::ProcessingCompleted);
+        } else if !transcription_started {
+            if let Err(error) = &result {
+                log_event(LogEvent::processing_result(
+                    error, failure_stage, None, None, 0, 0, Duration::ZERO,
+                ));
+            }
+        }
         if success {
             let library_state = app.state::<LibraryState>();
             if let Ok(mut library) = library_state.lock() {

@@ -105,6 +105,101 @@ fn completed_transcription_reports_speech_duration_across_recordings() {
     }));
 }
 
+#[test]
+fn engine_failure_logs_transcribing_stage_and_completed_audio() {
+    struct FailingEngine {
+        calls: usize,
+    }
+    impl SpeechEngine for FailingEngine {
+        fn backend(&self) -> &str {
+            "Vulkan"
+        }
+        fn device(&self) -> Option<&str> {
+            Some("NVIDIA GeForce RTX 4050")
+        }
+        fn thread_count(&self) -> usize {
+            1
+        }
+        fn detect_language(&mut self, _: &[f32]) -> Result<Language, String> {
+            Ok(Language::En)
+        }
+        fn transcribe(
+            &mut self,
+            _: &[f32],
+            _: Language,
+            _: Option<&str>,
+            progress: &mut dyn FnMut(f32),
+            _: &AtomicBool,
+        ) -> Result<Vec<RawSegment>, ProcessingError> {
+            self.calls += 1;
+            if self.calls == 2 {
+                progress(0.5);
+                Err(ProcessingError::Engine(
+                    "Whisper worker panicked\n/private/Meeting/audio.flac secret Transcript text"
+                        .into(),
+                ))
+            } else {
+                Ok(vec![])
+            }
+        }
+    }
+    record_events();
+    let (_temp, dir) = saved_meeting();
+    let mut engine = FailingEngine { calls: 0 };
+    let result = transcribe_meeting(
+        &TranscribeRequest {
+            meeting_dir: &dir,
+            model: "small",
+            vocabulary: &[],
+            default_language: Some(Language::En),
+        },
+        &mut engine,
+        &mut |_| {},
+        &AtomicBool::new(false),
+    );
+    assert!(matches!(result, Err(ProcessingError::Engine(_))));
+    let current = std::thread::current().id();
+    let events = EVENTS.get().unwrap().lock().unwrap();
+    let event = events
+        .iter()
+        .rev()
+        .find(|(thread, event)| *thread == current && event.starts_with("processing_failed "))
+        .unwrap()
+        .1
+        .as_str();
+    assert!(event.contains("stage=transcribing kind=engine message=whisper_worker_panicked backend=Vulkan device=NVIDIA_GeForce_RTX_4050 audio_ms=150 total_ms=200 whisper_ms="), "{event}");
+    assert!(!event.contains("/private"));
+    assert!(!event.contains("secret Transcript text"));
+}
+
+#[test]
+fn cancelled_transcription_logs_cancellation() {
+    record_events();
+    let (_temp, dir) = saved_meeting();
+    let mut engine = FakeEngine {
+        calls: 0,
+        prompts: vec![],
+        detected: 0,
+        lengths: vec![],
+    };
+    let result = transcribe_meeting(
+        &TranscribeRequest {
+            meeting_dir: &dir,
+            model: "small",
+            vocabulary: &[],
+            default_language: None,
+        },
+        &mut engine,
+        &mut |_| {},
+        &AtomicBool::new(true),
+    );
+    assert!(matches!(result, Err(ProcessingError::Cancelled)));
+    let current = std::thread::current().id();
+    let events = EVENTS.get().unwrap().lock().unwrap();
+    assert!(events.iter().any(|(thread, event)| *thread == current
+        && event.starts_with("processing_cancelled stage=preparing ")));
+}
+
 fn saved_meeting() -> (TempDir, std::path::PathBuf) {
     let temp = TempDir::new().unwrap();
     let mut library = Library::open(
@@ -211,7 +306,9 @@ fn transcribes_two_recordings_on_timeline_and_creates_revisions() {
         library.transcript(id).unwrap().unwrap().segments,
         first.segments
     );
-    library.assign_segments(id, 1, &["s00001".into()], Some("Anna")).unwrap();
+    library
+        .assign_segments(id, 1, &["s00001".into()], Some("Anna"))
+        .unwrap();
     let second =
         transcribe_meeting(&request, &mut engine, &mut |_| {}, &AtomicBool::new(false)).unwrap();
     assert_eq!(second.revision, 2);
@@ -223,23 +320,42 @@ fn transcribes_two_recordings_on_timeline_and_creates_revisions() {
     assert!(std::fs::read_to_string(dir.join("transcript.md"))
         .unwrap()
         .contains("Transcript revision 2"));
-    assert!(std::fs::read_to_string(dir.join("transcript.md")).unwrap().contains("Anna:** words"));
+    assert!(std::fs::read_to_string(dir.join("transcript.md"))
+        .unwrap()
+        .contains("Anna:** words"));
     let carried = library.meeting(id).unwrap().segment_participants.unwrap();
     assert_eq!(carried.revision, 2);
-    assert_eq!(carried.segments.get("s00001").map(String::as_str), Some("Anna"));
+    assert_eq!(
+        carried.segments.get("s00001").map(String::as_str),
+        Some("Anna")
+    );
     // Moves made on an older Revision still carry when that Revision is not the previous file.
-    let mut moved: serde_json::Value = serde_json::from_slice(&std::fs::read(dir.join("transcript.r2.json")).unwrap()).unwrap();
+    let mut moved: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.join("transcript.r2.json")).unwrap()).unwrap();
     moved["revision"] = serde_json::json!(5);
-    std::fs::write(dir.join("transcript.r5.json"), serde_json::to_vec(&moved).unwrap()).unwrap();
+    std::fs::write(
+        dir.join("transcript.r5.json"),
+        serde_json::to_vec(&moved).unwrap(),
+    )
+    .unwrap();
     std::fs::remove_file(dir.join("transcript.r2.json")).unwrap();
-    let mut metadata: serde_json::Value = serde_json::from_slice(&std::fs::read(dir.join("meeting.json")).unwrap()).unwrap();
+    let mut metadata: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.join("meeting.json")).unwrap()).unwrap();
     metadata["segment_participants"]["revision"] = serde_json::json!(5);
-    std::fs::write(dir.join("meeting.json"), serde_json::to_vec(&metadata).unwrap()).unwrap();
-    let third = transcribe_meeting(&request, &mut engine, &mut |_| {}, &AtomicBool::new(false)).unwrap();
+    std::fs::write(
+        dir.join("meeting.json"),
+        serde_json::to_vec(&metadata).unwrap(),
+    )
+    .unwrap();
+    let third =
+        transcribe_meeting(&request, &mut engine, &mut |_| {}, &AtomicBool::new(false)).unwrap();
     assert_eq!(third.revision, 6);
     let carried = library.meeting(id).unwrap().segment_participants.unwrap();
     assert_eq!(carried.revision, 6);
-    assert_eq!(carried.segments.get("s00001").map(String::as_str), Some("Anna"));
+    assert_eq!(
+        carried.segments.get("s00001").map(String::as_str),
+        Some("Anna")
+    );
 }
 
 #[test]
@@ -459,7 +575,9 @@ impl SpeechEngine for SignalEngine {
         _: &mut dyn FnMut(f32),
         _: &AtomicBool,
     ) -> Result<Vec<RawSegment>, ProcessingError> {
-        if let Some(rename) = &mut self.on_transcribe { rename(); }
+        if let Some(rename) = &mut self.on_transcribe {
+            rename();
+        }
         self.samples = samples.to_vec();
         Ok(vec![])
     }
@@ -499,15 +617,32 @@ fn transcription_completes_without_vad_and_reports_no_speech_duration() {
 fn rename_during_transcription_is_the_published_markdown_title() {
     let (temp, dir) = saved_meeting();
     let id = dir.file_name().unwrap().to_str().unwrap().to_owned();
-    let mut writer = Library::open(temp.path().join("Library"), temp.path().join("rename-index.sqlite3")).unwrap();
+    let mut writer = Library::open(
+        temp.path().join("Library"),
+        temp.path().join("rename-index.sqlite3"),
+    )
+    .unwrap();
     let mut engine = SignalEngine {
         samples: Vec::new(),
-        on_transcribe: Some(Box::new(move || { writer.rename_meeting(&id, "Review").unwrap(); })),
+        on_transcribe: Some(Box::new(move || {
+            writer.rename_meeting(&id, "Review").unwrap();
+        })),
     };
-    transcribe_meeting(&TranscribeRequest {
-        meeting_dir: &dir, model: "small", vocabulary: &[], default_language: Some(Language::En),
-    }, &mut engine, &mut |_| {}, &AtomicBool::new(false)).unwrap();
-    assert!(std::fs::read_to_string(dir.join("transcript.md")).unwrap().starts_with("# Review\n"));
+    transcribe_meeting(
+        &TranscribeRequest {
+            meeting_dir: &dir,
+            model: "small",
+            vocabulary: &[],
+            default_language: Some(Language::En),
+        },
+        &mut engine,
+        &mut |_| {},
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    assert!(std::fs::read_to_string(dir.join("transcript.md"))
+        .unwrap()
+        .starts_with("# Review\n"));
 }
 
 fn prepared_tone(hz: f32) -> Vec<f32> {
@@ -539,7 +674,10 @@ fn prepared_tone(hz: f32) -> Vec<f32> {
     library
         .set_language(&meeting.id, Some(Language::En))
         .unwrap();
-    let mut engine = SignalEngine { samples: vec![], on_transcribe: None };
+    let mut engine = SignalEngine {
+        samples: vec![],
+        on_transcribe: None,
+    };
     transcribe_meeting(
         &TranscribeRequest {
             meeting_dir: &dir,

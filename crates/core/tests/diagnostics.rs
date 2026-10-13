@@ -1,6 +1,7 @@
 use meeting_minutes_core::ai::{AiError, ProviderKind};
 use meeting_minutes_core::ask::AnswerState;
 use meeting_minutes_core::diagnostics::{build_diagnostics, DiagnosticsInput, LogEvent};
+use meeting_minutes_core::processing::{ProcessingError, ProcessingStage};
 use std::time::Duration;
 
 #[test]
@@ -22,6 +23,89 @@ fn fallback_events_are_content_free() {
     assert_eq!(LogEvent::VadUnavailable.to_string(), "vad_unavailable");
     assert_eq!(LogEvent::GpuUnavailable.to_string(), "gpu_unavailable");
     assert_eq!(LogEvent::GpuLoadFailed.to_string(), "gpu_load_failed");
+}
+
+#[test]
+fn failure_event_reports_stage_kind_device_and_progress_without_private_content() {
+    let event = LogEvent::processing_result(
+        &ProcessingError::Engine(
+            "Whisper worker panicked\n/private/Meeting/transcript: secret words".into(),
+        ),
+        ProcessingStage::Transcribing,
+        Some("Vulkan"),
+        Some("NVIDIA GeForce RTX 4050"),
+        12_000,
+        60_000,
+        Duration::from_millis(2_500),
+    );
+    assert_eq!(event.to_string(), "processing_failed stage=transcribing kind=engine message=whisper_worker_panicked backend=Vulkan device=NVIDIA_GeForce_RTX_4050 audio_ms=12000 total_ms=60000 whisper_ms=2500");
+    let hostile = LogEvent::processing_result(
+        &ProcessingError::Engine("secret Transcript words /home/user/Meeting/audio.flac".into()),
+        ProcessingStage::Preparing,
+        Some("CPU"),
+        None,
+        0,
+        60_000,
+        Duration::ZERO,
+    )
+    .to_string();
+    assert!(hostile.contains("kind=engine message=redacted"));
+    for secret in ["secret", "Transcript", "/home", "audio.flac"] {
+        assert!(!hostile.contains(secret));
+    }
+}
+
+#[test]
+fn cancellation_has_its_own_log_event() {
+    assert_eq!(
+        LogEvent::processing_result(&ProcessingError::Cancelled, ProcessingStage::Transcribing, Some("CPU"), None, 500, 1_000, Duration::from_secs(2)).to_string(),
+        "processing_cancelled stage=transcribing backend=CPU device=unknown audio_ms=500 total_ms=1000 whisper_ms=2000"
+    );
+}
+
+#[test]
+fn known_whisper_errors_keep_a_useful_private_content_free_reason() {
+    let event = LogEvent::processing_result(
+        &ProcessingError::Engine("Failed to run the decoder.\nTranscript: private words".into()),
+        ProcessingStage::Transcribing,
+        Some("CPU"),
+        None,
+        0,
+        1_000,
+        Duration::ZERO,
+    )
+    .to_string();
+    assert!(event.contains("message=failed_to_run_decoder"));
+    assert!(!event.contains("private words"));
+    let code = LogEvent::processing_result(
+        &ProcessingError::Engine("Generic whisper error. Varies depending on the function. Error code: -6\nC:\\Users\\private\\audio.flac".into()),
+        ProcessingStage::Transcribing, Some("CPU"), None, 0, 1_000, Duration::ZERO,
+    ).to_string();
+    assert!(code.contains("message=whisper_error_code_-6"));
+    assert!(!code.contains("C:\\Users"));
+}
+
+#[test]
+fn diagnostics_shows_last_failure_line_beyond_recent_window() {
+    let failure = "[2026-10-13][10:47:02][meeting_minutes_events][INFO] processing_failed stage=transcribing kind=engine message=redacted backend=CPU device=unknown audio_ms=500 total_ms=1000 whisper_ms=2000";
+    let mut lines = vec![failure.to_owned()];
+    lines.extend(std::iter::repeat_n(
+        "[2026-10-13][10:47:03][meeting_minutes_events][INFO] startup".to_owned(),
+        101,
+    ));
+    let text = build_diagnostics(&DiagnosticsInput {
+        version: "0.1.0".into(),
+        windows_version: "Windows 11".into(),
+        cpu: "CPU".into(),
+        ram_mb: 1024,
+        audio_devices: Ok(vec![]),
+        selected_model: None,
+        provider: None,
+        whisper_system_info: None,
+        transcription_backend: None,
+        recent_log_lines: lines,
+    });
+    assert!(text.contains(&format!("Last processing failure: {failure}")));
 }
 
 #[test]
@@ -156,6 +240,7 @@ fn diagnostics_rejects_non_plugin_headers_and_noncanonical_events() {
         "[2026-10-13][10:47:02][meeting_minutes_events][INFO] unknown_event",
         "[2026-10-13][10:47:02][meeting_minutes_events][INFO] transcription_completed model=small backend=CPU threads=8 audio_ms=16000 audio_after_vad_ms=none preparation_ms=320 whisper_ms=4000 rtf=0.250 title=private",
         "[2026-10-13][10:47:02][meeting_minutes_events][INFO] transcription_completed model=private backend=CPU threads=8 audio_ms=16000 audio_after_vad_ms=none preparation_ms=320 whisper_ms=4000 rtf=0.250",
+        "[2026-10-13][10:47:02][meeting_minutes_events][INFO] processing_failed stage=transcribing kind=engine message=redacted backend=Vulkan device=private_Transcript_text audio_ms=500 total_ms=1000 whisper_ms=2000",
     ];
     let text = build_diagnostics(&DiagnosticsInput {
         version: "0.1.0".into(),
@@ -217,7 +302,24 @@ fn every_log_event_is_accepted_in_the_plugin_format() {
         LogEvent::ProcessingDownloading,
         LogEvent::ProcessingTranscribing,
         LogEvent::ProcessingCompleted,
-        LogEvent::ProcessingFailed,
+        LogEvent::processing_result(
+            &ProcessingError::NoAudio,
+            ProcessingStage::Preparing,
+            None,
+            None,
+            0,
+            0,
+            Duration::ZERO,
+        ),
+        LogEvent::processing_result(
+            &ProcessingError::Cancelled,
+            ProcessingStage::Transcribing,
+            Some("CPU"),
+            None,
+            0,
+            1_000,
+            Duration::ZERO,
+        ),
         LogEvent::VadUnavailable,
         LogEvent::GpuUnavailable,
         LogEvent::GpuLoadFailed,
