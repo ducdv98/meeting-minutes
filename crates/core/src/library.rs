@@ -366,6 +366,10 @@ impl Library {
             audio_path,
             markers: file.markers,
             imported: file.import.is_some(),
+            sources: [crate::capture::Source::Microphone, crate::capture::Source::SystemAudio]
+                .into_iter()
+                .filter(|source| file.recordings.iter().any(|recording| matches!(recording, RecordingEntry::Known(known) if known.files.iter().any(|entry| entry.source == *source))))
+                .collect(),
         })
     }
 

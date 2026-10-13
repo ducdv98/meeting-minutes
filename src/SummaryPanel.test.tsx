@@ -17,8 +17,8 @@ it("shows cited Summary items and plays their spans", async () => {
   render(<SummaryPanel meetingId="m1" transcript={transcript} player={player} aiStatus={aiStatus} />);
   expect(await screen.findByText("Budget agreed")).toBeTruthy();
   expect(screen.getByText("This Summary is from an earlier Transcript revision.")).toBeTruthy();
-  expect(screen.getByText("Owner: Alex")).toBeTruthy();
-  fireEvent.click(screen.getAllByRole("button", { name: "Play from 00:01" })[0]);
+  expect(screen.getByText("Alex · Friday")).toBeTruthy();
+  fireEvent.click(screen.getAllByRole("button", { name: /Play from 00:01/ })[0]);
   expect(player.playSpan).toHaveBeenCalledWith(1000, 2500);
 });
 it("generates locally without a disclosure", async () => {
@@ -50,7 +50,7 @@ it("shows a failed Summary and lets the user dismiss it", async () => {
   vi.mocked(summaryStatus).mockResolvedValue({ jobs: [{ meeting_id: "m1", state: "failed", done: 0, total: 1, error: "Ollama is unavailable" }] });
   vi.mocked(dismissSummary).mockResolvedValue({ jobs: [] });
   render(<SummaryPanel meetingId="m1" transcript={transcript} player={null} aiStatus={aiStatus} />);
-  expect(await screen.findByRole("alert")).toHaveProperty("textContent", "Ollama is unavailable");
+  expect((await screen.findByRole("alert")).textContent).toContain("Ollama is unavailable");
   expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
   await waitFor(() => expect(dismissSummary).toHaveBeenCalledWith("m1"));

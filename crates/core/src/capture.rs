@@ -13,6 +13,13 @@ pub fn audio_devices() -> Result<Vec<String>, String> {
 pub const SAMPLE_RATE: u32 = 48_000;
 pub const CAPTURE_CHANNELS: usize = 2;
 pub const HNS_PER_SECOND: u64 = 10_000_000;
+
+/// Peak level on a perceptual meter: silence below -60 dBFS, full scale at 0 dBFS.
+pub fn buffer_level(samples: &[f32]) -> f32 {
+    let peak = samples.iter().copied().filter(|sample| sample.is_finite())
+        .map(f32::abs).fold(0.0_f32, f32::max);
+    if peak <= 0.001 { 0.0 } else { ((20.0 * peak.log10() + 60.0) / 60.0).clamp(0.0, 1.0) }
+}
 const GAP_TOLERANCE_FRAMES: u64 = 480;
 const IDLE_MARGIN_HNS: u64 = 2_000_000;
 
@@ -161,5 +168,19 @@ impl SourceClock {
             self.resume_at = at_100ns;
             self.previous_packet_qpc = None;
         }
+    }
+}
+
+#[cfg(test)]
+mod level_tests {
+    use super::buffer_level;
+
+    #[test]
+    fn maps_peak_to_meter_with_a_minus_sixty_db_floor() {
+        assert_eq!(buffer_level(&[]), 0.0);
+        assert_eq!(buffer_level(&[0.0, 0.0001]), 0.0);
+        assert!((buffer_level(&[-0.1, 0.05]) - 2.0 / 3.0).abs() < 0.001);
+        assert_eq!(buffer_level(&[1.0, 0.5]), 1.0);
+        assert_eq!(buffer_level(&[f32::NAN, f32::INFINITY]), 0.0);
     }
 }

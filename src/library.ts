@@ -28,6 +28,7 @@ export interface MeetingDetail extends MeetingSummary {
   audio_path: string | null;
   markers: Marker[];
   imported: boolean;
+  sources?: ("microphone" | "system_audio")[];
 }
 
 export interface MalformedFolder {
@@ -50,6 +51,10 @@ export function rescanLibrary(): Promise<ScanReport> {
 
 export function meetingDetail(id: string): Promise<MeetingDetail> {
   return invoke<MeetingDetail>("meeting_detail", { meetingId: id });
+}
+
+export function openMeetingFolder(id: string): Promise<void> {
+  return invoke<void>("open_meeting_folder", { meetingId: id });
 }
 
 export function renameMeeting(id: string, title: string): Promise<MeetingSummary> {

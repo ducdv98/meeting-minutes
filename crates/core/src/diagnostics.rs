@@ -30,6 +30,7 @@ pub enum LogEvent {
     RecordingPaused,
     RecordingResumed,
     RecordingFailed,
+    TrayUpdateFailed,
     DeviceSwitchMicrophone,
     DeviceSwitchSystemAudio,
     ProcessingQueued,
@@ -93,6 +94,7 @@ impl fmt::Display for LogEvent {
             Self::RecordingPaused => "recording_paused",
             Self::RecordingResumed => "recording_resumed",
             Self::RecordingFailed => "recording_failed",
+            Self::TrayUpdateFailed => "tray_update_failed",
             Self::DeviceSwitchMicrophone => "device_switch_microphone",
             Self::DeviceSwitchSystemAudio => "device_switch_system_audio",
             Self::ProcessingQueued => "processing_queued",
@@ -191,6 +193,7 @@ fn safe_log_line(line: &str) -> bool {
             | "recording_paused"
             | "recording_resumed"
             | "recording_failed"
+            | "tray_update_failed"
             | "device_switch_microphone"
             | "device_switch_system_audio"
             | "processing_queued"

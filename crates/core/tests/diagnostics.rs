@@ -115,6 +115,7 @@ fn every_log_event_is_accepted_in_the_plugin_format() {
         LogEvent::RecordingPaused,
         LogEvent::RecordingResumed,
         LogEvent::RecordingFailed,
+        LogEvent::TrayUpdateFailed,
         LogEvent::DeviceSwitchMicrophone,
         LogEvent::DeviceSwitchSystemAudio,
         LogEvent::ProcessingQueued,

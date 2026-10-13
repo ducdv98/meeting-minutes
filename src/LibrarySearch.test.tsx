@@ -49,7 +49,7 @@ it("shows No matches and an error for a failed search", async () => {
   const input = screen.getByRole("searchbox", { name: "Search transcripts" });
   fireEvent.change(input, { target: { value: "absent" } });
   await act(async () => { await vi.advanceTimersByTimeAsync(250); });
-  expect(screen.getByText("No matches")).toBeTruthy();
+  expect(screen.getByText("No results")).toBeTruthy();
   fireEvent.change(input, { target: { value: "broken" } });
   await act(async () => { await vi.advanceTimersByTimeAsync(250); });
   expect(screen.getByRole("alert").textContent).toContain("Index unavailable");

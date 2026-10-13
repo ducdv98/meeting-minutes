@@ -20,12 +20,28 @@ it("shows cited history and offers retry only for the latest failed Ask", async 
   expect(await screen.findByText("$20")).toBeTruthy();
   expect(screen.getByText("Asked about transcript revision 1")).toBeTruthy();
   expect(screen.getByText("Unverified")).toBeTruthy();
-  expect(screen.getByText("Some Citations could not be checked against this Meeting.")).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "Play from 00:01" }));
+  expect(screen.getByText(/Some Citations could not be checked against this Meeting/)).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Play from 00:01: earlier Revision" }));
   expect(player.playSpan).toHaveBeenCalledWith(1000, 2500);
   expect(screen.getAllByRole("button", { name: "Retry" })).toHaveLength(1);
   fireEvent.click(screen.getByRole("button", { name: "Retry" }));
   await waitFor(() => expect(retryAsk).toHaveBeenCalledWith("m1", false));
+});
+it("distinguishes answered, insufficient, incomplete, and off-topic Answers", async () => {
+  const base = { asked_at: "now", revision: 2, provider: "ollama" as const, model: "llama", citations: [], invalid_citations: [], error: null };
+  vi.mocked(meetingAsks).mockResolvedValue({ asks: [
+    { ...base, id: "a1", question: "What happened?", state: "answered", answer: "A decision was made." },
+    { ...base, id: "a2", question: "What was the price?", state: "insufficient_evidence", answer: "The transcript of this Meeting does not cover this." },
+    { ...base, id: "a3", question: "What else?", state: "incomplete", answer: "It began" },
+    { ...base, id: "a4", question: "Tell me a joke", state: "off_topic", answer: "Ask something about this Meeting." },
+  ], active: null, retryable_id: null });
+  render(<AskPanel meetingId="m1" transcript={transcript} player={null} aiStatus={aiStatus} />);
+  expect(await screen.findByText("Answered")).toBeTruthy();
+  expect(screen.getByText("The transcript of this Meeting does not cover this.")).toBeTruthy();
+  expect(screen.getByText("Incomplete")).toBeTruthy();
+  expect(screen.getByText("Off-topic")).toBeTruthy();
+  expect(screen.getByText("Ask something about this Meeting.")).toBeTruthy();
+  expect(screen.getByText(/Answers come from this Meeting only, using Ollama on this PC/)).toBeTruthy();
 });
 it("shows streaming text and Stop", async () => {
   vi.mocked(meetingAsks).mockResolvedValue({ asks: [], active: { ask_id: "a0001", partial: "The plan" }, retryable_id: null });

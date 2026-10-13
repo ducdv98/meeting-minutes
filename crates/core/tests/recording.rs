@@ -137,6 +137,18 @@ fn switching_microphone_default_keeps_recording_and_persists_marker() {
         assert!(std::time::Instant::now() < deadline);
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
+    while session.source_devices().len() < 2 {
+        session.collect_device_switches().unwrap();
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(session
+        .source_devices()
+        .contains(&(Source::Microphone, "laptop".into())));
+    assert!(session
+        .source_devices()
+        .contains(&(Source::SystemAudio, "speaker".into())));
+    assert!(session.device_switches().is_empty());
     time.store(6_000_000, Ordering::SeqCst);
     *opener.default.lock().unwrap() = Some("headset".into());
     while session.device_switches().is_empty() {
@@ -151,6 +163,9 @@ fn switching_microphone_default_keeps_recording_and_persists_marker() {
     };
     assert!(opener.dropped.lock().unwrap().contains(&"laptop".into()));
     assert_eq!(session.device_switches().len(), 1);
+    assert!(session
+        .source_devices()
+        .contains(&(Source::Microphone, "headset".into())));
     let on_disk: RecordingManifest =
         serde_json::from_slice(&std::fs::read(temp.path().join("recording.json")).unwrap())
             .unwrap();

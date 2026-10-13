@@ -24,6 +24,9 @@ export interface RecorderStatus {
   /** Meetings recovered after a crash that can be continued with a new Recording. */
   continue_offers: string[];
   device_switches: DeviceSwitch[];
+  /** Device names reported by the active capture workers. */
+  source_devices?: { source: "microphone" | "system_audio"; device: string }[];
+  source_levels?: { source: "microphone" | "system_audio"; level: number; silent: boolean }[];
 }
 
 export const recordHotkey = "Ctrl+Alt+Shift+R";

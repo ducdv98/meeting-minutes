@@ -51,7 +51,7 @@ it("shows the latest device switch until dismissed and shows a newer one", async
   vi.mocked(recordingStatus).mockResolvedValue({ ...recording, device_switches: [first] });
   render(<RecordingBar />);
 
-  expect((await screen.findByText(/Microphone switched to Logi USB Headset/)).getAttribute("role")).toBe("status");
+  expect((await screen.findByText(/Microphone switched to Logi USB Headset/)).closest('[role="status"]')).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
   expect(screen.queryByText(/Microphone switched to/)).toBeNull();
 
@@ -96,6 +96,17 @@ it("starts a Recording when Record is clicked", async () => {
   expect(await screen.findByRole("status")).toBeTruthy();
   expect(screen.getByRole("status").textContent).toContain("Recording 00:01:05");
   expect(startRecording).toHaveBeenCalledTimes(1);
+});
+
+it("handles a sidebar Record request made before the Recording state loads", async () => {
+  let resolveStatus!: (status: RecorderStatus) => void;
+  vi.mocked(recordingStatus).mockReturnValue(new Promise((resolve) => { resolveStatus = resolve; }));
+  vi.mocked(startRecording).mockResolvedValue(recording);
+  const view = render(<RecordingBar recordRequest={0} hideIdleButton />);
+  view.rerender(<RecordingBar recordRequest={1} hideIdleButton />);
+  await act(async () => resolveStatus(idle));
+  expect(startRecording).toHaveBeenCalledTimes(1);
+  expect((await screen.findByRole("status")).textContent).toContain("Recording 00:01:05");
 });
 
 it("shows the Recording notice before the first Recording ever", async () => {
@@ -147,6 +158,26 @@ it("follows elapsed time and phase pushed from the app", async () => {
   expect(screen.queryByRole("button", { name: "Record" })).toBeNull();
 });
 
+it("shows actual Source devices, levels and hotkeys", async () => {
+  vi.mocked(recordingStatus).mockResolvedValue({
+    ...recording,
+    source_devices: [
+      { source: "microphone", device: "USB Microphone" },
+      { source: "system_audio", device: "Speakers" },
+    ],
+    source_levels: [{ source: "microphone", level: 0.7, silent: false }, { source: "system_audio", level: 0, silent: true }],
+  });
+  render(<RecordingBar />);
+
+  expect(await screen.findByText("USB Microphone")).toBeTruthy();
+  expect(screen.getByText("Speakers")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Pause" }).getAttribute("title")).toContain("Ctrl+Alt+Shift+P");
+  expect(screen.getByRole("button", { name: "Stop" }).getAttribute("title")).toContain("Ctrl+Alt+Shift+R");
+  expect(screen.getAllByRole("meter")).toHaveLength(2);
+  expect(screen.getByRole("meter", { name: "Microphone level" }).getAttribute("aria-valuenow")).toBe("70");
+  expect(screen.getByText("Silent")).toBeTruthy();
+});
+
 it("pauses and stops the active Recording", async () => {
   vi.mocked(recordingStatus).mockResolvedValue(recording);
   vi.mocked(pauseRecording).mockResolvedValue({ ...recording, phase: "paused" });
@@ -174,8 +205,8 @@ it("offers Retry save after a failed save", async () => {
   });
   render(<RecordingBar />);
 
-  expect(await screen.findByText(/Could not save m1: disk full/)).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "Retry save" }));
+  expect(await screen.findByText(/The audio for m1 is kept. disk full/)).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
 
   expect(await screen.findByText("Saving m1…")).toBeTruthy();
   expect(retrySave).toHaveBeenCalledWith("m1");
@@ -188,7 +219,7 @@ it("shows an error when a recording action fails", async () => {
 
   fireEvent.click(await screen.findByRole("button", { name: "Record" }));
 
-  expect((await screen.findByRole("alert")).textContent).toBe("A Recording is already active");
+  expect((await screen.findByRole("alert")).textContent).toContain("A Recording is already active");
 });
 
 it("labels a save recovered after a crash", async () => {

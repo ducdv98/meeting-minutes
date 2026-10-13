@@ -21,7 +21,7 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{self, BufWriter, Write},
     path::{Path, PathBuf},
-    sync::mpsc,
+    sync::{mpsc, Arc, atomic::{AtomicU32, AtomicU64, Ordering}},
     thread,
     time::{Duration, Instant},
 };
@@ -41,6 +41,12 @@ struct SwitchReport {
     at_100ns: u64,
     source: Source,
     device: String,
+    switched: bool,
+}
+
+struct WorkerFeedback {
+    switches: mpsc::Sender<SwitchReport>,
+    level: Arc<SourceLevel>,
 }
 
 struct InputState<D> {
@@ -258,7 +264,35 @@ pub struct CaptureSession<C: Clock> {
     chunk_dir: PathBuf,
     workers: Vec<Worker>,
     switch_rx: mpsc::Receiver<SwitchReport>,
+    source_devices: Vec<(Source, String)>,
+    source_levels: Vec<(Source, Arc<SourceLevel>)>,
     manifest_dirty: bool,
+}
+
+struct SourceLevel {
+    value: AtomicU32,
+    at_100ns: AtomicU64,
+    audible_at_100ns: AtomicU64,
+}
+
+impl SourceLevel {
+    fn new(start: u64) -> Self {
+        Self { value: AtomicU32::new(0), at_100ns: AtomicU64::new(start), audible_at_100ns: AtomicU64::new(start) }
+    }
+    fn report(&self, samples: &[f32], at: u64) {
+        let value = crate::capture::buffer_level(samples);
+        self.value.store(value.to_bits(), Ordering::Relaxed);
+        self.at_100ns.store(at, Ordering::Relaxed);
+        if value > 0.0 { self.audible_at_100ns.store(at, Ordering::Relaxed); }
+    }
+    fn current(&self, now: u64) -> (f32, bool) {
+        let age = now.saturating_sub(self.at_100ns.load(Ordering::Relaxed));
+        // Decay a stopped stream over one second; the capture worker never waits on the UI.
+        let level = f32::from_bits(self.value.load(Ordering::Relaxed)) *
+            (1.0 - age as f32 / HNS_PER_SECOND as f32).clamp(0.0, 1.0);
+        let silent = now.saturating_sub(self.audible_at_100ns.load(Ordering::Relaxed)) > 3 * HNS_PER_SECOND;
+        (level, silent)
+    }
 }
 
 impl<C: Clock> CaptureSession<C> {
@@ -272,8 +306,11 @@ impl<C: Clock> CaptureSession<C> {
         write_manifest(&chunk_dir, &manifest)?;
         let start = clock.now_100ns();
         let mut workers = Vec::new();
+        let mut source_levels = Vec::new();
         let (switch_tx, switch_rx) = mpsc::channel();
         for source in [Source::Microphone, Source::SystemAudio] {
+            let level = Arc::new(SourceLevel::new(start));
+            source_levels.push((source, level.clone()));
             let writer = ChunkWriter::new(&chunk_dir, source)?;
             let (tx, rx) = mpsc::channel();
             let opener = opener.clone();
@@ -289,7 +326,7 @@ impl<C: Clock> CaptureSession<C> {
                         worker_clock,
                         start,
                         rx,
-                        worker_switch_tx,
+                        WorkerFeedback { switches: worker_switch_tx, level },
                     );
                 })?;
             workers.push(Worker { tx, join });
@@ -301,6 +338,8 @@ impl<C: Clock> CaptureSession<C> {
             chunk_dir,
             workers,
             switch_rx,
+            source_devices: Vec::new(),
+            source_levels,
             manifest_dirty: false,
         })
     }
@@ -313,9 +352,21 @@ impl<C: Clock> CaptureSession<C> {
     pub fn collect_device_switches(&mut self) -> io::Result<()> {
         let mut changed = false;
         while let Ok(report) = self.switch_rx.try_recv() {
-            self.timeline
-                .add_device_switch(report.at_100ns, report.source, report.device);
-            changed = true;
+            if let Some((_, name)) = self
+                .source_devices
+                .iter_mut()
+                .find(|(source, _)| *source == report.source)
+            {
+                *name = report.device.clone();
+            } else {
+                self.source_devices
+                    .push((report.source, report.device.clone()));
+            }
+            if report.switched {
+                self.timeline
+                    .add_device_switch(report.at_100ns, report.source, report.device);
+                changed = true;
+            }
         }
         if changed {
             self.manifest.markers = self.timeline.markers().to_vec();
@@ -344,6 +395,16 @@ impl<C: Clock> CaptureSession<C> {
                 _ => None,
             })
             .collect()
+    }
+    pub fn source_devices(&self) -> Vec<(Source, String)> {
+        self.source_devices.clone()
+    }
+    pub fn source_levels(&self) -> Vec<(Source, f32, bool)> {
+        let now = self.clock.now_100ns();
+        self.source_levels.iter().map(|(source, level)| {
+            let (value, silent) = level.current(now);
+            (*source, if self.is_paused() { 0.0 } else { value }, silent && !self.is_paused())
+        }).collect()
     }
     fn control(
         &self,
@@ -417,7 +478,7 @@ fn run_worker<O: InputOpener, C: Clock>(
     clock: C,
     start: u64,
     rx: mpsc::Receiver<Command>,
-    switch_tx: mpsc::Sender<SwitchReport>,
+    feedback: WorkerFeedback,
 ) {
     let mut timeline = SourceClock::new(start);
     let mut input = InputState {
@@ -473,7 +534,7 @@ fn run_worker<O: InputOpener, C: Clock>(
                 &mut input,
                 &opener,
                 &clock,
-                &switch_tx,
+                &feedback,
             ) {
                 failure = Some(format!("{} capture stopped: {error}", source.stem()));
                 input.device = None;
@@ -490,7 +551,7 @@ fn capture_pending<O: InputOpener, C: Clock>(
     input: &mut InputState<O::Device>,
     opener: &O,
     clock: &C,
-    switch_tx: &mpsc::Sender<SwitchReport>,
+    feedback: &WorkerFeedback,
 ) -> io::Result<()> {
     if input.device.is_some()
         && input
@@ -513,17 +574,16 @@ fn capture_pending<O: InputOpener, C: Clock>(
         input.last_open_attempt = Some(Instant::now());
         if let Ok(opened) = opener.open(source) {
             let info = opened.info().clone();
-            if input
+            let switched = input
                 .last_opened
                 .as_ref()
-                .is_some_and(|previous| previous.id != info.id)
-            {
-                let _ = switch_tx.send(SwitchReport {
-                    at_100ns: clock.now_100ns(),
-                    source,
-                    device: info.name.clone(),
-                });
-            }
+                .is_some_and(|previous| previous.id != info.id);
+            let _ = feedback.switches.send(SwitchReport {
+                at_100ns: clock.now_100ns(),
+                source,
+                device: info.name.clone(),
+                switched,
+            });
             input.last_opened = Some(info);
             input.last_default_check = Some(Instant::now());
             input.device = Some(opened);
@@ -536,7 +596,11 @@ fn capture_pending<O: InputOpener, C: Clock>(
             break;
         };
         match device.read_packet() {
-            Ok(Some(packet)) => writer.write(&timeline.packet(&packet, clock.now_100ns()))?,
+            Ok(Some(packet)) => {
+                let now = clock.now_100ns();
+                feedback.level.report(&packet.samples, now);
+                writer.write(&timeline.packet(&packet, now))?
+            },
             Ok(None) => break,
             Err(_) => input.device = None,
         }

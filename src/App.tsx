@@ -1,17 +1,55 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { Ellipsis, Import, Search, Settings, Trash2, RefreshCw } from "lucide-react";
 import { dismissImportErrors, importStatus, onImportHover, onImportStatus, pickAudioFiles, type ImportStatus } from "./importing";
 import { Wordmark } from "./components/Brand";
-import { deleteMeeting, rescanLibrary, type MalformedFolder, type MeetingSummary, type SearchHit } from "./library";
+import { deleteMeeting, meetingDetail, rescanLibrary, type MalformedFolder, type MeetingSummary, type SearchHit } from "./library";
+import { Button } from "./components/ui/Button";
+import { Input } from "./components/ui/Input";
+import { Kbd } from "./components/ui/Kbd";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "./components/ui/DropdownMenu";
+import { EmptyState } from "./components/states/EmptyState";
+import { ErrorState } from "./components/states/ErrorState";
+import { Loading } from "./components/states/Loading";
 import MeetingView from "./MeetingView";
 import LibrarySearch from "./LibrarySearch";
 import ConfirmDelete from "./ConfirmDelete";
 import RecordingBar from "./RecordingBar";
+import RecordingScreen from "./RecordingScreen";
 import SettingsView from "./SettingsView";
-import { formatElapsed, onLibraryChanged, onRecordingStatus, recordingStatus, type RecorderStatus } from "./recording";
+import { onLibraryChanged, onRecordingStatus, recordHotkey, recordingStatus, type RecorderStatus } from "./recording";
 import { cancelProcessing, onProcessingStatus, processingStageLabel, processingStatus, type ProcessingJob } from "./processing";
+
+function groupName(value: string) {
+  const date = new Date(value);
+  const today = new Date();
+  const day = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+  const meetingDay = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  const days = Math.round((day - meetingDay) / 86_400_000);
+  if (days <= 0) return "Today";
+  if (days === 1) return "Yesterday";
+  if (days < 8) return "Last week";
+  return new Intl.DateTimeFormat(undefined, { month: "long", year: "numeric" }).format(date);
+}
+
+function rowTime(value: string) {
+  const date = new Date(value);
+  if (groupName(value) === "Today" || groupName(value) === "Yesterday") {
+    return new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", hour12: false }).format(date);
+  }
+  return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(date);
+}
+
+function durationLabel(ms: number) {
+  const totalMinutes = Math.floor(ms / 60_000);
+  if (totalMinutes < 60) return `${totalMinutes} min`;
+  return `${Math.floor(totalMinutes / 60)} h ${String(totalMinutes % 60).padStart(2, "0")} min`;
+}
 
 export default function App() {
   const [meetings, setMeetings] = useState<MeetingSummary[] | null>(null);
+  const detailCache = useRef<Record<string, { fingerprint: string; language: string | null; imported: boolean }>>({});
+  const [details, setDetails] = useState<Record<string, { language: string | null; imported: boolean }>>({});
+  const scanVersion = useRef(0);
   const [malformed, setMalformed] = useState<MalformedFolder[]>([]);
   const [failed, setFailed] = useState(false);
   const [scan, setScan] = useState(0);
@@ -21,6 +59,11 @@ export default function App() {
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [showSearch, setShowSearch] = useState(false);
+  const [query, setQuery] = useState("");
+  const searchRef = useRef<HTMLInputElement>(null);
+  const [recordRequest, setRecordRequest] = useState(0);
+  const [showRecording, setShowRecording] = useState(false);
   const [jobs, setJobs] = useState<ProcessingJob[]>([]);
   const [recorder, setRecorder] = useState<RecorderStatus | null>(null);
   const [imports, setImports] = useState<ImportStatus>({ current: null, queued: 0, errors: [] });
@@ -38,9 +81,7 @@ export default function App() {
     let active = true;
     let eventArrived = false;
     processingStatus().then((status) => { if (active && !eventArrived) setJobs(status.jobs); }, () => {});
-    const listener = onProcessingStatus((status) => {
-      if (active) { eventArrived = true; setJobs(status.jobs); }
-    });
+    const listener = onProcessingStatus((status) => { if (active) { eventArrived = true; setJobs(status.jobs); } });
     return () => { active = false; void listener.then((stop) => stop(), () => {}); };
   }, []);
 
@@ -51,6 +92,20 @@ export default function App() {
     const statusListener = onImportStatus((status) => { if (active) { eventArrived = true; setImports(status); } });
     const hoverListener = onImportHover((hover) => { if (active) setImportHover(hover); });
     return () => { active = false; void statusListener.then((stop) => stop(), () => {}); void hoverListener.then((stop) => stop(), () => {}); };
+  }, []);
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+        if (document.querySelector('[role="dialog"], [role="alertdialog"], [role="menu"], [data-state="open"][aria-haspopup="menu"]')) return;
+        event.preventDefault();
+        setShowSettings(false);
+        setShowSearch(true);
+        searchRef.current?.focus();
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
   async function pickFiles() {
@@ -74,6 +129,7 @@ export default function App() {
     setDeleteError(null);
     try {
       await deleteMeeting(deleting.id);
+      if (selectedId === deleting.id) setSelectedId(null);
       setDeleting(null);
       setScan((value) => value + 1);
     } catch (reason) { setDeleteError(String(reason)); }
@@ -82,79 +138,118 @@ export default function App() {
 
   useEffect(() => {
     let active = true;
+    const version = ++scanVersion.current;
     setFailed(false);
-    // Rebuild from Meeting folders on startup and whenever Rescan is requested.
     rescanLibrary().then(
       (report) => {
-        if (active) {
-          setMeetings(report.meetings);
-          setMalformed(report.malformed);
+        if (!active || version !== scanVersion.current) return;
+        setMeetings(report.meetings);
+        setMalformed(report.malformed);
+        const ids = new Set(report.meetings.map((meeting) => meeting.id));
+        for (const id of Object.keys(detailCache.current)) if (!ids.has(id)) delete detailCache.current[id];
+        setDetails(Object.fromEntries(Object.entries(detailCache.current).map(([id, value]) => [id, value])));
+        for (const meeting of report.meetings) {
+          const fingerprint = `${meeting.title}:${meeting.started_at}:${meeting.duration_ms}`;
+          if (detailCache.current[meeting.id]?.fingerprint === fingerprint) continue;
+          void meetingDetail(meeting.id).then((detail) => {
+            if (!active || version !== scanVersion.current) return;
+            detailCache.current[meeting.id] = { fingerprint, language: detail.language, imported: detail.imported };
+            setDetails((current) => ({ ...current, [meeting.id]: detailCache.current[meeting.id] }));
+          }, () => {});
         }
       },
-      () => {
-        if (active) setFailed(true);
-      },
+      () => { if (active && version === scanVersion.current) setFailed(true); },
     );
     return () => { active = false; };
   }, [scan]);
 
   useEffect(() => {
-    // A saved Recording or a new Meeting changes the Library list.
     const unlisten = onLibraryChanged(() => setScan((value) => value + 1));
     return () => { unlisten.then((stop) => stop(), () => {}); };
   }, []);
 
-  return (
-    <main>
-      <header>
-        <Wordmark className="wordmark" />
-        <button type="button" onClick={() => { setSelectedId(null); setShowSettings(true); }}>Settings</button>
-      </header>
-      <RecordingBar />
-      {showSettings ? <SettingsView onBack={() => setShowSettings(false)} /> : selectedId ? (
-        <MeetingView id={selectedId} recordingMeetingId={recorder?.phase !== "idle" ? recorder?.meeting_id : null} openAt={openAt} onOpened={() => setOpenAt(null)} onDeleted={() => {
-          setSelectedId(null); setOpenAt(null); setScan((value) => value + 1);
-        }} onRenamed={setSelectedId} onOpenSettings={() => setShowSettings(true)} onBack={() => {
-          setSelectedId(null);
-          setOpenAt(null);
-          setScan((value) => value + 1);
-        }} />
-      ) : (
-        <>
-          <h1>Library</h1>
-          <button type="button" onClick={() => void pickFiles()}>Import audio</button>
-          <button type="button" onClick={() => setScan((value) => value + 1)}>Rescan</button>
-          <LibrarySearch onOpen={(hit) => { setSelectedId(hit.meeting_id); setOpenAt({ segment_id: hit.segment_id, revision: hit.revision, start_ms: hit.start_ms, end_ms: hit.end_ms }); }} />
-          {deleteError && <p role="alert">{deleteError}</p>}
-          {deleting && <ConfirmDelete title={deleting.title} busy={deleteBusy} onConfirm={() => void confirmDelete()} onCancel={() => setDeleting(null)} />}
-          {imports.current && <p role="status">Importing {imports.current}…{imports.queued > 0 ? ` (+${imports.queued} queued)` : ""}</p>}
-          {imports.errors.length > 0 && <div role="alert"><ul>{imports.errors.map((error, index) => <li key={`${index}:${error}`}>{error}</li>)}</ul><button type="button" onClick={() => void dismissErrors()}>Dismiss import errors</button></div>}
-          {failed && <p role="alert">Could not load the Library</p>}
-          {malformed.length > 0 && (
-            <section role="status">
-              <p>{malformed.length} {malformed.length === 1 ? "folder" : "folders"} could not be read</p>
-              <ul>{malformed.map((item) => <li key={item.folder}>{item.folder}: {item.reason}</li>)}</ul>
-            </section>
-          )}
-          {meetings?.length === 0 && <p>No meetings yet</p>}
-          {meetings && meetings.length > 0 && (
-            <ul>
-              {meetings.map((meeting) => {
-                const job = jobs.find((item) => item.meeting_id === meeting.id);
-                return <li key={meeting.id}>
-                  <time dateTime={meeting.started_at}>{meeting.started_at.slice(0, 16).replace("T", " ")}</time>{" "}
-                  <button type="button" onClick={() => setSelectedId(meeting.id)}>{meeting.title}</button>
-                  {meeting.duration_ms > 0 && <> · {formatElapsed(meeting.duration_ms)}</>}
-                  {job && <> · <span>{processingStageLabel(job)}</span></>}
-                  {job && job.stage !== "failed" && <> <button type="button" aria-label="Cancel processing" onClick={() => void cancelJob(meeting.id)}>Cancel</button></>}
-                  {" "}<button type="button" aria-label={`Delete ${meeting.title}`} disabled={recorder?.phase !== "idle" && recorder?.meeting_id === meeting.id} onClick={() => { setDeleteError(null); setDeleting(meeting); }}>Delete</button>
-                </li>;
-              })}
-            </ul>
-          )}
-        </>
-      )}
-      {importHover && <div className="import-overlay">Drop audio to import (mp3, m4a, wav, flac)</div>}
-    </main>
-  );
+  function openMeeting(id: string) {
+    setShowRecording(false);
+    setSelectedId(id);
+    setShowSettings(false);
+    setShowSearch(false);
+    setOpenAt(null);
+  }
+
+  function openHit(hit: SearchHit) {
+    setShowRecording(false);
+    setSelectedId(hit.meeting_id);
+    setShowSettings(false);
+    setShowSearch(false);
+    setOpenAt({ segment_id: hit.segment_id, revision: hit.revision, start_ms: hit.start_ms, end_ms: hit.end_ms });
+  }
+
+  function requestRecording() { setSelectedId(null); setShowSearch(false); setShowSettings(false); setShowRecording(true); setRecordRequest((value) => value + 1); }
+  const sorted = [...(meetings ?? [])].sort((a, b) => b.started_at.localeCompare(a.started_at));
+  let previousGroup = "";
+  const busyRecording = recorder?.phase !== "idle" && recorder?.phase != null;
+
+  return <main className="grid h-screen min-h-[480px] grid-cols-[248px_minmax(0,1fr)] bg-canvas text-ink">
+    <aside aria-label="Library sidebar" className="flex min-h-0 flex-col border-r border-line bg-panel">
+      <div className="grid gap-3 px-3 pb-2 pt-4">
+        <div className="flex min-w-0 items-center gap-2">
+          <button type="button" className="w-fit shrink-0 rounded-sm" aria-label="Library home" onClick={() => { setSelectedId(null); setShowRecording(false); setShowSettings(false); setShowSearch(false); }}><Wordmark className="h-[22px]" /></button>
+          {busyRecording && <span className="inline-flex items-center gap-1.5 text-xs font-medium text-record"><span aria-hidden="true" className={`size-2 rounded-full bg-record ${recorder?.phase === "recording" ? "animate-[recording-pulse_2s_ease-in-out_infinite] motion-reduce:animate-none" : ""}`} />{recorder?.phase === "paused" ? "Paused" : "Recording"}</span>}
+        </div>
+        <div className="grid grid-cols-[1fr_auto] gap-1.5">
+          {busyRecording ? <Button variant="secondary" title="Open live Meeting" onClick={() => { setShowRecording(true); setShowSearch(false); setShowSettings(false); }}>Live Meeting</Button> : <Button variant="record" title={`Record (${recordHotkey})`} disabled={!recorder} onClick={requestRecording}><span aria-hidden="true" className="size-2 rounded-full bg-current" />Record</Button>}
+          <Button variant="secondary" size="icon" aria-label="Import an audio file" title="Import an audio file" onClick={() => void pickFiles()}><Import size={16} strokeWidth={1.5} /></Button>
+        </div>
+        <div className="flex h-8 items-center gap-2 rounded-sm border border-line bg-raised px-2.5 focus-within:border-accent">
+          <Search size={16} strokeWidth={1.5} className="shrink-0 text-ink-faint" aria-hidden="true" />
+          <Input ref={searchRef} type="search" aria-label="Search transcripts" placeholder="Search the Library" value={query} onFocus={() => { setShowSearch(true); setShowSettings(false); }} onChange={(event) => { setQuery(event.target.value); setShowSearch(true); }} className="h-full min-w-0 border-0 bg-transparent px-0 text-sm shadow-none focus:border-0 focus:shadow-none" />
+          <Kbd className="shrink-0 border-b text-[11px] text-ink-faint">Ctrl K</Kbd>
+        </div>
+      </div>
+      <nav aria-label="Meetings" className="min-h-0 flex-1 overflow-y-auto px-2 pb-2 pt-1">
+        {sorted.map((meeting) => {
+          const group = groupName(meeting.started_at);
+          const showGroup = group !== previousGroup;
+          previousGroup = group;
+          const job = jobs.find((item) => item.meeting_id === meeting.id);
+          const detail = details[meeting.id];
+          const language = detail?.language === "vi" ? "Tiếng Việt" : detail?.language === "en" ? "English" : detail?.imported ? "Imported" : null;
+          return <div key={meeting.id}>
+            {showGroup && <h2 className="px-2 pb-1.5 pt-3.5 text-xs font-medium text-ink-faint">{group}</h2>}
+            <div className={`group relative rounded-sm ${selectedId === meeting.id && !showSettings && !showSearch ? "bg-accent-soft hover:bg-accent-soft" : "hover:bg-hover"}`}>
+              <button type="button" aria-label={meeting.title} aria-current={selectedId === meeting.id && !showSettings && !showSearch ? "page" : undefined} onClick={() => openMeeting(meeting.id)} className="grid w-full grid-cols-[minmax(0,1fr)_auto] gap-x-2 gap-y-0.5 rounded-sm px-2 py-2 pr-8 text-left">
+                <span className="min-w-0 truncate text-[13px] font-medium leading-[18px]">{meeting.title}</span>
+                <time dateTime={meeting.started_at} className="text-xs tabular-nums leading-4 text-ink-faint">{rowTime(meeting.started_at)}</time>
+                <span className={`col-span-2 text-xs leading-4 ${job ? "text-warn" : "text-ink-muted"}`}>
+                  {job ? processingStageLabel(job).replace(/ (\d+%)/, " · $1") : <>{meeting.duration_ms > 0 && durationLabel(meeting.duration_ms)}{meeting.duration_ms > 0 && language && " · "}{language}</>}
+                </span>
+              </button>
+              <DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="absolute right-0.5 top-1 size-7 opacity-0 focus:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100" aria-label={`More options for ${meeting.title}`}><Ellipsis size={16} strokeWidth={1.5} /></Button></DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  {job && job.stage !== "failed" && <DropdownMenuItem onSelect={() => void cancelJob(meeting.id)}>Cancel processing</DropdownMenuItem>}
+                  <DropdownMenuItem disabled={busyRecording && recorder?.meeting_id === meeting.id} onSelect={() => { setDeleteError(null); setDeleting(meeting); }} className="text-record"><Trash2 size={16} strokeWidth={1.5} />Delete {meeting.title}</DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          </div>;
+        })}
+      </nav>
+      <div className="grid gap-0.5 border-t border-line p-2">
+        <Button variant="ghost" className="w-full justify-start gap-2.5 px-2" aria-current={showSettings ? "page" : undefined} onClick={() => { setSelectedId(null); setShowSearch(false); setShowSettings(true); }}><Settings size={16} strokeWidth={1.5} />Settings</Button>
+        <DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" className="w-full justify-start gap-2.5 px-2"><Ellipsis size={16} strokeWidth={1.5} />More</Button></DropdownMenuTrigger><DropdownMenuContent align="start"><DropdownMenuItem onSelect={() => setScan((value) => value + 1)}><RefreshCw size={16} strokeWidth={1.5} />Rescan Library</DropdownMenuItem></DropdownMenuContent></DropdownMenu>
+      </div>
+    </aside>
+    <div className="flex min-h-0 min-w-0 flex-col overflow-y-auto bg-canvas">
+      <RecordingBar recordRequest={recordRequest} hideIdleButton />
+      {imports.current && <div className="mx-7 mt-4 rounded-md bg-panel px-3 py-2 text-sm text-ink-muted"><Loading message={`Importing ${imports.current}…${imports.queued > 0 ? ` (+${imports.queued} queued)` : ""}`} rows={1} /><p aria-hidden="true" className="m-0">Importing {imports.current}…{imports.queued > 0 ? ` (+${imports.queued} queued)` : ""}</p></div>}
+      {imports.errors.length > 0 && <div className="mx-7"><ErrorState title="Some files couldn't be imported" guidance={`${imports.errors.join(" · ")}. Choose an mp3, m4a, wav or flac file and try again.`} /><Button variant="secondary" onClick={() => void dismissErrors()}>Dismiss import errors</Button></div>}
+      {deleteError && !deleting && <div className="mx-7"><ErrorState title="Couldn't delete the Meeting" guidance={`${deleteError}. Try again or Rescan the Library.`} /></div>}
+      {malformed.length > 0 && <div role="status" className="mx-7 mt-4 rounded-md bg-panel px-3 py-2 text-sm text-ink-muted"><p className="m-0">{malformed.length} {malformed.length === 1 ? "folder" : "folders"} could not be read</p><ul className="m-0 pl-5">{malformed.map((item) => <li key={item.folder}>{item.folder}: {item.reason}</li>)}</ul></div>}
+      {showSettings ? <SettingsView onBack={() => setShowSettings(false)} /> : showSearch ? <LibrarySearch query={query} onQueryChange={setQuery} onOpen={openHit} /> : selectedId ? <MeetingView key={selectedId} id={selectedId} recordingMeetingId={busyRecording ? recorder?.meeting_id : null} openAt={openAt} onOpened={() => setOpenAt(null)} onDeleted={() => { setSelectedId(null); setOpenAt(null); setScan((value) => value + 1); }} onRenamed={setSelectedId} onOpenSettings={() => setShowSettings(true)} onBack={() => { setSelectedId(null); setOpenAt(null); setScan((value) => value + 1); }} /> : showRecording && busyRecording && recorder ? <RecordingScreen status={recorder} title={meetings?.find((meeting) => meeting.id === recorder.meeting_id && meeting.duration_ms > 0)?.title} /> : <section className="flex min-h-0 flex-1 flex-col" aria-label="Library home">
+        {failed ? <div className="grid flex-1 place-items-center p-10"><ErrorState title="Couldn't load the Library" guidance="Try rescanning the Library." onRetry={() => setScan((value) => value + 1)} /></div> : meetings === null ? <div className="grid flex-1 place-items-center p-10"><Loading message="Loading the Library…" /></div> : meetings.length === 0 ? <div className="grid flex-1 place-items-center p-10"><div className="grid justify-items-center gap-3"><EmptyState title="Your Library is empty" description={<>Record a call from any app, or import an audio file. Meetings are saved to <span className="text-ink">Documents\Meeting Minutes</span>.</>} action={<><Button variant="record" disabled={!recorder || busyRecording} onClick={requestRecording}><span aria-hidden="true" className="size-2 rounded-full bg-current" />Record</Button><Button variant="secondary" onClick={() => void pickFiles()}><Import size={16} strokeWidth={1.5} />Import a file</Button></>} /><p className="m-0 text-center text-xs text-ink-muted">Or press {recordHotkey.split("+").map((key) => <Kbd key={key} className="mx-0.5">{key}</Kbd>)} from any app.</p></div></div> : <div className="grid flex-1 place-items-center p-10"><EmptyState title="Library" description="Choose a Meeting from the sidebar or search the Library." /></div>}
+      </section>}
+    </div>
+    {deleting && <ConfirmDelete title={deleting.title} busy={deleteBusy} onConfirm={() => void confirmDelete()} onCancel={() => { setDeleting(null); setDeleteError(null); }} error={deleteError} />}
+    {importHover && <div role="status" className="pointer-events-none fixed inset-0 z-50 grid place-items-center border-4 border-dashed border-accent bg-canvas/95 p-10 text-center text-heading-md text-ink">Drop audio to import (mp3, m4a, wav, flac)</div>}
+  </main>;
 }

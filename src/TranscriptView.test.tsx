@@ -18,7 +18,7 @@ afterEach(() => { cleanup(); vi.clearAllMocks(); });
 it("plays the chosen Segment and highlights the current one", () => {
   render(<TranscriptView transcript={transcript} positionMs={1500} player={player} editable onEdit={vi.fn()} />);
   expect(screen.getByRole("list", { name: "Segments" }).children).toHaveLength(2);
-  fireEvent.click(screen.getByRole("button", { name: "[00:00:01] Remote" }));
+  fireEvent.click(screen.getByRole("button", { name: "Play Segment at 00:01, Remote" }));
   expect(player.playSpan).toHaveBeenCalledWith(1000, 2000);
   expect(screen.getByText("World").closest("li")?.getAttribute("aria-current")).toBe("true");
   expect(screen.getByText("World").closest("li")?.className).toContain("current");
@@ -46,7 +46,7 @@ it("cancels with Escape and disables editing when the Meeting is busy", () => {
   expect(screen.queryByRole("textbox", { name: "Segment text" })).toBeNull();
   rerender(<TranscriptView transcript={transcript} positionMs={0} player={null} editable={false} onEdit={vi.fn()} />);
   expect((screen.getAllByRole("button", { name: "Edit" })[0] as HTMLButtonElement).disabled).toBe(true);
-  expect((screen.getByRole("button", { name: "[00:00:00] Me" }) as HTMLButtonElement).disabled).toBe(true);
+  expect((screen.getByRole("button", { name: "Play Segment at 00:00, Me" }) as HTMLButtonElement).disabled).toBe(true);
 });
 
 it("stops an open editor from saving when Processing begins", () => {

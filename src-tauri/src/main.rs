@@ -1259,6 +1259,13 @@ struct Tray {
     stop: MenuItem<tauri::Wry>,
     idle_image: Image<'static>,
     recording_image: Image<'static>,
+    shown: Mutex<TrayShown>,
+}
+
+#[derive(Default)]
+struct TrayShown {
+    phase: Option<Phase>,
+    label: Option<String>,
 }
 
 #[tauri::command]
@@ -1331,6 +1338,32 @@ fn meeting_detail(
         .map_err(Clone::clone)?
         .meeting(&meeting_id)
         .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn open_meeting_folder(
+    state: State<'_, LibraryState>,
+    meeting_id: String,
+) -> Result<(), String> {
+    let folder = {
+        let guard = state.lock().map_err(|error| error.to_string())?;
+        let library = guard.as_ref().map_err(Clone::clone)?;
+        library.meeting(&meeting_id).map_err(|error| error.to_string())?;
+        library.meeting_dir(&meeting_id)
+    };
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer.exe")
+            .arg(folder)
+            .spawn()
+            .map_err(|error| format!("Couldn't open the Meeting folder: {error}"))?;
+        Ok(())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = folder;
+        Err("Opening the Meeting folder is available on Windows".into())
+    }
 }
 
 #[tauri::command]
@@ -1678,25 +1711,33 @@ fn update_tray(app: &AppHandle, status: &RecorderStatus) {
     };
     let elapsed = format_elapsed(status.elapsed_ms);
     let (label, image) = match status.phase {
-        Phase::Idle => ("Not recording".to_owned(), &tray.idle_image),
+        Phase::Idle => ("Idle".to_owned(), &tray.idle_image),
         Phase::Recording => (format!("Recording {elapsed}"), &tray.recording_image),
         Phase::Paused => (format!("Paused {elapsed}"), &tray.recording_image),
     };
-    let tooltip = match status.phase {
-        Phase::Idle => "Meeting Minutes".to_owned(),
-        _ => format!("Meeting Minutes - {label}"),
-    };
-    let _ = tray.icon.set_tooltip(Some(tooltip));
-    let _ = tray.icon.set_icon(Some(image.clone()));
-    let _ = tray.status.set_text(label);
-    let _ = tray.record.set_enabled(status.phase == Phase::Idle);
-    let _ = tray.pause.set_enabled(status.phase != Phase::Idle);
-    let _ = tray.pause.set_text(if status.phase == Phase::Paused {
-        "Resume"
-    } else {
-        "Pause"
-    });
-    let _ = tray.stop.set_enabled(status.phase != Phase::Idle);
+    let tooltip = format!("Meeting Minutes — {label}");
+    let Ok(mut shown) = tray.shown.lock() else { log_event(LogEvent::TrayUpdateFailed); return; };
+    if shown.phase != Some(status.phase) {
+        let succeeded = setter_ok(tray.icon.set_icon(Some(image.clone())))
+            & setter_ok(tray.record.set_enabled(status.phase == Phase::Idle))
+            & setter_ok(tray.pause.set_enabled(status.phase != Phase::Idle))
+            & setter_ok(tray.pause.set_text(if status.phase == Phase::Paused { "Resume" } else { "Pause" }))
+            & setter_ok(tray.stop.set_enabled(status.phase != Phase::Idle));
+        if succeeded { shown.phase = Some(status.phase); }
+    }
+    if shown.label.as_deref() != Some(label.as_str()) {
+        let mut succeeded = setter_ok(tray.icon.set_tooltip(Some(tooltip)))
+            & setter_ok(tray.status.set_text(&label));
+        if let Some(window) = app.get_webview_window("main") {
+            let title = if status.phase == Phase::Idle { "Meeting Minutes".to_owned() } else { format!("Meeting Minutes — {label}") };
+            succeeded &= setter_ok(window.set_title(&title));
+        }
+        if succeeded { shown.label = Some(label); }
+    }
+}
+
+fn setter_ok<T, E>(result: Result<T, E>) -> bool {
+    if result.is_err() { log_event(LogEvent::TrayUpdateFailed); false } else { true }
 }
 
 /// The app icon with a red dot in the lower right corner.
@@ -2068,8 +2109,7 @@ fn main() {
             )));
 
             let open_item = MenuItem::with_id(app, "open", "Open", true, None::<&str>)?;
-            let status_item =
-                MenuItem::with_id(app, "status", "Not recording", false, None::<&str>)?;
+            let status_item = MenuItem::with_id(app, "status", "Idle", false, None::<&str>)?;
             let record_item = MenuItem::with_id(app, "record", "Record", true, None::<&str>)?;
             let pause_item = MenuItem::with_id(app, "pause", "Pause", false, None::<&str>)?;
             let stop_item = MenuItem::with_id(app, "stop", "Stop", false, None::<&str>)?;
@@ -2098,7 +2138,7 @@ fn main() {
             let recording_image = recording_icon(&idle_image);
             let icon = TrayIconBuilder::new()
                 .icon(idle_image.clone())
-                .tooltip("Meeting Minutes")
+                .tooltip("Meeting Minutes — Idle")
                 .menu(&menu)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "open" => show_window(app),
@@ -2119,6 +2159,7 @@ fn main() {
                 stop: stop_item,
                 idle_image,
                 recording_image,
+                shown: Mutex::new(TrayShown::default()),
             });
 
             recover(app.handle());
@@ -2175,6 +2216,7 @@ fn main() {
             rescan_library,
             search_library,
             meeting_detail,
+            open_meeting_folder,
             rename_meeting,
             delete_meeting,
             recording_status,

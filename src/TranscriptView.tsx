@@ -3,6 +3,9 @@ import type { TimelinePlayer } from "./timeline";
 import type { Transcript } from "./processing";
 import { formatElapsed } from "./recording";
 import { currentSegmentId, speakerName } from "./transcript";
+import { CircleHelp } from "lucide-react";
+import { Button } from "./components/ui/Button";
+import { Textarea } from "./components/ui/Textarea";
 
 interface Props {
   transcript: Transcript;
@@ -40,22 +43,22 @@ export default function TranscriptView({ transcript, positionMs, player, editabl
 
   function cancel() { setEditing(null); setError(null); }
 
-  return <ol aria-label="Segments" className="segments">
+  return <ol aria-label="Segments" className="m-0 list-none p-0">
     {transcript.segments.map((segment) => {
       const current = segment.id === currentId;
-      return <li key={segment.id} ref={current ? currentRow : undefined} className={current ? "current" : undefined} aria-current={current ? "true" : undefined}>
-        <button type="button" disabled={!player} onClick={() => player?.playSpan(segment.start_ms, segment.end_ms)}>
-          [{formatElapsed(segment.start_ms)}] {speakerName(segment.speaker)}
-        </button>
-        {editing === segment.id ? <div className="segment-editor">
-          <label>Segment text<textarea value={text} onChange={(event) => setText(event.target.value)} onKeyDown={(event) => {
+      const elapsed = formatElapsed(segment.start_ms);
+      const time = elapsed.startsWith("00:") ? elapsed.slice(3) : elapsed;
+      return <li key={segment.id} ref={current ? currentRow : undefined} className={`group -mx-2 grid grid-cols-[52px_68px_minmax(0,1fr)] gap-3 rounded-sm px-2 py-2 transition-colors duration-panel hover:bg-panel ${current ? "current bg-accent-soft hover:bg-accent-soft" : ""}`} aria-current={current ? "true" : undefined}>
+        <button type="button" disabled={!player} className="self-start pt-[3px] text-left text-xs tabular-nums text-ink-faint hover:text-accent disabled:opacity-50" aria-label={`Play Segment at ${time}, ${speakerName(segment.speaker)}`} onClick={() => player?.playSpan(segment.start_ms, segment.end_ms)}>{time}</button>
+        <span className={`flex items-start gap-1 pt-[3px] text-xs font-medium ${segment.speaker === "me" ? "text-ink" : segment.speaker === "remote" ? "text-ink-muted" : "text-ink-faint"}`}>{segment.speaker === "unknown" && <CircleHelp size={13} strokeWidth={1.5} className="mt-0.5" aria-hidden="true" />}{speakerName(segment.speaker)}</span>
+        {editing === segment.id ? <div className="min-w-0">
+          <label className="block text-xs text-ink-muted">Segment text<Textarea autoFocus className="mt-1 min-h-[78px] text-read leading-[26px]" value={text} onChange={(event) => setText(event.target.value)} onKeyDown={(event) => {
             if (event.key === "Enter" && event.ctrlKey) { event.preventDefault(); void save(); }
             if (event.key === "Escape") cancel();
           }} /></label>
-          <button type="button" disabled={!editable || !text.trim() || saving} onClick={() => void save()}>Save</button>
-          <button type="button" onClick={cancel}>Cancel</button>
-          {error && <p role="alert">{error}</p>}
-        </div> : <><span>{segment.text}</span><button type="button" disabled={!editable} onClick={() => { setEditing(segment.id); setText(segment.text); setError(null); }}>Edit</button></>}
+          <div className="mt-2 flex gap-2"><Button disabled={!editable || !text.trim() || saving} onClick={() => void save()}>Save</Button><Button variant="ghost" onClick={cancel}>Cancel</Button></div>
+          {error && <p role="alert" className="mt-2 text-sm text-record">{error}</p>}
+        </div> : <div className="flex min-w-0 items-start gap-2"><p className={`m-0 min-w-0 flex-1 text-read leading-[26px] ${segment.speaker === "unknown" ? "text-ink-muted" : ""}`}>{segment.text}</p><Button variant="ghost" size="icon" className="h-7 w-auto px-1 text-xs opacity-0 group-hover:opacity-100 focus:opacity-100" disabled={!editable} onClick={() => { setEditing(segment.id); setText(segment.text); setError(null); }}>Edit</Button></div>}
       </li>;
     })}
   </ol>;

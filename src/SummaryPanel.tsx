@@ -7,19 +7,27 @@ import type { Transcript } from "./processing";
 import { onLibraryChanged } from "./recording";
 import { cancelSummary, dismissSummary, generateSummary, meetingSummary, onSummaryStatus, summarySendPlan, summaryStatus, type SendPlan, type Summary, type SummaryItem, type SummaryJob } from "./summary";
 import type { TimelinePlayer } from "./timeline";
+import { LockKeyhole, RefreshCw } from "lucide-react";
+import { Button } from "./components/ui/Button";
+import { Loading } from "./components/states/Loading";
+import { EmptyState } from "./components/states/EmptyState";
+import { ErrorState } from "./components/states/ErrorState";
+import type { Citation } from "./summary";
 
-export default function SummaryPanel({ meetingId, transcript, player, aiStatus }: { meetingId: string; transcript: Transcript | null; player: TimelinePlayer | null; aiStatus: AiStatus | null }) {
+export default function SummaryPanel({ meetingId, transcript, player, aiStatus, onCitationPlay, transcriptLoaded = true }: { meetingId: string; transcript: Transcript | null; transcriptLoaded?: boolean; player: TimelinePlayer | null; aiStatus: AiStatus | null; onCitationPlay?: (citation: Citation) => void }) {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [job, setJob] = useState<SummaryJob | null>(null);
   const [plan, setPlan] = useState<SendPlan | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [loaded, setLoaded] = useState(false);
   const statusEventSeen = useRef(false);
+  const reloadVersion = useRef(0);
   useEffect(() => {
     let active = true;
     statusEventSeen.current = false;
-    setSummary(null); setJob(null);
-    const reload = () => { void meetingSummary(meetingId).then((value) => { if (active) setSummary(value); }, (reason) => { if (active) setError(String(reason)); }); };
+    setSummary(null); setJob(null); setLoaded(false);
+    const reload = () => { const version = ++reloadVersion.current; void meetingSummary(meetingId).then((value) => { if (active && version === reloadVersion.current) { setSummary(value); setError(null); setLoaded(true); } }, (reason) => { if (active && version === reloadVersion.current) { setError(String(reason)); setLoaded(true); } }); };
     reload();
     void summaryStatus().then((value) => { if (active && !statusEventSeen.current) setJob(value.jobs.find((item) => item.meeting_id === meetingId) ?? null); }, (reason) => { if (active) setError(String(reason)); });
     const statusListener = onSummaryStatus((status) => { if (!active) return; statusEventSeen.current = true; const next = status.jobs.find((item) => item.meeting_id === meetingId) ?? null; setJob(next); if (!next) reload(); });
@@ -43,17 +51,20 @@ export default function SummaryPanel({ meetingId, transcript, player, aiStatus }
   }
   async function stop() { try { setJob((await cancelSummary(meetingId)).jobs.find((item) => item.meeting_id === meetingId) ?? null); } catch (reason) { setError(String(reason)); } }
   async function dismiss() { try { setJob((await dismissSummary(meetingId)).jobs.find((item) => item.meeting_id === meetingId) ?? null); } catch (reason) { setError(String(reason)); } }
-  function section(title: string, items: SummaryItem[]) { return <div><h3>{title}</h3>{items.length ? <ul>{items.map((item, index) => <li key={index}>{item.text} {item.citations.map((citation) => <CitationLink key={citation.segment_id} citation={citation} player={player} />)}</li>)}</ul> : <p>None</p>}</div>; }
-  return <section aria-label="Summary" className="summary-panel"><h2>Summary</h2>
-    {error && <p role="alert">{error}</p>}
-    {!transcript && <p>Transcribe the Meeting to get a Summary.</p>}
-    {job?.state === "running" && <p>Summarising… ({job.done}/{job.total}) <button type="button" onClick={() => void stop()}>Stop</button></p>}
-    {job?.state === "failed" && <><p role="alert">{job.error}</p><button type="button" onClick={() => void begin()}>Retry</button><button type="button" onClick={() => void dismiss()}>Dismiss</button></>}
-    {summary && <>{section("Overview", summary.overview)}{section("Key points", summary.key_points)}{section("Decisions", summary.decisions)}
-      <div><h3>Action items</h3>{summary.action_items.length ? <ul>{summary.action_items.map((item, index) => <li key={index}>{item.text} {item.owner && <span>Owner: {item.owner}</span>} {item.due && <span>Due: {item.due}</span>} {item.citations.map((citation) => <CitationLink key={citation.segment_id} citation={citation} player={player} />)}</li>)}</ul> : <p>None</p>}</div>
-      <p>From transcript revision {summary.revision} · {PROVIDER_NAMES[summary.provider]} {summary.model}</p>
-      {transcript && summary.revision !== transcript.revision && <p>This Summary is from an earlier Transcript revision.</p>}</>}
-    {transcript && aiStatus?.configured && !job && <button type="button" disabled={busy} onClick={() => void begin()}>{summary ? "Regenerate Summary" : aiStatus.provider && aiStatus.provider !== "ollama" ? `Generate Summary with ${PROVIDER_NAMES[aiStatus.provider]}` : "Generate Summary"}</button>}
+  const cite = (citation: Citation) => <CitationLink key={citation.segment_id} citation={citation} player={player} segmentText={summary?.revision === transcript?.revision ? transcript?.segments.find((segment) => segment.id === citation.segment_id)?.text : "earlier Revision"} onPlay={onCitationPlay} />;
+  function section(title: string, items: SummaryItem[], overview = false) { return <section className="mb-5 grid gap-2"><h3 className="m-0 text-xs font-medium text-ink-faint">{title}</h3>{items.length ? overview ? <div className="grid gap-2">{items.map((item, index) => <p key={index} className="m-0 text-base leading-[23px]">{item.text} {item.citations.map(cite)}</p>)}</div> : <ul className="m-0 grid gap-1.5 pl-[18px]">{items.map((item, index) => <li key={index} className="text-base leading-[23px]">{item.text} {item.citations.map(cite)}</li>)}</ul> : <p className="m-0 text-sm text-ink-muted">None</p>}</section>; }
+  return <section aria-label="Summary" className="min-w-0">
+    {!loaded && <Loading message="Loading Summary…" rows={3} />}
+    {error && <ErrorState title="Couldn't load the Summary" guidance={error} />}
+    {loaded && !error && transcriptLoaded && !transcript && !summary && <EmptyState title="No Summary yet" description="Transcribe the Meeting to get a Summary." />}
+    {job?.state === "running" && <div><Loading message={`Summarising… (${job.done}/${job.total})`} rows={2} /><p className="text-sm text-ink-muted">Summarising… ({job.done}/{job.total})</p><Button variant="ghost" onClick={() => void stop()}>Stop</Button></div>}
+    {job?.state === "failed" && <><ErrorState title="Couldn't make the Summary" guidance={job.error ?? "Try again."} onRetry={() => void begin()} /><Button variant="ghost" onClick={() => void dismiss()}>Dismiss</Button></>}
+    {summary && <>{section("Overview", summary.overview, true)}{section("Key points", summary.key_points)}{section("Decisions", summary.decisions)}
+      <section className="mb-5 grid gap-2"><h3 className="m-0 text-xs font-medium text-ink-faint">Action items</h3>{summary.action_items.length ? <ul className="m-0 grid list-none gap-2 p-0">{summary.action_items.map((item, index) => <li key={index} className="grid grid-cols-[18px_1fr] items-start gap-2 text-base leading-[23px]"><span aria-hidden="true" className="mt-1 size-4 rounded-[4px] border-[1.5px] border-line-strong" /><div>{item.text} {item.citations.map(cite)}{(item.owner || item.due) && <div className="text-xs text-ink-muted">{[item.owner, item.due].filter(Boolean).join(" · ")}</div>}</div></li>)}</ul> : <p className="m-0 text-sm text-ink-muted">None</p>}</section>
+      {transcript && summary.revision !== transcript.revision && <p className="text-xs text-warn">This Summary is from an earlier Transcript revision.</p>}
+      <div className="flex items-center gap-2 border-t border-line pt-3 text-xs text-ink-muted"><LockKeyhole size={16} strokeWidth={1.5} aria-hidden="true" /><span className="min-w-0 flex-1">Made {summary.provider === "ollama" ? "on this PC with Ollama" : `with ${PROVIDER_NAMES[summary.provider]}`} · {summary.model}</span>{transcript && aiStatus?.configured && !job && <Button variant="ghost" className="h-[26px] px-2" disabled={busy} onClick={() => void begin()}><RefreshCw size={16} strokeWidth={1.5} />Redo</Button>}</div>
+    </>}
+    {loaded && !error && transcript && !summary && !job && <EmptyState title="No Summary yet" description="Make a cited Summary from this Meeting's Transcript." action={aiStatus?.configured ? <Button disabled={busy} onClick={() => void begin()}>{aiStatus.provider && aiStatus.provider !== "ollama" ? `Generate Summary with ${PROVIDER_NAMES[aiStatus.provider]}` : "Generate Summary"}</Button> : undefined} />}
     {plan?.disclosure && <CloudDisclosure disclosure={plan.disclosure} onSend={() => void send()} onCancel={() => setPlan(null)} />}
   </section>;
 }

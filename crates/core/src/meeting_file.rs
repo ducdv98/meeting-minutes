@@ -35,6 +35,7 @@ pub struct MeetingDetail {
     pub audio_path: Option<PathBuf>,
     pub markers: Vec<Marker>,
     pub imported: bool,
+    pub sources: Vec<Source>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

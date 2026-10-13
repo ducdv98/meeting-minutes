@@ -6,7 +6,7 @@ use chrono::{DateTime, FixedOffset};
 use serde::{Serialize, Serializer};
 
 use crate::{
-    capture::{Clock, InputOpener},
+    capture::{Clock, InputOpener, Source},
     finalize_recording,
     recording::{CaptureSession, DeviceSwitch},
     Library, LibraryError,
@@ -35,7 +35,7 @@ pub struct PendingSave {
     pub recovered: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct RecorderStatus {
     pub phase: Phase,
     pub meeting_id: Option<String>,
@@ -44,6 +44,21 @@ pub struct RecorderStatus {
     pub saves: Vec<PendingSave>,
     pub continue_offers: Vec<String>,
     pub device_switches: Vec<DeviceSwitch>,
+    pub source_devices: Vec<SourceDevice>,
+    pub source_levels: Vec<SourceMeter>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct SourceMeter {
+    pub source: Source,
+    pub level: f32,
+    pub silent: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct SourceDevice {
+    pub source: Source,
+    pub device: String,
 }
 
 /// A stopped Recording whose Chunks still have to be written as FLAC, MP3 and `meeting.json`.
@@ -176,6 +191,16 @@ impl<O: InputOpener, C: Clock> Recorder<O, C> {
                 .active
                 .as_ref()
                 .map_or_else(Vec::new, |active| active.session.device_switches()),
+            source_devices: self.active.as_ref().map_or_else(Vec::new, |active| {
+                active
+                    .session
+                    .source_devices()
+                    .into_iter()
+                    .map(|(source, device)| SourceDevice { source, device })
+                    .collect()
+            }),
+            source_levels: self.active.as_ref().map_or_else(Vec::new, |active| active.session.source_levels()
+                .into_iter().map(|(source, level, silent)| SourceMeter { source, level, silent }).collect()),
         }
     }
 

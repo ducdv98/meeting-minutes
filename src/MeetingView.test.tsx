@@ -1,8 +1,8 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import MeetingView from "./MeetingView";
-import { deleteMeeting, meetingDetail, renameMeeting, type MeetingDetail } from "./library";
+import { deleteMeeting, meetingDetail, openMeetingFolder, renameMeeting, type MeetingDetail } from "./library";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { onLibraryChanged } from "./recording";
 import { processingStatus, meetingTranscript, enqueueTranscription, cancelProcessing, onProcessingStatus, setMeetingLanguage, type ProcessingStatus } from "./processing";
@@ -14,7 +14,7 @@ import { meetingAsks } from "./ask";
 vi.mock("./ai", async (original) => ({ ...(await original<typeof import("./ai")>()), aiStatus: vi.fn() }));
 vi.mock("./summary", () => ({ meetingSummary: vi.fn(), summaryStatus: vi.fn(), onSummaryStatus: vi.fn(() => Promise.resolve(() => {})) }));
 vi.mock("./ask", () => ({ meetingAsks: vi.fn(), onAskDelta: vi.fn(() => Promise.resolve(() => {})), onAsksChanged: vi.fn(() => Promise.resolve(() => {})), answerLabel: () => "" }));
-vi.mock("./library", () => ({ meetingDetail: vi.fn(), renameMeeting: vi.fn(), deleteMeeting: vi.fn() }));
+vi.mock("./library", () => ({ meetingDetail: vi.fn(), openMeetingFolder: vi.fn(), renameMeeting: vi.fn(), deleteMeeting: vi.fn() }));
 vi.mock("./processing", async (importOriginal) => ({ ...(await importOriginal<typeof import("./processing")>()), processingStatus: vi.fn(), meetingTranscript: vi.fn(), enqueueTranscription: vi.fn(), cancelProcessing: vi.fn(), dismissProcessing: vi.fn(), setMeetingLanguage: vi.fn(), onProcessingStatus: vi.fn(() => Promise.resolve(() => {})) }));
 vi.mock("./recording", async (importOriginal) => ({ ...(await importOriginal<typeof import("./recording")>()), onLibraryChanged: vi.fn(() => Promise.resolve(() => {})) }));
 vi.mock("./transcript", async (importOriginal) => ({ ...(await importOriginal<typeof import("./transcript")>()), editSegment: vi.fn() }));
@@ -43,6 +43,7 @@ beforeEach(() => {
   vi.mocked(cancelProcessing).mockResolvedValue({ jobs: [] });
   vi.mocked(setMeetingLanguage).mockResolvedValue();
   vi.mocked(deleteMeeting).mockResolvedValue();
+  vi.mocked(openMeetingFolder).mockResolvedValue();
   vi.spyOn(HTMLMediaElement.prototype, "play").mockImplementation(async () => {});
   vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
   vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => {});
@@ -55,7 +56,7 @@ it("plays and highlights a search result once the Transcript and player load", a
   const { container } = render(<MeetingView id="old" openAt={{ segment_id: "s00001", revision: 1, start_ms: 1000, end_ms: 2000 }} onOpened={onOpened} onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
   await waitFor(() => expect(onOpened).toHaveBeenCalledTimes(1));
   expect(container.querySelector("audio")?.currentTime).toBe(0.5);
-  expect(container.querySelector("li[aria-current='true']")?.textContent).toContain("Budget");
+  await waitFor(() => expect(container.querySelector("li[aria-current='true']")?.textContent).toContain("Budget"));
   expect(HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(1);
 });
 
@@ -83,8 +84,9 @@ it("confirms Meeting deletion after releasing the player and reports success", a
   vi.mocked(deleteMeeting).mockImplementation(async () => { expect(document.querySelector("audio")).toBeNull(); });
   render(<MeetingView id="old" onDeleted={onDeleted} onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
   await screen.findByRole("heading", { name: "Planning" });
-  fireEvent.click(screen.getByRole("button", { name: "Delete" }));
-  fireEvent.click(screen.getByRole("dialog").querySelector("button")!);
+  fireEvent.pointerDown(screen.getByRole("button", { name: "More actions" }), { button: 0, ctrlKey: false });
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Delete" }));
+  fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Delete" }));
   await waitFor(() => expect(onDeleted).toHaveBeenCalledTimes(1));
   expect(deleteMeeting).toHaveBeenCalledWith("old");
 });
@@ -92,8 +94,8 @@ it("confirms Meeting deletion after releasing the player and reports success", a
 it("shows the Meeting fields and Timeline markers", async () => {
   const { container } = render(<MeetingView id="old" onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
   expect(await screen.findByRole("heading", { name: "Planning" })).toBeTruthy();
-  expect(screen.getByText("2026-10-12 09:30").getAttribute("datetime")).toBe(detail.started_at);
-  expect(screen.getByText("Duration: 00:02:05")).toBeTruthy();
+  expect(container.querySelector("time")?.getAttribute("datetime")).toBe(detail.started_at);
+  expect(screen.getByText(/2 min/)).toBeTruthy();
   expect((screen.getByRole("combobox", { name: "Language" }) as HTMLSelectElement).value).toBe("vi");
   expect(convertFileSrc).toHaveBeenCalledWith(detail.audio_path);
   expect(container.querySelector("audio")?.getAttribute("src")).toBe(`asset:${detail.audio_path}`);
@@ -103,6 +105,24 @@ it("shows the Meeting fields and Timeline markers", async () => {
   expect(screen.getByRole("button", { name: "Microphone switched to Headset at 00:00:30" }).getAttribute("style")).toContain("24%");
   fireEvent.click(screen.getByRole("button", { name: "Gap between Recordings at 00:00:20" }));
   expect((screen.getByRole("slider", { name: "Position" }) as HTMLInputElement).value).toBe("20000");
+});
+
+it("shows recorded Sources and opens the Meeting folder", async () => {
+  vi.mocked(meetingDetail).mockResolvedValue({ ...detail, sources: ["microphone", "system_audio"] });
+  render(<MeetingView id="old" onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
+  expect(await screen.findByText("Microphone + System audio")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Open folder" }));
+  await waitFor(() => expect(openMeetingFolder).toHaveBeenCalledWith("old"));
+});
+
+it("highlights the cited Timeline span when a Summary Citation plays", async () => {
+  vi.mocked(aiStatus).mockResolvedValue({ provider: "ollama", model: "llama", configured: true, has_openai_key: false, has_anthropic_key: false });
+  vi.mocked(meetingTranscript).mockResolvedValue({ schema_version: 1, revision: 1, created_at: "now", model: "small", language: "en", language_detected: false, duration_ms: 125000, segments: [{ id: "s00001", start_ms: 1000, end_ms: 2500, text: "Budget approved", speaker: "me" }] });
+  vi.mocked(meetingSummary).mockResolvedValue({ schema_version: 1, revision: 1, created_at: "now", provider: "ollama", model: "llama", overview: [{ text: "Approved", citations: [{ segment_id: "s00001", start_ms: 1000, end_ms: 2500 }] }], key_points: [], decisions: [], action_items: [], dropped_items: 0 });
+  render(<MeetingView id="old" onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
+  fireEvent.click(await screen.findByRole("button", { name: /Play from 00:01/ }));
+  expect(screen.getByTestId("cited-span").getAttribute("style")).toContain("left:");
+  expect(HTMLMediaElement.prototype.play).toHaveBeenCalled();
 });
 
 it("renames the Meeting after releasing audio and follows the new id", async () => {
@@ -119,7 +139,7 @@ it("renames the Meeting after releasing audio and follows the new id", async () 
   }
   render(<Host />);
   await screen.findByRole("heading", { name: "Planning" });
-  fireEvent.click(screen.getByRole("button", { name: "Rename" }));
+  fireEvent.click(screen.getByRole("button", { name: "Rename Planning" }));
   const title = screen.getByRole("textbox", { name: "Title" });
   fireEvent.change(title, { target: { value: " Review " } });
   fireEvent.click(screen.getByRole("button", { name: "Save" }));
@@ -133,7 +153,7 @@ it("keeps the rename input open and shows an error on failure", async () => {
   vi.mocked(renameMeeting).mockRejectedValue("Folder is busy");
   render(<MeetingView id="old" onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
   await screen.findByRole("heading", { name: "Planning" });
-  fireEvent.click(screen.getByRole("button", { name: "Rename" }));
+  fireEvent.click(screen.getByRole("button", { name: "Rename Planning" }));
   fireEvent.change(screen.getByRole("textbox", { name: "Title" }), { target: { value: "Review" } });
   fireEvent.click(screen.getByRole("button", { name: "Save" }));
   expect((await screen.findByRole("alert")).textContent).toContain("Folder is busy");
@@ -146,7 +166,7 @@ it("shows no audio, disables empty saves, and handles Escape", async () => {
   render(<MeetingView id="old" onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
   expect(await screen.findByText("No audio yet")).toBeTruthy();
   expect((screen.getByRole("combobox", { name: "Language" }) as HTMLSelectElement).value).toBe("");
-  fireEvent.click(screen.getByRole("button", { name: "Rename" }));
+  fireEvent.click(screen.getByRole("button", { name: "Rename Planning" }));
   const title = screen.getByRole("textbox", { name: "Title" });
   fireEvent.change(title, { target: { value: "   " } });
   expect((screen.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true);
@@ -258,7 +278,7 @@ it("follows the new id even when reloading the renamed Meeting fails", async () 
   }
   render(<Host />);
   await screen.findByRole("heading", { name: "Planning" });
-  fireEvent.click(screen.getByRole("button", { name: "Rename" }));
+  fireEvent.click(screen.getByRole("button", { name: "Rename Planning" }));
   fireEvent.change(screen.getByRole("textbox", { name: "Title" }), { target: { value: "Review" } });
   fireEvent.click(screen.getByRole("button", { name: "Save" }));
   expect((await screen.findByRole("alert")).textContent).toContain("Could not read meeting.json");
@@ -284,7 +304,9 @@ it("keeps saved Summary and Ask history visible without a configured provider", 
   vi.mocked(meetingAsks).mockResolvedValue({ asks: [{ id: "a0001", question: "What happened?", asked_at: "now", revision: 1, provider: "ollama", model: "llama", state: "answered", answer: "Budget approved", citations: [], invalid_citations: [], error: null }], active: null, retryable_id: null });
   render(<MeetingView id="old" onBack={() => {}} onRenamed={() => {}} onOpenSettings={() => {}} />);
   expect(await screen.findByRole("heading", { name: "Summary and Ask" })).toBeTruthy();
-  expect(await screen.findAllByText("Budget approved")).toHaveLength(2);
+  expect(await screen.findByText("Budget approved")).toBeTruthy();
+  fireEvent.click(screen.getByRole("tab", { name: "Ask" }));
+  expect(await screen.findByText("Budget approved")).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Generate Summary" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Ask" })).toBeNull();
 });
@@ -295,4 +317,56 @@ it("hides setup guidance when a provider is configured", async () => {
   await screen.findByRole("heading", { name: "Planning" });
   await waitFor(() => expect(aiStatus).toHaveBeenCalled());
   expect(screen.queryByRole("button", { name: "Open AI settings" })).toBeNull();
+});
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+const transcriptWith = (revision: number, text: string) => ({ schema_version: 1, revision, created_at: "2026-10-12T10:00:00Z", model: "small", language: "en" as const, language_detected: false, duration_ms: 125000, segments: [{ id: "s00001", start_ms: 1000, end_ms: 2000, text, speaker: "me" as const }] });
+
+it("never shows the previous Meeting after switching, even when its data arrives last", async () => {
+  const oldDetail = deferred<MeetingDetail>();
+  const oldTranscript = deferred<ReturnType<typeof transcriptWith> | null>();
+  vi.mocked(meetingDetail).mockImplementation((id) => id === "old" ? oldDetail.promise : Promise.resolve({ ...detail, id: "new", title: "Retro" }));
+  vi.mocked(meetingTranscript).mockImplementation((id) => id === "old" ? oldTranscript.promise : Promise.resolve(transcriptWith(1, "New Meeting words")));
+  const props = { onBack: () => {}, onOpenSettings: () => {}, onRenamed: () => {} };
+  const { rerender } = render(<MeetingView id="old" {...props} />);
+  rerender(<MeetingView id="new" {...props} />);
+  await screen.findByText("Retro");
+  await screen.findByText("New Meeting words");
+  await act(async () => { oldDetail.resolve(detail); oldTranscript.resolve(transcriptWith(1, "Old Meeting words")); });
+  expect(screen.queryByText("Planning")).toBeNull();
+  expect(screen.queryByText("Old Meeting words")).toBeNull();
+  expect(screen.getByText("Retro")).toBeTruthy();
+});
+
+it("keeps the newest Transcript when overlapping reloads finish in reverse order", async () => {
+  const handlers: Array<() => void> = [];
+  const libraryChanged = () => handlers.forEach((handler) => handler());
+  vi.mocked(onLibraryChanged).mockImplementation((handler) => { handlers.push(handler as () => void); return Promise.resolve(() => {}); });
+  const first = deferred<ReturnType<typeof transcriptWith> | null>();
+  const second = deferred<ReturnType<typeof transcriptWith> | null>();
+  vi.mocked(meetingTranscript).mockResolvedValueOnce(transcriptWith(1, "Initial words")).mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+  render(<MeetingView id="old" onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
+  await screen.findByText("Initial words");
+  act(() => { libraryChanged(); libraryChanged(); });
+  await act(async () => { second.resolve(transcriptWith(3, "Newest words")); });
+  await screen.findByText("Newest words");
+  await act(async () => { first.resolve(transcriptWith(2, "Stale words")); });
+  expect(screen.queryByText("Stale words")).toBeNull();
+  expect(screen.getByText("Newest words")).toBeTruthy();
+});
+
+it("shows Loading, not an empty Transcript, while the Transcript is still loading", async () => {
+  const pending = deferred<ReturnType<typeof transcriptWith> | null>();
+  vi.mocked(meetingTranscript).mockReturnValue(pending.promise);
+  render(<MeetingView id="old" onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
+  await screen.findByText("Planning");
+  expect(screen.queryByText("No Transcript yet")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Transcribe" })).toBeNull();
+  await act(async () => { pending.resolve(null); });
+  expect(await screen.findByText("No Transcript yet")).toBeTruthy();
 });

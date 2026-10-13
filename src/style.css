@@ -1,9 +1,3 @@
-main {
-  max-width: 48rem;
-  margin: 3rem auto;
-  padding: 0 1.5rem;
-}
-
 /* Existing screens keep native control affordances until their redesign tickets. */
 #root button:not([class]):not([data-kind]) {
   border: 1px solid var(--line-strong);
@@ -19,95 +13,7 @@ main {
   padding: 4px 8px;
 }
 
-.wordmark {
-  display: block;
-  height: 2rem;
-}
-
-.recording-bar { margin: 1.5rem 0; }
-
-.recording-controls { display: flex; gap: 0.5rem; }
-
-.recording-indicator {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-
-.recording-indicator .dot {
-  width: 0.75rem;
-  height: 0.75rem;
-  border-radius: 50%;
-  background: var(--record);
-}
-
-.recording-indicator.paused .dot { background: var(--ink-faint); }
-
-.device-switch {
-  padding: 0.75rem;
-  background: var(--accent-soft);
-  border-radius: 0.5rem;
-}
-
-.device-switch button { margin-left: 0.5rem; }
-
-.notice {
-  position: fixed;
-  inset: 20% auto auto 50%;
-  transform: translateX(-50%);
-  max-width: 28rem;
-  padding: 1.5rem;
-  background: var(--raised);
-  border-radius: 0.5rem;
-  box-shadow: var(--app-shadow-dialog);
-}
-
-.notice button + button { margin-left: 0.5rem; }
-.cloud-disclosure-text { max-height: 18rem; overflow: auto; }
-.cloud-disclosure pre { white-space: pre-wrap; overflow-wrap: anywhere; }
-
-.scrubber { position: relative; margin-top: 0.75rem; }
-.scrubber input[type="range"] { display: block; width: 100%; margin: 0; }
-.marker-layer { position: absolute; inset: 0; pointer-events: none; }
-.marker-layer button {
-  position: absolute;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  width: 0.6rem;
-  height: 0.9rem;
-  padding: 0;
-  border: 1px solid var(--raised);
-  border-radius: 0.15rem;
-  background: var(--warn);
-  pointer-events: auto;
-  cursor: pointer;
-}
-.marker-layer button[data-kind="gap"] { background: var(--ink-muted); }
-.marker-layer button[data-kind="device_switch"] { background: var(--accent); }
-
-header { display: flex; align-items: center; justify-content: space-between; }
-.settings-view { display: grid; gap: 0.75rem; max-width: 30rem; }
+@keyframes recording-pulse { 50% { opacity: 0.35; } }
+.settings-view { display: grid; gap: 0.75rem; max-width: 48rem; padding: 28px; }
 .settings-view textarea, .settings-view select { width: 100%; box-sizing: border-box; }
 .settings-view button { justify-self: start; }
-.transcript-section { margin-top: 1.5rem; }
-.meeting-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 1.5rem; align-items: start; }
-.meeting-body .transcript-section { margin-top: 0; min-width: 0; }
-.meeting-body > section { min-width: 0; }
-.summary-panel li, .ask-panel li { margin-bottom: 0.6rem; overflow-wrap: anywhere; }
-.summary-panel li button, .ask-panel li button { margin-left: 0.25rem; }
-.ask-panel textarea { display: block; width: 100%; min-height: 5rem; box-sizing: border-box; margin-bottom: 0.5rem; }
-.ask-panel ol { max-height: 28rem; overflow-y: auto; padding-left: 1.5rem; }
-.segments { list-style: none; padding: 0; margin: 1rem 0; max-height: 28rem; overflow-y: auto; }
-.segments li { display: flex; align-items: start; gap: 0.5rem; padding: 0.45rem; border-bottom: 1px solid var(--line); }
-.segments li.current { background: var(--accent-soft); }
-.segments li > button:first-child { flex: none; }
-.segments li > span { flex: 1; }
-.segment-editor { flex: 1; }
-.segment-editor label, .segment-editor textarea { display: block; width: 100%; box-sizing: border-box; }
-.retranscribe-row { display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem; }
-.retranscribe-row p { flex-basis: 100%; margin: 0; }
-@media (max-width: 800px) { .meeting-body { grid-template-columns: 1fr; } }
-
-.import-overlay { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; background: rgba(14, 22, 34, 0.84); color: white; font-size: 1.4rem; pointer-events: none; }
