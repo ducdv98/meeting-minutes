@@ -86,15 +86,7 @@ fn get_diagnostics(app: AppHandle) -> Result<String, String> {
         .app_log_dir()
         .map_err(|error| error.to_string())?;
     let log = fs::read_to_string(log_dir.join("meeting-minutes.log")).unwrap_or_default();
-    let recent_log_lines = log
-        .lines()
-        .rev()
-        .take(100)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .map(str::to_owned)
-        .collect();
+    let recent_log_lines = log.lines().map(str::to_owned).collect();
     let settings = Settings::load(&app.state::<SettingsPath>().0);
     Ok(build_diagnostics(&DiagnosticsInput {
         version: app.package_info().version.to_string(),
@@ -111,6 +103,8 @@ fn get_diagnostics(app: AppHandle) -> Result<String, String> {
             .find(|model| model.name == settings.model)
             .map(|model| model.name.to_owned()),
         provider: settings.ai.provider,
+        whisper_system_info: Some(WhisperEngine::system_info().to_owned()),
+        transcription_backend: Some(WhisperEngine::backend_description().to_owned()),
         recent_log_lines,
     }))
 }
@@ -1353,14 +1347,13 @@ fn meeting_detail(
 }
 
 #[tauri::command]
-fn open_meeting_folder(
-    state: State<'_, LibraryState>,
-    meeting_id: String,
-) -> Result<(), String> {
+fn open_meeting_folder(state: State<'_, LibraryState>, meeting_id: String) -> Result<(), String> {
     let folder = {
         let guard = state.lock().map_err(|error| error.to_string())?;
         let library = guard.as_ref().map_err(Clone::clone)?;
-        library.meeting(&meeting_id).map_err(|error| error.to_string())?;
+        library
+            .meeting(&meeting_id)
+            .map_err(|error| error.to_string())?;
         library.meeting_dir(&meeting_id)
     };
     #[cfg(target_os = "windows")]
@@ -1757,28 +1750,48 @@ fn update_tray(app: &AppHandle, status: &RecorderStatus) {
         Phase::Paused => (format!("Paused {elapsed}"), &tray.recording_image),
     };
     let tooltip = format!("Meeting Minutes — {label}");
-    let Ok(mut shown) = tray.shown.lock() else { log_event(LogEvent::TrayUpdateFailed); return; };
+    let Ok(mut shown) = tray.shown.lock() else {
+        log_event(LogEvent::TrayUpdateFailed);
+        return;
+    };
     if shown.phase != Some(status.phase) {
         let succeeded = setter_ok(tray.icon.set_icon(Some(image.clone())))
             & setter_ok(tray.record.set_enabled(status.phase == Phase::Idle))
             & setter_ok(tray.pause.set_enabled(status.phase != Phase::Idle))
-            & setter_ok(tray.pause.set_text(if status.phase == Phase::Paused { "Resume" } else { "Pause" }))
+            & setter_ok(tray.pause.set_text(if status.phase == Phase::Paused {
+                "Resume"
+            } else {
+                "Pause"
+            }))
             & setter_ok(tray.stop.set_enabled(status.phase != Phase::Idle));
-        if succeeded { shown.phase = Some(status.phase); }
+        if succeeded {
+            shown.phase = Some(status.phase);
+        }
     }
     if shown.label.as_deref() != Some(label.as_str()) {
         let mut succeeded = setter_ok(tray.icon.set_tooltip(Some(tooltip)))
             & setter_ok(tray.status.set_text(&label));
         if let Some(window) = app.get_webview_window("main") {
-            let title = if status.phase == Phase::Idle { "Meeting Minutes".to_owned() } else { format!("Meeting Minutes — {label}") };
+            let title = if status.phase == Phase::Idle {
+                "Meeting Minutes".to_owned()
+            } else {
+                format!("Meeting Minutes — {label}")
+            };
             succeeded &= setter_ok(window.set_title(&title));
         }
-        if succeeded { shown.label = Some(label); }
+        if succeeded {
+            shown.label = Some(label);
+        }
     }
 }
 
 fn setter_ok<T, E>(result: Result<T, E>) -> bool {
-    if result.is_err() { log_event(LogEvent::TrayUpdateFailed); false } else { true }
+    if result.is_err() {
+        log_event(LogEvent::TrayUpdateFailed);
+        false
+    } else {
+        true
+    }
 }
 
 /// The app icon with a red dot in the lower right corner.

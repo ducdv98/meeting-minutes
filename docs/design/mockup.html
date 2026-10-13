@@ -615,8 +615,7 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 20px; resize: ver
               <div class="card" role="radiogroup" aria-label="Transcription model">
                 <div class="opt" role="radio" aria-checked="false" tabindex="0"><span class="radio"></span><div><div class="on">Base</div><div class="os">Fastest. Fine for clear English.</div></div><div class="side-note num">148 MB<br><span style="color:var(--ok)">Downloaded</span></div></div>
                 <div class="opt" role="radio" aria-checked="true" tabindex="0"><span class="radio"></span><div><div class="on">Small <span class="tag accent">Recommended for this PC</span></div><div class="os">Good balance for English and Vietnamese.</div></div><div class="side-note num">488 MB<br><span style="color:var(--ok)">Downloaded</span></div></div>
-                <div class="opt" role="radio" aria-checked="false" tabindex="0"><span class="radio"></span><div><div class="on">Medium</div><div class="os">More accurate. About 3× slower than Small here.</div></div><div class="side-note num">1.5 GB<br><span class="textlink">Download</span></div></div>
-                <div class="opt" role="radio" aria-checked="false" tabindex="0"><span class="radio"></span><div><div class="on">Large v3 turbo</div><div class="os">Most accurate. Needs 16 GB of memory.</div></div><div class="side-note num">1.6 GB<br><span class="textlink">Download</span></div></div>
+                <div class="opt" role="radio" aria-checked="false" tabindex="0"><span class="radio"></span><div><div class="on">Large v3 turbo</div><div class="os">Most accurate. Runs best with a GPU.</div></div><div class="side-note num">574 MB<br><span class="textlink">Download</span></div></div>
               </div>
             </div>
             <div class="fsec">
@@ -706,11 +705,11 @@ Model: small (downloaded) · Provider: ollama
           </div>
           <div class="fr-page" data-page="2">
             <h2>Choose a transcription model</h2>
-            <p>The model turns speech into text on this PC. We picked one for your hardware (8 cores, 32 GB memory). You can record while it downloads.</p>
+            <p>The model turns speech into text on this PC. No compatible GPU was detected, so we picked Small. You can record while it downloads.</p>
             <div class="card" role="radiogroup" aria-label="Transcription model">
               <div class="opt" role="radio" aria-checked="false" tabindex="0"><span class="radio"></span><div><div class="on">Base</div><div class="os">Fastest, least accurate</div></div><div class="side-note num">148 MB</div></div>
               <div class="opt" role="radio" aria-checked="true" tabindex="0"><span class="radio"></span><div><div class="on">Small <span class="tag accent">Recommended</span></div><div class="os">Good for English and Vietnamese</div></div><div class="side-note num">488 MB</div></div>
-              <div class="opt" role="radio" aria-checked="false" tabindex="0"><span class="radio"></span><div><div class="on">Medium</div><div class="os">More accurate, about 3× slower</div></div><div class="side-note num">1.5 GB</div></div>
+              <div class="opt" role="radio" aria-checked="false" tabindex="0"><span class="radio"></span><div><div class="on">Large v3 turbo</div><div class="os">Most accurate. Runs best with a GPU.</div></div><div class="side-note num">574 MB</div></div>
             </div>
             <div style="display:grid;gap:6px"><div style="display:flex;justify-content:space-between;font-size:12px;color:var(--ink-muted)" class="num"><span>Downloading Small from Hugging Face</span><span>186 of 488 MB · about 1 min</span></div><div class="progress"><i></i></div></div>
           </div>

@@ -14,6 +14,7 @@ pub struct ModelInfo {
     pub size: u64,
     pub sha256: &'static str,
 }
+pub const TURBO_MODEL: &str = "large-v3-turbo-q5_0";
 pub const MODELS: &[ModelInfo] = &[
     ModelInfo {
         name: "base",
@@ -28,16 +29,10 @@ pub const MODELS: &[ModelInfo] = &[
         sha256: "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b",
     },
     ModelInfo {
-        name: "medium",
-        file: "ggml-medium.bin",
-        size: 1_533_763_059,
-        sha256: "6c14d5adee5f86394037b4e4e8b59f1673b6cee10e3cf0b11bbdbee79c156208",
-    },
-    ModelInfo {
-        name: "large-v3-turbo",
-        file: "ggml-large-v3-turbo.bin",
-        size: 1_624_555_275,
-        sha256: "1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69",
+        name: TURBO_MODEL,
+        file: "ggml-large-v3-turbo-q5_0.bin",
+        size: 574_041_195,
+        sha256: "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2",
     },
 ];
 pub const DEFAULT_MODEL: &str = "small";

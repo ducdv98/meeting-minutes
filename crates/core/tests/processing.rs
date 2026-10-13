@@ -12,6 +12,12 @@ struct FakeEngine {
     lengths: Vec<usize>,
 }
 impl SpeechEngine for FakeEngine {
+    fn backend(&self) -> &str {
+        "CPU"
+    }
+    fn thread_count(&self) -> usize {
+        1
+    }
     fn detect_language(&mut self, _: &[f32]) -> Result<Language, String> {
         self.detected += 1;
         Ok(Language::Vi)
@@ -305,6 +311,12 @@ fn cancellation_and_no_audio_do_not_write_a_transcript() {
     assert!(!dir.join("transcript.r1.json").exists());
     struct CancelEngine;
     impl SpeechEngine for CancelEngine {
+        fn backend(&self) -> &str {
+            "CPU"
+        }
+        fn thread_count(&self) -> usize {
+            1
+        }
         fn detect_language(&mut self, _: &[f32]) -> Result<Language, String> {
             Ok(Language::En)
         }
@@ -348,6 +360,12 @@ struct SignalEngine {
     samples: Vec<f32>,
 }
 impl SpeechEngine for SignalEngine {
+    fn backend(&self) -> &str {
+        "CPU"
+    }
+    fn thread_count(&self) -> usize {
+        1
+    }
     fn detect_language(&mut self, _: &[f32]) -> Result<Language, String> {
         Ok(Language::En)
     }

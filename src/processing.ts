@@ -19,8 +19,7 @@ export function processingStageLabel(job: ProcessingJob): string {
 export const MODELS = [
   { name: "base", label: "Base", size_mb: 148, description: "Fastest. Fine for clear English." },
   { name: "small", label: "Small", size_mb: 488, description: "Good balance for English and Vietnamese." },
-  { name: "medium", label: "Medium", size_mb: 1534, description: "More accurate and slower." },
-  { name: "large-v3-turbo", label: "Large v3 turbo", size_mb: 1625, description: "Most accurate. Needs 16 GB of memory." },
+  { name: "large-v3-turbo-q5_0", label: "Large v3 turbo", size_mb: 574, description: "Most accurate. Runs best with a GPU." },
 ] as const;
 export function modelSizeLabel(sizeMb: number) {
   return sizeMb < 1000 ? `${sizeMb} MB` : `${(sizeMb / 1000).toFixed(1)} GB`;

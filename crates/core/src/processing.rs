@@ -1,5 +1,6 @@
 use crate::{
     audio_prep::{prepare_import, prepare_recording, PreparedRecording},
+    diagnostics::{log_event, LogEvent},
     meeting_file::{MeetingFile, RecordingEntry},
     transcript::{
         assign_ids, place_segments, render_markdown, Language, PlacedSegment, RawSegment,
@@ -16,9 +17,12 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
+    time::{Duration, Instant},
 };
 
 pub trait SpeechEngine {
+    fn backend(&self) -> &str;
+    fn thread_count(&self) -> usize;
     fn detect_language(&mut self, samples_16k: &[f32]) -> Result<Language, String>;
     fn transcribe(
         &mut self,
@@ -130,10 +134,14 @@ pub fn transcribe_meeting(
     let detected = language.is_none();
     let mut placed = Vec::<PlacedSegment>::new();
     let mut elapsed = 0u64;
+    let mut preparation_wall_time = Duration::ZERO;
+    let mut whisper_wall_time = Duration::ZERO;
+    let mut transcribed_ms = 0u64;
     let mut process = |prepared: PreparedRecording,
                        duration_ms: u64,
                        elapsed: u64|
      -> Result<(), ProcessingError> {
+        let whisper_started = Instant::now();
         if language.is_none() {
             language = Some(
                 engine
@@ -158,6 +166,8 @@ pub fn transcribe_meeting(
             &mut |p| progress((offset + p.clamp(0.0, 1.0) * weight).clamp(0.0, 1.0)),
             cancel,
         )?;
+        whisper_wall_time += whisper_started.elapsed();
+        transcribed_ms += prepared.samples_16k.len() as u64 * 1000 / 16_000;
         placed.extend(place_segments(
             &raw,
             prepared.duration_ms,
@@ -167,14 +177,18 @@ pub fn transcribe_meeting(
         Ok(())
     };
     if let Some(import) = &metadata.import {
+        let preparation_started = Instant::now();
         let prepared = prepare_import(request.meeting_dir, &import.file, cancel)?;
+        preparation_wall_time += preparation_started.elapsed();
         process(prepared, metadata.duration_ms, 0)?;
     } else {
         for recording in recordings {
             if cancel.load(Ordering::SeqCst) {
                 return Err(ProcessingError::Cancelled);
             }
+            let preparation_started = Instant::now();
             let prepared = prepare_recording(request.meeting_dir, recording, cancel)?;
+            preparation_wall_time += preparation_started.elapsed();
             process(prepared, recording.duration_ms, elapsed)?;
             elapsed += recording.duration_ms;
         }
@@ -265,6 +279,15 @@ pub fn transcribe_meeting(
         return Err(error);
     }
     progress(1.0);
+    log_event(LogEvent::transcription_completed(
+        request.model,
+        engine.backend(),
+        engine.thread_count(),
+        transcribed_ms,
+        None,
+        preparation_wall_time,
+        whisper_wall_time,
+    ));
     Ok(transcript)
 }
 

@@ -1,4 +1,4 @@
-use crate::{ai::ProviderKind, transcript::Language};
+use crate::{ai::ProviderKind, models::TURBO_MODEL, transcript::Language};
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
@@ -62,10 +62,14 @@ impl AiSettings {
 
 impl Settings {
     pub fn load(path: &Path) -> Self {
-        fs::read(path)
+        let mut settings: Self = fs::read(path)
             .ok()
             .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-            .unwrap_or_default()
+            .unwrap_or_default();
+        if matches!(settings.model.as_str(), "medium" | "large-v3-turbo") {
+            settings.model = TURBO_MODEL.into();
+        }
+        settings
     }
     pub fn save(&self, path: &Path) -> io::Result<()> {
         if let Some(parent) = path.parent() {
@@ -83,6 +87,23 @@ impl Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn legacy_model_settings_load_as_quantized_turbo() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        for legacy in ["medium", "large-v3-turbo"] {
+            fs::write(
+                &path,
+                format!(r#"{{"model":"{legacy}","auto_process":false}}"#),
+            )
+            .unwrap();
+            let settings = Settings::load(&path);
+            assert_eq!(settings.model, "large-v3-turbo-q5_0");
+            assert!(!settings.auto_process);
+        }
+    }
+
     #[test]
     fn old_settings_keep_notice_and_get_processing_defaults() {
         let settings: Settings =

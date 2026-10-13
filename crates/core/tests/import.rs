@@ -169,6 +169,12 @@ fn preparation_preserves_speech_tone_and_rejects_high_frequency_alias() {
 
 struct FakeEngine;
 impl meeting_minutes_core::processing::SpeechEngine for FakeEngine {
+    fn backend(&self) -> &str {
+        "CPU"
+    }
+    fn thread_count(&self) -> usize {
+        1
+    }
     fn detect_language(
         &mut self,
         _: &[f32],
@@ -335,11 +341,17 @@ fn preparation_resamples_low_and_odd_rates_to_16k() {
         wav(&temp.path().join(&name), rate, 1000.0, seconds);
         let prepared = prepare_import(temp.path(), &name, &cancel).unwrap();
         let expected = (16_000.0 * seconds) as i64;
-        assert!((prepared.samples_16k.len() as i64 - expected).abs() <= 1, "{rate} Hz");
+        assert!(
+            (prepared.samples_16k.len() as i64 - expected).abs() <= 1,
+            "{rate} Hz"
+        );
         let middle = &prepared.samples_16k[1000..expected as usize - 1000];
         let rms = (middle.iter().map(|x| x * x).sum::<f32>() / middle.len() as f32).sqrt();
         let target = 12000.0 / 32768.0 / 2.0f32.sqrt();
-        assert!((20.0 * (rms / target).log10()).abs() < 1.0, "{rate} Hz: {rms}");
+        assert!(
+            (20.0 * (rms / target).log10()).abs() < 1.0,
+            "{rate} Hz: {rms}"
+        );
     }
 }
 

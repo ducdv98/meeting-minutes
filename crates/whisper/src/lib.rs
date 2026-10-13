@@ -16,6 +16,7 @@ use whisper_rs::{
 
 pub struct WhisperEngine {
     context: WhisperContext,
+    threads: usize,
 }
 
 fn threads() -> usize {
@@ -25,23 +26,44 @@ fn threads() -> usize {
 }
 
 impl WhisperEngine {
+    pub fn system_info() -> &'static str {
+        whisper_rs::print_system_info()
+    }
+
+    pub fn backend_description() -> &'static str {
+        "CPU"
+    }
+
     pub fn load(model_path: &Path) -> Result<Self, String> {
         let mut params = WhisperContextParameters::default();
         params.use_gpu(false);
         WhisperContext::new_with_params(model_path, params)
-            .map(|context| Self { context })
+            .map(|context| Self {
+                context,
+                threads: threads(),
+            })
             .map_err(|e| e.to_string())
     }
 }
 
 impl SpeechEngine for WhisperEngine {
+    fn backend(&self) -> &str {
+        Self::backend_description()
+    }
+
+    fn thread_count(&self) -> usize {
+        self.threads
+    }
+
     fn detect_language(&mut self, samples_16k: &[f32]) -> Result<Language, String> {
         let mut state = self.context.create_state().map_err(|e| e.to_string())?;
         let first = &samples_16k[..samples_16k.len().min(30 * 16_000)];
         state
-            .pcm_to_mel(first, threads())
+            .pcm_to_mel(first, self.threads)
             .map_err(|e| e.to_string())?;
-        let (_, probabilities) = state.lang_detect(0, threads()).map_err(|e| e.to_string())?;
+        let (_, probabilities) = state
+            .lang_detect(0, self.threads)
+            .map_err(|e| e.to_string())?;
         let en = get_lang_id("en").ok_or("English language id unavailable")? as usize;
         let vi = get_lang_id("vi").ok_or("Vietnamese language id unavailable")? as usize;
         if probabilities.get(vi).unwrap_or(&0.0) > probabilities.get(en).unwrap_or(&0.0) {
@@ -81,7 +103,7 @@ impl SpeechEngine for WhisperEngine {
         if let Some(prompt) = initial_prompt {
             params.set_initial_prompt(prompt);
         }
-        params.set_n_threads(threads() as i32);
+        params.set_n_threads(self.threads as i32);
         let (sender, receiver) = mpsc::channel::<i32>();
         params.set_progress_callback_safe(move |percent| {
             let _ = sender.send(percent);

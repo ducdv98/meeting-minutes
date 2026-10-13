@@ -218,9 +218,9 @@ it("re-transcribes with the chosen model and edits the current Revision", async 
   fireEvent.click(screen.getByRole("button", { name: "Save" }));
   expect(await screen.findByText("Updated")).toBeTruthy();
   expect(editSegment).toHaveBeenCalledWith("old", 2, "s00001", "Updated");
-  fireEvent.change(screen.getByRole("combobox", { name: "Model" }), { target: { value: "medium" } });
+  fireEvent.change(screen.getByRole("combobox", { name: "Model" }), { target: { value: "large-v3-turbo-q5_0" } });
   fireEvent.click(screen.getByRole("button", { name: "Re-transcribe" }));
-  expect(enqueueTranscription).toHaveBeenCalledWith("old", "medium");
+  expect(enqueueTranscription).toHaveBeenCalledWith("old", "large-v3-turbo-q5_0");
 });
 
 it("closes an open Segment editor and keeps the newer Revision when one arrives", async () => {

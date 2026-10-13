@@ -1,6 +1,6 @@
 # Replace Medium with Large v3 turbo q5_0
 
-Status: ready-for-agent
+Status: ready-for-human
 Blocked by:
 Spec: ../spec.md
 
@@ -20,3 +20,13 @@ Large v3 turbo is faster than Medium (4 decoder layers against 24) and more accu
 - [ ] Settings lists Base, Small and Large v3 turbo, with correct sizes. Downloads verify SHA-256.
 - [ ] A settings file with `medium` loads as the new turbo model; a core test covers this.
 - [ ] Vietnamese and English test Meetings transcribe with the new turbo model on the laptop. The owner checks Vietnamese quality is no worse than Medium's.
+
+## Comments
+
+### 2026-10-13: implemented; laptop check pending
+
+Codex implemented this ticket and Claude reviewed it.
+- The model list is now Base, Small and `large-v3-turbo-q5_0`: 574,041,195 bytes, SHA-256 `3942…a7e2`, checked against the Hugging Face LFS pointer.
+- A `settings.json` set to `medium` or `large-v3-turbo` loads as `large-v3-turbo-q5_0`. Old model files are left on disk.
+- The first-run recommendation (turbo when a GPU is present) waits for ticket 12 and ticket 19.
+- Laptop check (the owner): transcribe one English and one Vietnamese Meeting with Large v3 turbo, and compare its Vietnamese with Medium's.

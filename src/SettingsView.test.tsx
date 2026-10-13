@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import SettingsView from "./SettingsView";
 import type { AiSettings } from "./ai";
@@ -25,15 +25,15 @@ it("saves each transcription setting as soon as it changes", async () => {
   expect(auto.getAttribute("aria-checked")).toBe("true");
   fireEvent.click(auto);
   await waitFor(() => expect(updateSettings).toHaveBeenLastCalledWith(false, "small", ["Nguyễn"], null));
-  fireEvent.click(screen.getByRole("radio", { name: "Medium" }));
-  await waitFor(() => expect(updateSettings).toHaveBeenLastCalledWith(false, "medium", ["Nguyễn"], null));
+  fireEvent.click(screen.getByRole("radio", { name: "Large v3 turbo" }));
+  await waitFor(() => expect(updateSettings).toHaveBeenLastCalledWith(false, "large-v3-turbo-q5_0", ["Nguyễn"], null));
   fireEvent.change(screen.getByRole("combobox", { name: "Default language" }), { target: { value: "vi" } });
-  await waitFor(() => expect(updateSettings).toHaveBeenLastCalledWith(false, "medium", ["Nguyễn"], "vi"));
+  await waitFor(() => expect(updateSettings).toHaveBeenLastCalledWith(false, "large-v3-turbo-q5_0", ["Nguyễn"], "vi"));
   const vocabulary = screen.getByRole("textbox", { name: "Vocabulary" });
   fireEvent.change(vocabulary, { target: { value: " Alice \n\nProject X" } });
   expect(updateSettings).toHaveBeenCalledTimes(3);
   fireEvent.blur(vocabulary);
-  await waitFor(() => expect(updateSettings).toHaveBeenLastCalledWith(false, "medium", ["Alice", "Project X"], "vi"));
+  await waitFor(() => expect(updateSettings).toHaveBeenLastCalledWith(false, "large-v3-turbo-q5_0", ["Alice", "Project X"], "vi"));
   expect((await screen.findByText("Saved")).getAttribute("role")).toBe("status");
   fireEvent.blur(vocabulary);
   expect(updateSettings).toHaveBeenCalledTimes(4);
@@ -47,7 +47,7 @@ it("runs saves one at a time so a slow earlier save cannot win", async () => {
   vi.mocked(updateSettings).mockImplementationOnce((auto_process, model, vocabulary, language) => new Promise((resolve) => { release = () => resolve({ ...base, auto_process, model, vocabulary, language }); }))
     .mockImplementation(async (auto_process, model, vocabulary, language) => ({ ...base, auto_process, model, vocabulary, language }));
   render(<SettingsView />);
-  fireEvent.click(await screen.findByRole("radio", { name: "Medium" }));
+  fireEvent.click(await screen.findByRole("radio", { name: "Large v3 turbo" }));
   fireEvent.click(screen.getByRole("radio", { name: "Base" }));
   await waitFor(() => expect(updateSettings).toHaveBeenCalledTimes(1));
   release();
@@ -66,8 +66,12 @@ it("shows which models are on this PC", async () => {
   const status = (radio: HTMLElement) => radio.getAttribute("aria-describedby")!.split(" ").map((id) => document.getElementById(id)?.textContent).join(" ");
   await waitFor(() => expect(status(small)).toContain("Downloaded"));
   expect(status(small)).toContain("488 MB");
-  expect(status(screen.getByRole("radio", { name: "Medium" }))).toContain("1.5 GB");
-  expect(status(screen.getByRole("radio", { name: "Medium" }))).toContain("Downloads when first used");
+  const turbo = screen.getByRole("radio", { name: "Large v3 turbo" });
+  expect(status(turbo)).toContain("574 MB");
+  expect(status(turbo)).toContain("Most accurate. Runs best with a GPU.");
+  expect(status(turbo)).toContain("Downloads when first used");
+  expect(within(screen.getByRole("radiogroup", { name: "Transcription model" })).getAllByRole("radio")).toHaveLength(3);
+  expect(screen.queryByRole("radio", { name: "Medium" })).toBeNull();
 });
 
 it("saves Vocabulary typed just before leaving Settings", async () => {
@@ -85,10 +89,10 @@ it("retries a failed save", async () => {
   vi.mocked(getSettings).mockResolvedValue(base);
   vi.mocked(updateSettings).mockRejectedValueOnce("disk full").mockImplementation(async (auto_process, model, vocabulary, language) => ({ ...base, auto_process, model, vocabulary, language }));
   render(<SettingsView />);
-  fireEvent.click(await screen.findByRole("radio", { name: "Medium" }));
+  fireEvent.click(await screen.findByRole("radio", { name: "Large v3 turbo" }));
   fireEvent.click(await screen.findByRole("button", { name: "Retry" }));
   await waitFor(() => expect(updateSettings).toHaveBeenCalledTimes(2));
-  expect(updateSettings).toHaveBeenLastCalledWith(true, "medium", ["Nguyễn"], null);
+  expect(updateSettings).toHaveBeenLastCalledWith(true, "large-v3-turbo-q5_0", ["Nguyễn"], null);
   expect(await screen.findByText("Saved")).toBeTruthy();
   expect(screen.queryByRole("alert")).toBeNull();
 });

@@ -1,6 +1,6 @@
 # Report transcription speed in diagnostics
 
-Status: ready-for-agent
+Status: ready-for-human
 Blocked by: 02
 Spec: ../spec.md
 
@@ -27,3 +27,17 @@ No telemetry: this stays in the local log.
 - [ ] Copy diagnostics shows the whisper.cpp system info, the backend and the last RTF.
 - [ ] Meeting content (Transcript text, titles) never appears in the log line.
 - [ ] Core unit tests cover the RTF/log formatting.
+
+## Comments
+
+### 2026-10-13: implemented; laptop check pending
+
+Codex implemented this ticket. Claude reviewed it and fixed the review findings.
+- After a Transcription, core logs `transcription_completed model=… backend=… threads=… audio_ms=… audio_after_vad_ms=none preparation_ms=… whisper_ms=… rtf=…`.
+  - The model must be in the model list, otherwise it logs as `unknown`.
+  - The backend must be `CPU`, `Vulkan` or `unknown`.
+  - `audio_ms` is the audio actually sent to Whisper.
+- `SpeechEngine` gains required `backend()` and `thread_count()` methods.
+- Copy diagnostics adds the whisper.cpp system info, the transcription backend and the last RTF.
+- Verified: core tests, clippy, and the Windows-gnu clippy check of `main.rs` against the stub whisper crate.
+- Laptop check: transcribe a Meeting, then use Copy diagnostics. The system info shows SIMD flags, and the RTF line appears.
