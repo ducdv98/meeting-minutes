@@ -1,4 +1,4 @@
-use meeting_minutes_core::processing::{transcribe_meeting, SpeechEngine, TranscribeRequest};
+use meeting_minutes_core::processing::{transcribe_meeting, transcribe_meeting_named_with_draft, SpeechEngine, TranscribeRequest};
 use meeting_minutes_core::processing::{JobStage, ProcessingError, Processor};
 use meeting_minutes_core::transcript::{Language, RawSegment, Speaker};
 use meeting_minutes_core::{capture::Source, finalize_recording, recording::ChunkWriter, Library};
@@ -382,6 +382,27 @@ fn simultaneous_sources_keep_overlapping_segments_with_distinct_speakers() {
             .collect::<Vec<_>>(),
         vec![(0, 80, Speaker::Me), (0, 80, Speaker::Remote)]
     );
+}
+
+#[test]
+fn draft_callback_reports_placed_segments_per_source_with_bounded_progress() {
+    let (_temp, dir) = saved_meeting();
+    let mut engine = AudibleEngine { calls: vec![], detected: 0, detected_peak: 0.0 };
+    let mut batches = vec![];
+    let mut progress = vec![];
+    let transcript = transcribe_meeting_named_with_draft(
+        &TranscribeRequest { meeting_dir: &dir, model: "small", vocabulary: &[], default_language: Some(Language::En) },
+        &mut engine,
+        &mut |fraction| progress.push(fraction),
+        &AtomicBool::new(false),
+        None,
+        &mut |segments| batches.push(segments.to_vec()),
+    ).unwrap();
+    assert_eq!(batches.len(), 2);
+    assert_eq!(batches[0].iter().map(|s| (s.start_ms, s.end_ms, s.speaker)).collect::<Vec<_>>(), vec![(0, 80, Speaker::Me)]);
+    assert_eq!(batches[1].iter().map(|s| (s.start_ms, s.end_ms, s.speaker)).collect::<Vec<_>>(), vec![(100, 180, Speaker::Remote)]);
+    assert_eq!(transcript.segments.len(), 2);
+    assert!(progress.iter().all(|fraction| (0.0..=1.0).contains(fraction)));
 }
 
 fn meeting_with_sources(mic: f32, system: f32) -> (TempDir, std::path::PathBuf) {

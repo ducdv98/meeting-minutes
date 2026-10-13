@@ -47,6 +47,12 @@ type LibraryState = Mutex<Result<Library, String>>;
 type RecorderState = Mutex<Recorder<WasapiOpener, QpcClock>>;
 type ProcessorState = Mutex<Processor>;
 
+#[derive(Clone, serde::Serialize)]
+struct TranscriptDraftEvent {
+    meeting_id: String,
+    segments: Vec<meeting_minutes_core::transcript::PlacedSegment>,
+}
+
 const RECORD_SHORTCUT: &str = "ctrl+alt+shift+r";
 const PAUSE_SHORTCUT: &str = "ctrl+alt+shift+p";
 const UPDATER_PUBLIC_KEY_PLACEHOLDER: &str = "REPLACE_WITH_TICKET_04_PUBLIC_KEY";
@@ -1282,7 +1288,7 @@ fn processing_worker(app: AppHandle) {
                 .map_err(processing::ProcessingError::Engine)?;
             let mut last = 0u32;
             transcription_started = true;
-            processing::transcribe_meeting_named(
+            processing::transcribe_meeting_named_with_draft(
                 &TranscribeRequest {
                     meeting_dir: &meeting_dir,
                     model: model.name,
@@ -1299,6 +1305,12 @@ fn processing_worker(app: AppHandle) {
                 },
                 &cancel,
                 settings.your_name.as_deref(),
+                &mut |segments| {
+                    let _ = app.emit("transcript-draft", TranscriptDraftEvent {
+                        meeting_id: id.clone(),
+                        segments: segments.to_vec(),
+                    });
+                },
             )?;
             Ok(())
         })();

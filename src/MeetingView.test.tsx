@@ -4,7 +4,7 @@ import MeetingView from "./MeetingView";
 import { deleteMeeting, meetingDetail, openMeetingFolder, renameMeeting, setParticipantName, participantNames, renameParticipant, removeParticipant, assignSegments, type MeetingDetail } from "./library";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { onLibraryChanged } from "./recording";
-import { processingStatus, meetingTranscript, enqueueTranscription, cancelProcessing, onProcessingStatus, setMeetingLanguage, getSettings, type ProcessingStatus } from "./processing";
+import { processingStatus, meetingTranscript, enqueueTranscription, cancelProcessing, onProcessingStatus, onTranscriptDraft, setMeetingLanguage, getSettings, type ProcessingStatus } from "./processing";
 import { editSegment } from "./transcript";
 import { aiStatus } from "./ai";
 import { meetingSummary, summaryStatus } from "./summary";
@@ -14,7 +14,7 @@ vi.mock("./ai", async (original) => ({ ...(await original<typeof import("./ai")>
 vi.mock("./summary", () => ({ meetingSummary: vi.fn(), summaryParticipantsChanged: vi.fn(() => Promise.resolve(false)), summaryStatus: vi.fn(), onSummaryStatus: vi.fn(() => Promise.resolve(() => {})) }));
 vi.mock("./ask", () => ({ meetingAsks: vi.fn(), onAskDelta: vi.fn(() => Promise.resolve(() => {})), onAsksChanged: vi.fn(() => Promise.resolve(() => {})), answerLabel: () => "" }));
 vi.mock("./library", () => ({ meetingDetail: vi.fn(), openMeetingFolder: vi.fn(), renameMeeting: vi.fn(), deleteMeeting: vi.fn(), setParticipantName: vi.fn(), participantNames: vi.fn(), renameParticipant: vi.fn(), removeParticipant: vi.fn(), assignSegments: vi.fn() }));
-vi.mock("./processing", async (importOriginal) => ({ ...(await importOriginal<typeof import("./processing")>()), processingStatus: vi.fn(), meetingTranscript: vi.fn(), enqueueTranscription: vi.fn(), cancelProcessing: vi.fn(), dismissProcessing: vi.fn(), setMeetingLanguage: vi.fn(), getSettings: vi.fn(), onProcessingStatus: vi.fn(() => Promise.resolve(() => {})) }));
+vi.mock("./processing", async (importOriginal) => ({ ...(await importOriginal<typeof import("./processing")>()), processingStatus: vi.fn(), meetingTranscript: vi.fn(), enqueueTranscription: vi.fn(), cancelProcessing: vi.fn(), dismissProcessing: vi.fn(), setMeetingLanguage: vi.fn(), getSettings: vi.fn(), onProcessingStatus: vi.fn(() => Promise.resolve(() => {})), onTranscriptDraft: vi.fn(() => Promise.resolve(() => {})) }));
 vi.mock("./recording", async (importOriginal) => ({ ...(await importOriginal<typeof import("./recording")>()), onLibraryChanged: vi.fn(() => Promise.resolve(() => {})) }));
 vi.mock("./transcript", async (importOriginal) => ({ ...(await importOriginal<typeof import("./transcript")>()), editSegment: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ convertFileSrc: vi.fn((path: string) => `asset:${path}`) }));
@@ -379,6 +379,53 @@ function deferred<T>() {
 }
 
 const transcriptWith = (revision: number, text: string) => ({ schema_version: 1, revision, created_at: "2026-10-12T10:00:00Z", model: "small", language: "en" as const, language_detected: false, duration_ms: 125000, segments: [{ id: "s00001", start_ms: 1000, end_ms: 2000, text, speaker: "me" as const }] });
+
+it("shows arriving Draft Segments instead of the old Revision and restores it on cancel", async () => {
+  vi.mocked(meetingTranscript).mockResolvedValue(transcriptWith(1, "Old Revision words"));
+  vi.mocked(meetingDetail).mockResolvedValue({ ...detail, participants: { remote: "Anna" } });
+  vi.mocked(aiStatus).mockResolvedValue({ provider: "ollama", model: "llama", configured: true, has_openai_key: false, has_anthropic_key: false });
+  vi.mocked(processingStatus).mockResolvedValue({ jobs: [{ meeting_id: "old", model: "small", stage: "transcribing", progress: 0.2, error: null }] });
+  render(<MeetingView id="old" onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
+  await screen.findByText("Old Revision words");
+  await act(async () => vi.mocked(onTranscriptDraft).mock.calls[0][0]({ meeting_id: "old", segments: [{ start_ms: 1000, end_ms: 2000, text: "Draft words", speaker: "remote" }] }));
+  await act(async () => vi.mocked(onTranscriptDraft).mock.calls[0][0]({ meeting_id: "other", segments: [{ start_ms: 0, end_ms: 500, text: "Other Meeting", speaker: "me" }] }));
+  await act(async () => vi.mocked(onTranscriptDraft).mock.calls[0][0]({ meeting_id: "old", segments: [{ start_ms: 500, end_ms: 900, text: "Earlier words", speaker: "me" }] }));
+  expect(within(screen.getByRole("list", { name: "Draft Segments" })).getAllByRole("listitem").map((row) => row.textContent)).toEqual(["00:00DucEarlier words", "00:01AnnaDraft words"]);
+  expect(screen.queryByText("Other Meeting")).toBeNull();
+  expect(screen.getByText("Draft words")).toBeTruthy();
+  expect(screen.getByText("Anna")).toBeTruthy();
+  expect(screen.queryByText("Old Revision words")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
+  expect(screen.queryByRole("checkbox", { name: /Select Segment/ })).toBeNull();
+  expect(screen.getByText("Draft · Transcribing…")).toBeTruthy();
+  expect(screen.queryByRole("tab", { name: "Ask" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Generate Summary" })).toBeNull();
+  expect(screen.queryByRole("button", { name: /Citation/ })).toBeNull();
+  await act(async () => vi.mocked(onLibraryChanged).mock.calls[0][0]());
+  expect(screen.getByText("Draft words")).toBeTruthy();
+  await act(async () => vi.mocked(onProcessingStatus).mock.calls[0][0]({ jobs: [] }));
+  await act(async () => vi.mocked(onTranscriptDraft).mock.calls[0][0]({ meeting_id: "old", segments: [{ start_ms: 3000, end_ms: 4000, text: "Late Draft words", speaker: "me" }] }));
+  expect(screen.queryByText("Draft words")).toBeNull();
+  expect(screen.queryByText("Earlier words")).toBeNull();
+  expect(screen.queryByText("Late Draft words")).toBeNull();
+  expect(screen.getByText("Old Revision words")).toBeTruthy();
+});
+
+it("replaces the Draft with the published Revision and clears it on failure", async () => {
+  vi.mocked(processingStatus).mockResolvedValue({ jobs: [{ meeting_id: "old", model: "small", stage: "transcribing", progress: 0.2, error: null }] });
+  render(<MeetingView id="old" onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
+  await screen.findByRole("heading", { name: "Planning" });
+  await act(async () => vi.mocked(onTranscriptDraft).mock.calls[0][0]({ meeting_id: "old", segments: [{ start_ms: 1000, end_ms: 2000, text: "Draft words", speaker: "me" }] }));
+  expect(screen.getByText("Draft words")).toBeTruthy();
+  await act(async () => vi.mocked(onProcessingStatus).mock.calls[0][0]({ jobs: [{ meeting_id: "old", model: "small", stage: "failed", progress: 0.2, error: "Failed" }] }));
+  expect(screen.queryByText("Draft words")).toBeNull();
+  await act(async () => vi.mocked(onProcessingStatus).mock.calls[0][0]({ jobs: [{ meeting_id: "old", model: "small", stage: "transcribing", progress: 0.3, error: null }] }));
+  await act(async () => vi.mocked(onTranscriptDraft).mock.calls[0][0]({ meeting_id: "old", segments: [{ start_ms: 2000, end_ms: 3000, text: "New Draft words", speaker: "me" }] }));
+  vi.mocked(meetingTranscript).mockResolvedValue(transcriptWith(2, "Published words"));
+  await act(async () => vi.mocked(onLibraryChanged).mock.calls[0][0]());
+  expect(await screen.findByText("Published words")).toBeTruthy();
+  expect(screen.queryByText("New Draft words")).toBeNull();
+});
 
 it("never shows the previous Meeting after switching, even when its data arrives last", async () => {
   const oldDetail = deferred<MeetingDetail>();

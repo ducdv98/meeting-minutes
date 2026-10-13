@@ -65,12 +65,13 @@ pub const MIN_SEGMENT_MS: u64 = 1_000;
 pub const MIN_SEGMENT_WORDS: usize = 3;
 pub const MAX_SEGMENT_MS: u64 = 20_000;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct PlacedSegment {
     pub start_ms: u64,
     pub end_ms: u64,
     pub text: String,
     pub speaker: Speaker,
+    #[serde(skip)]
     pub words: Vec<RawWord>,
 }
 
