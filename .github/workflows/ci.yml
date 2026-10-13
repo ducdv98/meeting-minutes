@@ -30,7 +30,7 @@ jobs:
       - run: pnpm test
 
   windows:
-    runs-on: windows-latest
+    runs-on: windows-2022
     env:
       GGML_NATIVE: "OFF"
       GGML_AVX: "ON"
@@ -42,6 +42,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Install Vulkan SDK
+        uses: jakoch/install-vulkan-sdk-action@v1.7.0
+        with:
+          vulkan_version: 1.4.309.0
+          install_runtime: true
+      - name: Copy Vulkan loader for installer
+        shell: pwsh
+        run: ./scripts/copy-vulkan-loader.ps1
       - uses: pnpm/action-setup@v4
         with:
           version: 12.3.4
@@ -58,7 +66,7 @@ jobs:
       - run: cargo test --workspace
       - name: Verify pinned whisper.cpp CPU flags
         run: cargo test -p meeting_minutes_whisper pinned_cpu_instruction_set -- --ignored --nocapture
-      - run: pnpm tauri build --bundles nsis
+      - run: pnpm tauri build --bundles nsis --config src-tauri/tauri.vulkan.conf.json
       - run: cargo build --release -p capture-spike
       - uses: actions/upload-artifact@v4
         with:

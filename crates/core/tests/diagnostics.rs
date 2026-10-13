@@ -18,8 +18,10 @@ fn transcription_event_formats_timings_and_rtf_without_meeting_content() {
 }
 
 #[test]
-fn vad_fallback_logs_a_content_free_event() {
+fn fallback_events_are_content_free() {
     assert_eq!(LogEvent::VadUnavailable.to_string(), "vad_unavailable");
+    assert_eq!(LogEvent::GpuUnavailable.to_string(), "gpu_unavailable");
+    assert_eq!(LogEvent::GpuLoadFailed.to_string(), "gpu_load_failed");
 }
 
 #[test]
@@ -217,6 +219,8 @@ fn every_log_event_is_accepted_in_the_plugin_format() {
         LogEvent::ProcessingCompleted,
         LogEvent::ProcessingFailed,
         LogEvent::VadUnavailable,
+        LogEvent::GpuUnavailable,
+        LogEvent::GpuLoadFailed,
         LogEvent::transcription_completed(
             "small",
             "Vulkan",

@@ -36,7 +36,7 @@ Domain vocabulary is in `CONTEXT.md` and decisions are in `docs/adr/`. The Rust 
 
 ### Prerequisites
 
-- Windows 11: Rust stable with the MSVC toolchain and Microsoft C++ Build Tools, Node.js LTS, pnpm 12, and Microsoft Edge WebView2 Runtime. WebView2 is usually already installed on Windows 11.
+- Windows 11: Rust stable with the MSVC toolchain and Microsoft C++ Build Tools, Node.js LTS, pnpm 12, Microsoft Edge WebView2 Runtime, and the Vulkan SDK (1.4.309.0, with `VULKAN_SDK` set) for GPU transcription. WebView2 is usually already installed on Windows 11.
 - Linux: Rust, Node.js and pnpm for the core and UI tests. Running or building the Tauri app on Linux also needs the GTK/WebKit development libraries; the test commands below don't.
 
 ### Test
@@ -58,10 +58,11 @@ On Windows, also run `cargo test --workspace` after `pnpm build` (the Tauri crat
 ```sh
 pnpm install --frozen-lockfile
 pnpm tauri dev
-pnpm tauri build --bundles nsis
+powershell -File scripts/copy-vulkan-loader.ps1
+pnpm tauri build --bundles nsis --config src-tauri/tauri.vulkan.conf.json
 ```
 
-The installer is written to `target/release/bundle/nsis/`.
+The installer is written to `target/release/bundle/nsis/`. The extra config bundles the Vulkan loader (`vulkan-1.dll`) next to the exe, so the app also starts on PCs without a GPU driver and transcribes on the CPU.
 
 ### Release
 

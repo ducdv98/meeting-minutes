@@ -7,3 +7,4 @@ coverage/
 .env.local
 spikes/results/
 src-tauri/gen/
+src-tauri/vulkan-1.dll

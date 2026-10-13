@@ -41,6 +41,8 @@ pub enum LogEvent {
     ProcessingCompleted,
     ProcessingFailed,
     VadUnavailable,
+    GpuUnavailable,
+    GpuLoadFailed,
     TranscriptionCompleted {
         model: String,
         backend: String,
@@ -149,6 +151,8 @@ impl fmt::Display for LogEvent {
             Self::ProcessingCompleted => "processing_completed",
             Self::ProcessingFailed => "processing_failed",
             Self::VadUnavailable => "vad_unavailable",
+            Self::GpuUnavailable => "gpu_unavailable",
+            Self::GpuLoadFailed => "gpu_load_failed",
             Self::TranscriptionCompleted {
                 model,
                 backend,
@@ -263,6 +267,8 @@ fn safe_log_line(line: &str) -> bool {
             | "processing_completed"
             | "processing_failed"
             | "vad_unavailable"
+            | "gpu_unavailable"
+            | "gpu_load_failed"
             | "summary_started"
             | "summary_completed"
             | "summary_failed"

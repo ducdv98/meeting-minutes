@@ -7,7 +7,7 @@ on:
 
 jobs:
   draft:
-    runs-on: windows-latest
+    runs-on: windows-2022
     env:
       RELEASE_TAG: ${{ github.ref_name }}
       GGML_NATIVE: "OFF"
@@ -24,6 +24,14 @@ jobs:
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
+      - name: Install Vulkan SDK
+        uses: jakoch/install-vulkan-sdk-action@v1.7.0
+        with:
+          vulkan_version: 1.4.309.0
+          install_runtime: true
+      - name: Copy Vulkan loader for installer
+        shell: pwsh
+        run: ./scripts/copy-vulkan-loader.ps1
       - uses: pnpm/action-setup@v4
         with:
           version: 12.3.4
@@ -67,4 +75,4 @@ jobs:
           releaseName: Meeting Minutes ${{ github.ref_name }}
           releaseDraft: true
           includeUpdaterJson: true
-          args: --bundles nsis --config src-tauri/tauri.release.conf.json
+          args: --bundles nsis --config src-tauri/tauri.release.conf.json --config src-tauri/tauri.vulkan.conf.json

@@ -104,7 +104,7 @@ fn get_diagnostics(app: AppHandle) -> Result<String, String> {
             .map(|model| model.name.to_owned()),
         provider: settings.ai.provider,
         whisper_system_info: Some(WhisperEngine::system_info().to_owned()),
-        transcription_backend: Some(WhisperEngine::backend_description().to_owned()),
+        transcription_backend: Some(WhisperEngine::backend_description()),
         recent_log_lines,
     }))
 }

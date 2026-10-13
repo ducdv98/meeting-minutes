@@ -7,3 +7,8 @@ edition = "2021"
 meeting_minutes_core = { path = "../core" }
 sysinfo = "=0.37.2"
 whisper-rs = "=0.16.0"
+
+[target.'cfg(windows)'.dependencies]
+ash = { version = "=0.38.0", default-features = false, features = ["loaded", "std"] }
+whisper-rs = { version = "=0.16.0", features = ["vulkan"] }
+whisper-rs-sys = "=0.15.0"

@@ -18,6 +18,7 @@ use whisper_rs::{
 
 pub struct WhisperEngine {
     context: WhisperContext,
+    backend: &'static str,
     threads: usize,
     vad: Option<WhisperVadContext>,
     audio_after_vad_ms: Option<u64>,
@@ -27,6 +28,118 @@ const SAMPLE_RATE: usize = 16_000;
 const OVERLAP_SAMPLES: usize = SAMPLE_RATE / 10;
 const GAP_SAMPLES: usize = SAMPLE_RATE / 10;
 const LANGUAGE_SCAN_SAMPLES: usize = 5 * 60 * SAMPLE_RATE;
+
+#[cfg(any(windows, test))]
+#[derive(Debug, PartialEq, Eq)]
+enum BackendPlan {
+    Cpu,
+    Vulkan(i32),
+}
+
+// ggml lists discrete devices before integrated devices. Among available devices,
+// use the one with the most memory; equal sizes retain ggml's ordering.
+#[cfg(any(windows, test))]
+fn plan_backend(devices: &[(i32, usize)]) -> BackendPlan {
+    let mut best = None;
+    for &(id, memory) in devices {
+        if best.is_none_or(|(_, best_memory)| memory > best_memory) {
+            best = Some((id, memory));
+        }
+    }
+    best.map_or(BackendPlan::Cpu, |(id, _)| BackendPlan::Vulkan(id))
+}
+
+#[cfg(windows)]
+fn available_devices() -> Vec<whisper_rs::vulkan::VkDeviceInfo> {
+    // ggml's Vulkan initializer throws a C++ exception when vkCreateInstance fails.
+    // Check the loader and ICD through Vulkan's fallible API before crossing that FFI.
+    if vulkan_instance_available() {
+        whisper_rs::vulkan::list_devices()
+    } else {
+        Vec::new()
+    }
+}
+
+#[cfg(windows)]
+fn vulkan_instance_available() -> bool {
+    use ash::{vk, Entry};
+
+    let Ok(entry) = (unsafe { Entry::load() }) else {
+        return false;
+    };
+    let Ok(Some(version)) = (unsafe { entry.try_enumerate_instance_version() }) else {
+        return false;
+    };
+    if version < vk::API_VERSION_1_2 {
+        return false;
+    }
+    let application = vk::ApplicationInfo {
+        api_version: vk::API_VERSION_1_2,
+        ..Default::default()
+    };
+    let create = vk::InstanceCreateInfo {
+        p_application_info: &application,
+        ..Default::default()
+    };
+    match unsafe { entry.create_instance(&create, None) } {
+        Ok(instance) => {
+            unsafe { instance.destroy_instance(None) };
+            true
+        }
+        Err(_) => false,
+    }
+}
+
+#[cfg(windows)]
+fn selected_device(devices: &[whisper_rs::vulkan::VkDeviceInfo]) -> BackendPlan {
+    let memory = devices
+        .iter()
+        .map(|device| (device.id, device.vram.total))
+        .collect::<Vec<_>>();
+    plan_backend(&memory)
+}
+
+// whisper.cpp#3750: in static MSVC builds the Vulkan backend can fail to register during
+// static initialization, so ggml silently loads on CPU. After list_devices() has set up
+// the Vulkan instance, registering it again succeeds.
+#[cfg(windows)]
+fn ensure_vulkan_registered() -> bool {
+    unsafe {
+        if !whisper_rs_sys::ggml_backend_reg_by_name(c"Vulkan".as_ptr()).is_null() {
+            return true;
+        }
+        let registration = whisper_rs_sys::ggml_backend_vk_reg();
+        if registration.is_null() {
+            return false;
+        }
+        whisper_rs_sys::ggml_backend_register(registration);
+    }
+    true
+}
+
+fn load_context(model_path: &Path) -> Result<(WhisperContext, &'static str), String> {
+    #[cfg(windows)]
+    {
+        let devices = available_devices();
+        match selected_device(&devices) {
+            BackendPlan::Vulkan(id) if ensure_vulkan_registered() => {
+                let mut params = WhisperContextParameters::default();
+                params.use_gpu(true).gpu_device(id).flash_attn(true);
+                if let Ok(context) = WhisperContext::new_with_params(model_path, params) {
+                    return Ok((context, "Vulkan"));
+                }
+                log_event(LogEvent::GpuLoadFailed);
+            }
+            _ => log_event(LogEvent::GpuUnavailable),
+        }
+    }
+
+    let mut params = WhisperContextParameters::default();
+    params.use_gpu(false);
+    WhisperContext::new_with_params(model_path, params)
+        .map(|context| (context, "CPU"))
+        .map_err(|error| error.to_string())
+}
 
 struct TimeMapping {
     processed_start: usize,
@@ -155,8 +268,17 @@ impl WhisperEngine {
         whisper_rs::print_system_info()
     }
 
-    pub fn backend_description() -> &'static str {
-        "CPU"
+    pub fn backend_description() -> String {
+        #[cfg(windows)]
+        {
+            let devices = available_devices();
+            if let BackendPlan::Vulkan(id) = selected_device(&devices) {
+                if let Some(device) = devices.iter().find(|device| device.id == id) {
+                    return format!("Vulkan ({})", device.name);
+                }
+            }
+        }
+        "CPU".to_owned()
     }
 
     pub fn load(model_path: &Path) -> Result<Self, String> {
@@ -164,8 +286,6 @@ impl WhisperEngine {
     }
 
     pub fn load_with_vad(model_path: &Path, vad_path: Option<&Path>) -> Result<Self, String> {
-        let mut params = WhisperContextParameters::default();
-        params.use_gpu(false);
         let vad = vad_path.and_then(|path| {
             let context = path.to_str().and_then(|text| {
                 WhisperVadContext::new(text, WhisperVadContextParams::default()).ok()
@@ -175,20 +295,19 @@ impl WhisperEngine {
             }
             context
         });
-        WhisperContext::new_with_params(model_path, params)
-            .map(|context| Self {
-                context,
-                threads: threads(),
-                vad,
-                audio_after_vad_ms: None,
-            })
-            .map_err(|e| e.to_string())
+        load_context(model_path).map(|(context, backend)| Self {
+            context,
+            backend,
+            threads: threads(),
+            vad,
+            audio_after_vad_ms: None,
+        })
     }
 }
 
 impl SpeechEngine for WhisperEngine {
     fn backend(&self) -> &str {
-        Self::backend_description()
+        self.backend
     }
 
     fn thread_count(&self) -> usize {
@@ -324,6 +443,20 @@ impl SpeechEngine for WhisperEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn chooses_largest_gpu_and_keeps_ggml_order_for_ties() {
+        assert_eq!(
+            plan_backend(&[(0, 4), (1, 8), (2, 2)]),
+            BackendPlan::Vulkan(1)
+        );
+        assert_eq!(plan_backend(&[(0, 8), (1, 8)]), BackendPlan::Vulkan(0));
+    }
+
+    #[test]
+    fn uses_cpu_without_a_device() {
+        assert_eq!(plan_backend(&[]), BackendPlan::Cpu);
+    }
 
     #[test]
     fn speech_after_long_silence_maps_back_to_original_timeline() {
