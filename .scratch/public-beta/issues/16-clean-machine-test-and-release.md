@@ -12,3 +12,4 @@ On a fresh Windows 11 x64 PC or VM with no dev tools, Ollama or models: download
 
 - [ ] Full path passes on the clean machine.
 - [ ] `v0.1.0` published; website shows it; roadmap updated.
+- [ ] Every website claim checked against the release build (Copy diagnostics, setup guide, update check, privacy table).

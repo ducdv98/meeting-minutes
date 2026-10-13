@@ -1,0 +1,88 @@
+name: Website
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'website/**'
+      - 'src/assets/**'
+      - '.github/workflows/website.yml'
+  pull_request:
+    paths:
+      - 'website/**'
+      - 'src/assets/**'
+      - '.github/workflows/website.yml'
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: pnpm/action-setup@7088e561eb65bb68695d245aa206f005ef30921d # v4.1.0
+        with:
+          version: 12.3.4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: lts/*
+          cache: pnpm
+      - name: Install existing app font packages
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Test website release rendering
+        run: node --test website/test/
+      - name: Build draft website offline
+        run: node website/build.mjs --draft --offline
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    concurrency:
+      group: github-pages
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Check publish prerequisites
+        id: readiness
+        run: node website/build.mjs --check-ready | tee website-readiness.txt
+      - name: Explain deferred deployment
+        if: steps.readiness.outputs.ready != 'true'
+        run: cat website-readiness.txt >> "$GITHUB_STEP_SUMMARY"
+      - if: steps.readiness.outputs.ready == 'true'
+        uses: pnpm/action-setup@7088e561eb65bb68695d245aa206f005ef30921d # v4.1.0
+        with:
+          version: 12.3.4
+      - if: steps.readiness.outputs.ready == 'true'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: lts/*
+          cache: pnpm
+      - name: Install existing app font packages
+        if: steps.readiness.outputs.ready == 'true'
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Build publishable website
+        if: steps.readiness.outputs.ready == 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node website/build.mjs
+      - if: steps.readiness.outputs.ready == 'true'
+        uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5.0.0
+      - if: steps.readiness.outputs.ready == 'true'
+        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
+        with:
+          path: website/dist
+      - id: deployment
+        if: steps.readiness.outputs.ready == 'true'
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5
