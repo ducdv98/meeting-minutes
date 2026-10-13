@@ -82,7 +82,7 @@ Lucide icons at 16px (app) or 20px (website), 1.5px stroke, `currentColor`. Icon
 ## Brand marks
 
 - Light theme: `wordmark-dark` / `mark-dark`. Dark theme: `wordmark-white` / `mark-white`. Derived for the build by `scripts/build-brand-assets.py` (ADR-0004).
-- `mark-white-faint` is for empty states and watermarks.
+- Empty states and watermarks use the theme's mark (`mark-dark` or `mark-white`) at about 22% opacity, as in the approved mockup.
 - Clear space around the mark is at least half its height. Never recolour, stretch or put the mark on the accent.
 
 ## Recurring elements
@@ -90,7 +90,7 @@ Lucide icons at 16px (app) or 20px (website), 1.5px stroke, `currentColor`. Icon
 - **Citation:** an inline chip with the Segment's start time, `--accent` text on `--accent-soft`, `--radius-sm`, tabular numbers (`12:34`). Hover shows the Segment text; click plays the span. It looks the same in Summary, Action items and Answers.
 - **Recording indicator:** a red dot plus elapsed time, always visible while a Recording runs, in the window and the tray. The recording bar uses `--record-soft`.
 - **Beta badge:** `--text-xs`, `--ink-muted` text, `--line-strong` 1px border, pill radius. Next to the wordmark in About and on the website header.
-- **States:** loading uses `--page-shadow` skeletons (no spinners longer than 1s without text); empty states use the faint mark, one sentence and one action; errors say what happened and what to do, with Retry where possible.
+- **States:** loading uses `--page-shadow` skeletons (no spinners longer than 1s without text); empty states use the theme's mark at low opacity, one sentence and one action; errors say what happened and what to do, with Retry where possible.
 
 ## Voice
 

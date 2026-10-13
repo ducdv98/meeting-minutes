@@ -1,0 +1,84 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: light;
+  --canvas: #FAF9F7; --panel: #F3F2EF; --raised: #FFFFFF; --hover: #ECEBE7;
+  --line: #E4E3DF; --line-strong: #CFCECA;
+  --ink: #2A2A2B; --ink-muted: #6B6B6F; --ink-faint: #A3A3A7; --page-shadow: #E2E3E6;
+  --accent: #2F5AD6; --accent-soft: #EEF2FC; --accent-ink: #FFFFFF;
+  --record: #D3363A; --record-soft: #FBECEC; --ok: #1A7F45; --warn: #A15C00;
+  --app-font-display: "Be Vietnam Pro", "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+  --app-font-text: "Inter", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --app-radius-sm: 6px; --app-radius-md: 8px; --app-radius-lg: 12px;
+  --app-shadow-pop: 0 4px 16px rgb(0 0 0 / 0.08);
+  --app-shadow-dialog: 0 12px 40px rgb(0 0 0 / 0.14);
+  --ease: cubic-bezier(.2, .8, .2, 1);
+  --duration-fast: 120ms; --duration-panel: 180ms; --duration-dialog: 240ms;
+  --duration-reveal: 400ms; --duration-pulse: 2s;
+  --border-width: 1px; --focus-width: 2px; --focus-offset: 2px;
+  --icon-size: 16px; --icon-stroke: 1.5px;
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px;
+  --space-5: 20px; --space-6: 24px; --space-8: 32px; --space-10: 40px;
+  --space-12: 48px; --space-16: 64px; --space-24: 96px; --space-32: 128px;
+  --app-text-xs: 12px; --text-xs-line-height: 16px; --text-xs-weight: 500; --text-xs-tracking: 0;
+  --app-text-sm: 13px; --text-sm-line-height: 20px; --text-sm-weight: 400; --text-sm-tracking: 0;
+  --app-text-base: 14px; --text-base-line-height: 22px; --text-base-weight: 400; --text-base-tracking: 0;
+  --app-text-read: 15px; --text-read-line-height: 26px; --text-read-weight: 400; --text-read-tracking: 0;
+  --app-text-lg: 17px; --text-lg-line-height: 26px; --text-lg-weight: 400; --text-lg-tracking: -0.005em;
+  --heading-sm: 16px; --heading-sm-line-height: 24px; --heading-sm-weight: 600; --heading-sm-tracking: -0.01em;
+  --heading-md: 20px; --heading-md-line-height: 28px; --heading-md-weight: 600; --heading-md-tracking: -0.015em;
+  --heading-lg: 28px; --heading-lg-line-height: 36px; --heading-lg-weight: 600; --heading-lg-tracking: -0.02em;
+  --display: clamp(40px, 5.5vw, 64px); --display-line-height: 1.05; --display-weight: 700; --display-tracking: -0.03em;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --canvas: #1A1A1B; --panel: #202022; --raised: #26262A; --hover: #2C2C30;
+    --line: #2E2E32; --line-strong: #3E3E43;
+    --ink: #EDEDEE; --ink-muted: #9E9EA3; --ink-faint: #6A6A70; --page-shadow: #2A2B2F;
+    --accent: #7C9DF2; --accent-soft: #1E2640; --accent-ink: #111318;
+    --record: #F26B6B; --record-soft: #3A1F21; --ok: #4ABF7A; --warn: #E0A43C;
+  }
+}
+
+@theme inline {
+  --color-canvas: var(--canvas); --color-panel: var(--panel); --color-raised: var(--raised);
+  --color-hover: var(--hover); --color-line: var(--line); --color-line-strong: var(--line-strong);
+  --color-ink: var(--ink); --color-ink-muted: var(--ink-muted); --color-ink-faint: var(--ink-faint);
+  --color-page-shadow: var(--page-shadow); --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft); --color-accent-ink: var(--accent-ink);
+  --color-record: var(--record); --color-record-soft: var(--record-soft);
+  --color-ok: var(--ok); --color-warn: var(--warn);
+  --font-display: var(--app-font-display); --font-text: var(--app-font-text);
+  --radius-sm: var(--app-radius-sm); --radius-md: var(--app-radius-md); --radius-lg: var(--app-radius-lg);
+  --shadow-pop: var(--app-shadow-pop); --shadow-dialog: var(--app-shadow-dialog);
+  --ease-functional: var(--ease);
+  --transition-duration-fast: var(--duration-fast);
+  --transition-duration-panel: var(--duration-panel);
+  --transition-duration-dialog: var(--duration-dialog);
+  --transition-duration-reveal: var(--duration-reveal);
+  --transition-duration-pulse: var(--duration-pulse);
+  --default-transition-duration: var(--duration-fast);
+  --spacing: 4px;
+  --text-xs: var(--app-text-xs); --text-xs--line-height: var(--text-xs-line-height); --text-xs--font-weight: var(--text-xs-weight); --text-xs--letter-spacing: var(--text-xs-tracking);
+  --text-sm: var(--app-text-sm); --text-sm--line-height: var(--text-sm-line-height); --text-sm--font-weight: var(--text-sm-weight); --text-sm--letter-spacing: var(--text-sm-tracking);
+  --text-base: var(--app-text-base); --text-base--line-height: var(--text-base-line-height); --text-base--font-weight: var(--text-base-weight); --text-base--letter-spacing: var(--text-base-tracking);
+  --text-read: var(--app-text-read); --text-read--line-height: var(--text-read-line-height); --text-read--font-weight: var(--text-read-weight); --text-read--letter-spacing: var(--text-read-tracking);
+  --text-lg: var(--app-text-lg); --text-lg--line-height: var(--text-lg-line-height); --text-lg--font-weight: var(--text-lg-weight); --text-lg--letter-spacing: var(--text-lg-tracking);
+  --text-heading-sm: var(--heading-sm); --text-heading-sm--line-height: var(--heading-sm-line-height); --text-heading-sm--font-weight: var(--heading-sm-weight); --text-heading-sm--letter-spacing: var(--heading-sm-tracking);
+  --text-heading-md: var(--heading-md); --text-heading-md--line-height: var(--heading-md-line-height); --text-heading-md--font-weight: var(--heading-md-weight); --text-heading-md--letter-spacing: var(--heading-md-tracking);
+  --text-heading-lg: var(--heading-lg); --text-heading-lg--line-height: var(--heading-lg-line-height); --text-heading-lg--font-weight: var(--heading-lg-weight); --text-heading-lg--letter-spacing: var(--heading-lg-tracking);
+  --text-display: var(--display); --text-display--line-height: var(--display-line-height); --text-display--font-weight: var(--display-weight); --text-display--letter-spacing: var(--display-tracking);
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--canvas); color: var(--ink); font: 400 14px/22px var(--app-font-text); -webkit-font-smoothing: antialiased; }
+button, input, textarea, select { font: inherit; color: inherit; }
+:focus-visible { outline: var(--focus-width) solid var(--accent); outline-offset: var(--focus-offset); }
+button:not(:disabled) { cursor: pointer; }
+button:disabled { cursor: not-allowed; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; transition-duration: 0.01ms !important; }
+}

@@ -27,6 +27,7 @@ use meeting_minutes_core::{
     settings::Settings,
     summary::{self, Summary, SummaryOptions},
     transcript::{Language, Transcript},
+    window_fit::{fit_window, Rect},
     Library, LibraryError, MeetingDetail, MeetingSummary, ScanReport, SearchHit,
 };
 use meeting_minutes_whisper::WhisperEngine;
@@ -1932,8 +1933,65 @@ async fn check_for_update(app: AppHandle) {
     app.restart();
 }
 
+fn keep_window_on_screen(window: &tauri::WebviewWindow) -> tauri::Result<()> {
+    if window.is_maximized()? {
+        return Ok(());
+    }
+    let monitors = window.available_monitors()?;
+    let primary = window.primary_monitor()?;
+    let primary_index = primary
+        .as_ref()
+        .and_then(|primary| {
+            monitors
+                .iter()
+                .position(|monitor| monitor.position() == primary.position())
+        })
+        .unwrap_or(0);
+    let work_areas: Vec<Rect> = monitors
+        .iter()
+        .map(|monitor| {
+            let area = monitor.work_area();
+            Rect {
+                x: area.position.x,
+                y: area.position.y,
+                width: area.size.width,
+                height: area.size.height,
+            }
+        })
+        .collect();
+    let position = window.outer_position()?;
+    let size = window.outer_size()?;
+    let restored = Rect {
+        x: position.x,
+        y: position.y,
+        width: size.width,
+        height: size.height,
+    };
+    if let Some(fitted) = fit_window(restored, &work_areas, primary_index) {
+        if fitted.width != size.width || fitted.height != size.height {
+            // Smaller work areas must be allowed to override the normal minimum size.
+            window.set_min_size(Some(tauri::PhysicalSize::new(
+                960.min(fitted.width),
+                640.min(fitted.height),
+            )))?;
+            window.set_size(tauri::PhysicalSize::new(fitted.width, fitted.height))?;
+        }
+        window.set_position(tauri::PhysicalPosition::new(fitted.x, fitted.y))?;
+    }
+    Ok(())
+}
+
 fn main() {
     tauri::Builder::default()
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(
+                    tauri_plugin_window_state::StateFlags::SIZE
+                        | tauri_plugin_window_state::StateFlags::POSITION
+                        | tauri_plugin_window_state::StateFlags::MAXIMIZED,
+                )
+                .build(),
+        )
         .plugin(
             tauri_plugin_log::Builder::new()
                 .clear_targets()
@@ -1966,6 +2024,10 @@ fn main() {
                 .build(),
         )
         .setup(|app| {
+            // The window-state plugin restores before the app setup hook runs.
+            if let Some(window) = app.get_webview_window("main") {
+                keep_window_on_screen(&window)?;
+            }
             log_event(LogEvent::Startup);
             let library = (|| -> Result<Library, String> {
                 let root = app

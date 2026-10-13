@@ -6,11 +6,12 @@ All app branding uses the image pack in `assets/brand/` (mark, wordmark and app 
 | --- | --- |
 | `src-tauri/app-icon.png` | Icon source for `pnpm tauri icon` |
 | `src-tauri/icons/` | App, installer, taskbar and tray icon |
-| `src/assets/wordmark-dark.png` | Library screen header |
+| `src/assets/wordmark-dark.png`, `src/assets/wordmark-white.png` | Theme-aware wordmark in the app header and About |
+| `src/assets/mark-dark.png`, `src/assets/mark-white.png` | Theme-aware mark in headers and empty states |
 
 - **App, installer, taskbar and tray icon**: the light plate from `assets/brand/app-icon.png`. That file is an opaque square with a white background and a drop shadow, which would show as a white box on a dark Windows taskbar. The script cuts the plate out onto a transparent 1024px canvas. Of the files `pnpm tauri icon` generates, only the five listed in `tauri.conf.json` are kept (Windows only; no mobile or Store sizes). The tray uses the same icon as the window, because the light plate shows up on both light and dark taskbars.
-- **In-app header**: `wordmark-dark.png`, cropped to the artwork and sized for a 32px-tall header at 3x, because the UI is light-only for now. The full-size original would add about 265 KB to the UI bundle.
-- **Reserved for later**: the `-white` and `-on-black`/`-on-charcoal` variants, for a dark theme or a dark tray icon; `mark-white-faint.png`, for empty states and watermarks.
+- **In-app branding**: dark and white wordmarks are cropped to the artwork and sized for a 32px-tall header at 3x. Dark and white marks are sized for a 72px empty state at 3x. CSS selects the matching variant with `prefers-color-scheme`.
+- **Reserved for later**: the `-on-black`/`-on-charcoal` variants for a dark tray icon; `mark-white-faint.png` for watermarks.
 
 ## Considered Options
 

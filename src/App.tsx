@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { dismissImportErrors, importStatus, onImportHover, onImportStatus, pickAudioFiles, type ImportStatus } from "./importing";
-import wordmark from "./assets/wordmark-dark.png";
+import { Wordmark } from "./components/Brand";
 import { deleteMeeting, rescanLibrary, type MalformedFolder, type MeetingSummary, type SearchHit } from "./library";
 import MeetingView from "./MeetingView";
 import LibrarySearch from "./LibrarySearch";
@@ -107,7 +107,7 @@ export default function App() {
   return (
     <main>
       <header>
-        <img className="wordmark" src={wordmark} alt="Meeting Minutes" />
+        <Wordmark className="wordmark" />
         <button type="button" onClick={() => { setSelectedId(null); setShowSettings(true); }}>Settings</button>
       </header>
       <RecordingBar />

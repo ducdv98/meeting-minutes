@@ -4,8 +4,9 @@
   rounded off-white plate on a white background with a drop shadow). Windows
   icons need a transparent outside, so the plate is cut out with a
   rounded-square mask and the shadow is dropped.
-- src/assets/wordmark-dark.png: the wordmark cropped to its visible pixels and
-  sized for the UI header.
+- src/assets/wordmark-*.png: wordmarks cropped to visible pixels and sized for
+  the UI header.
+- src/assets/mark-*.png: small marks cropped to visible pixels for the UI.
 
 See docs/adr/0004-branding-from-the-image-pack.md.
 
@@ -30,6 +31,7 @@ SUPERSAMPLE = 4
 
 # The header shows the wordmark 32px tall; 3x covers high-DPI displays.
 WORDMARK_HEIGHT = 96
+MARK_HEIGHT = 216  # 72px empty-state mark at 3x
 
 
 def build_app_icon() -> Path:
@@ -54,20 +56,26 @@ def build_app_icon() -> Path:
     return output
 
 
-def build_wordmark() -> Path:
-    wordmark = Image.open(BRAND / "wordmark-dark.png").convert("RGBA")
+def build_brand_image(name: str, height: int) -> Path:
+    wordmark = Image.open(BRAND / f"{name}.png").convert("RGBA")
     # Ignore near-transparent noise around the artwork when finding its bounds.
     visible = wordmark.getchannel("A").point(lambda a: 255 if a > 8 else 0)
     wordmark = wordmark.crop(visible.getbbox())
-    width = round(wordmark.width * WORDMARK_HEIGHT / wordmark.height)
-    wordmark = wordmark.resize((width, WORDMARK_HEIGHT), Image.LANCZOS)
-    output = ROOT / "src/assets/wordmark-dark.png"
+    width = round(wordmark.width * height / wordmark.height)
+    wordmark = wordmark.resize((width, height), Image.LANCZOS)
+    output = ROOT / "src/assets" / f"{name}.png"
     wordmark.save(output, optimize=True)
     return output
 
 
 def main() -> None:
-    for output in (build_app_icon(), build_wordmark()):
+    for output in (
+        build_app_icon(),
+        build_brand_image("wordmark-dark", WORDMARK_HEIGHT),
+        build_brand_image("wordmark-white", WORDMARK_HEIGHT),
+        build_brand_image("mark-dark", MARK_HEIGHT),
+        build_brand_image("mark-white", MARK_HEIGHT),
+    ):
         print(f"wrote {output.relative_to(ROOT)}")
 
 

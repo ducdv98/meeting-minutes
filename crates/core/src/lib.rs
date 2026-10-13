@@ -23,3 +23,4 @@ pub mod settings;
 pub mod summary;
 pub mod timeline;
 pub mod transcript;
+pub mod window_fit;

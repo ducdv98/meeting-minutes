@@ -1,15 +1,22 @@
-:root {
-  font-family: system-ui, sans-serif;
-  color: #17202a;
-  background: #f7f8fa;
-}
-
-body { margin: 0; }
-
 main {
   max-width: 48rem;
   margin: 3rem auto;
   padding: 0 1.5rem;
+}
+
+/* Existing screens keep native control affordances until their redesign tickets. */
+#root button:not([class]):not([data-kind]) {
+  border: 1px solid var(--line-strong);
+  border-radius: var(--app-radius-sm);
+  background: var(--raised);
+  padding: 4px 10px;
+}
+#root button:not([class]):not([data-kind]):hover:not(:disabled) { background: var(--hover); }
+#root input:not([class]), #root textarea:not([class]), #root select:not([class]) {
+  border: 1px solid var(--line-strong);
+  border-radius: var(--app-radius-sm);
+  background: var(--raised);
+  padding: 4px 8px;
 }
 
 .wordmark {
@@ -33,14 +40,14 @@ main {
   width: 0.75rem;
   height: 0.75rem;
   border-radius: 50%;
-  background: #d62828;
+  background: var(--record);
 }
 
-.recording-indicator.paused .dot { background: #8a94a6; }
+.recording-indicator.paused .dot { background: var(--ink-faint); }
 
 .device-switch {
   padding: 0.75rem;
-  background: #e9f2fb;
+  background: var(--accent-soft);
   border-radius: 0.5rem;
 }
 
@@ -52,9 +59,9 @@ main {
   transform: translateX(-50%);
   max-width: 28rem;
   padding: 1.5rem;
-  background: #fff;
+  background: var(--raised);
   border-radius: 0.5rem;
-  box-shadow: 0 0.5rem 2rem rgb(0 0 0 / 25%);
+  box-shadow: var(--app-shadow-dialog);
 }
 
 .notice button + button { margin-left: 0.5rem; }
@@ -71,14 +78,14 @@ main {
   width: 0.6rem;
   height: 0.9rem;
   padding: 0;
-  border: 1px solid #fff;
+  border: 1px solid var(--raised);
   border-radius: 0.15rem;
-  background: #b45400;
+  background: var(--warn);
   pointer-events: auto;
   cursor: pointer;
 }
-.marker-layer button[data-kind="gap"] { background: #6a4c93; }
-.marker-layer button[data-kind="device_switch"] { background: #006d77; }
+.marker-layer button[data-kind="gap"] { background: var(--ink-muted); }
+.marker-layer button[data-kind="device_switch"] { background: var(--accent); }
 
 header { display: flex; align-items: center; justify-content: space-between; }
 .settings-view { display: grid; gap: 0.75rem; max-width: 30rem; }
@@ -93,8 +100,8 @@ header { display: flex; align-items: center; justify-content: space-between; }
 .ask-panel textarea { display: block; width: 100%; min-height: 5rem; box-sizing: border-box; margin-bottom: 0.5rem; }
 .ask-panel ol { max-height: 28rem; overflow-y: auto; padding-left: 1.5rem; }
 .segments { list-style: none; padding: 0; margin: 1rem 0; max-height: 28rem; overflow-y: auto; }
-.segments li { display: flex; align-items: start; gap: 0.5rem; padding: 0.45rem; border-bottom: 1px solid #d7dce3; }
-.segments li.current { background: #e9f2fb; }
+.segments li { display: flex; align-items: start; gap: 0.5rem; padding: 0.45rem; border-bottom: 1px solid var(--line); }
+.segments li.current { background: var(--accent-soft); }
 .segments li > button:first-child { flex: none; }
 .segments li > span { flex: 1; }
 .segment-editor { flex: 1; }
