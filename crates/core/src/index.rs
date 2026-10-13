@@ -2,9 +2,9 @@ use std::{fs, path::Path};
 
 use rusqlite::{params, Connection, ErrorCode};
 
-use crate::{library::LibraryError, transcript::Transcript, MeetingSummary, SearchHit};
+use crate::{library::LibraryError, participant::Participants, transcript::Transcript, MeetingSummary, SearchHit};
 
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
 
 pub(crate) struct Index {
     connection: Connection,
@@ -44,16 +44,16 @@ impl Index {
                      duration_ms INTEGER NOT NULL
                  );
                  CREATE VIRTUAL TABLE segments USING fts5(
-                     text,
+                     text, participant,
                      meeting_id UNINDEXED, revision UNINDEXED, segment_id UNINDEXED, start_ms UNINDEXED, end_ms UNINDEXED,
                      tokenize = 'unicode61 remove_diacritics 2'
                  );
-                 PRAGMA user_version = 3;
+                 PRAGMA user_version = 4;
                  COMMIT;",
             )?;
         }
         connection.prepare("SELECT id, title, started_at, duration_ms FROM meetings LIMIT 0")?;
-        connection.prepare("SELECT text, meeting_id FROM segments LIMIT 0")?;
+        connection.prepare("SELECT text, participant, meeting_id FROM segments LIMIT 0")?;
         Ok(Self { connection, fresh })
     }
 
@@ -71,18 +71,18 @@ impl Index {
 
     pub(crate) fn replace(
         &mut self,
-        meetings: &[(MeetingSummary, i64, Option<Transcript>)],
+        meetings: &[(MeetingSummary, i64, Option<Transcript>, Participants)],
     ) -> Result<(), LibraryError> {
         let transaction = self.connection.transaction()?;
         transaction.execute("DELETE FROM meetings", [])?;
         transaction.execute("DELETE FROM segments", [])?;
-        for (meeting, started_at_ms, transcript) in meetings {
+        for (meeting, started_at_ms, transcript, participants) in meetings {
             transaction.execute(
                 "INSERT INTO meetings (id, title, started_at, started_at_ms, duration_ms) VALUES (?1, ?2, ?3, ?4, ?5)",
                 params![meeting.id, meeting.title, meeting.started_at, started_at_ms, meeting.duration_ms as i64],
             )?;
             if let Some(transcript) = transcript {
-                insert_segments(&transaction, &meeting.id, transcript)?;
+                insert_segments(&transaction, &meeting.id, transcript, participants)?;
             }
         }
         transaction.commit()?;
@@ -90,14 +90,16 @@ impl Index {
     }
 
     pub(crate) fn set_transcript(
-        &mut self,
+        &self,
         meeting_id: &str,
         transcript: Option<&Transcript>,
+        participants: &Participants,
     ) -> Result<(), LibraryError> {
-        let transaction = self.connection.transaction()?;
+        // Library re-indexes from `&self` paths (Participant changes); the Library's own lock serializes writers.
+        let transaction = self.connection.unchecked_transaction()?;
         transaction.execute("DELETE FROM segments WHERE meeting_id = ?1", [meeting_id])?;
         if let Some(transcript) = transcript {
-            insert_segments(&transaction, meeting_id, transcript)?;
+            insert_segments(&transaction, meeting_id, transcript, participants)?;
         }
         transaction.commit()?;
         Ok(())
@@ -161,11 +163,12 @@ fn insert_segments(
     transaction: &rusqlite::Transaction<'_>,
     meeting_id: &str,
     transcript: &Transcript,
+    participants: &Participants,
 ) -> Result<(), LibraryError> {
     for segment in &transcript.segments {
         transaction.execute(
-            "INSERT INTO segments (text, meeting_id, revision, segment_id, start_ms, end_ms) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![segment.text, meeting_id, transcript.revision, segment.id, segment.start_ms, segment.end_ms],
+            "INSERT INTO segments (text, participant, meeting_id, revision, segment_id, start_ms, end_ms) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![segment.text, participants.name(segment, transcript.revision), meeting_id, transcript.revision, segment.id, segment.start_ms, segment.end_ms],
         )?;
     }
     Ok(())

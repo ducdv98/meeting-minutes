@@ -81,6 +81,15 @@ impl From<serde_json::Error> for ProcessingError {
         Self::Json(e)
     }
 }
+impl From<crate::library::LibraryError> for ProcessingError {
+    fn from(e: crate::library::LibraryError) -> Self {
+        match e {
+            crate::library::LibraryError::Io(e) => Self::Io(e),
+            crate::library::LibraryError::Json(e) => Self::Json(e),
+            e => Self::Engine(e.to_string()),
+        }
+    }
+}
 
 pub struct TranscribeRequest<'a> {
     pub meeting_dir: &'a Path,
@@ -303,11 +312,7 @@ pub fn transcribe_meeting_named(
         md.sync_all()?;
         fs::rename(&markdown_tmp, request.meeting_dir.join("transcript.md"))?;
         Ok(())
-    }).map_err(|error| match error {
-        crate::library::LibraryError::Io(error) => ProcessingError::Io(error),
-        crate::library::LibraryError::Json(error) => ProcessingError::Json(error),
-        error => ProcessingError::Engine(error.to_string()),
-    });
+    }).map_err(ProcessingError::from);
     if let Err(error) = write {
         let _ = fs::remove_file(&markdown_tmp);
         return Err(error);

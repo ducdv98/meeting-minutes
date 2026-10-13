@@ -140,11 +140,21 @@ impl Library {
         root: impl Into<PathBuf>,
         index_path: impl AsRef<Path>,
     ) -> Result<Self, LibraryError> {
+        Self::open_with_name(root, index_path, None)
+    }
+
+    /// Opens with the Settings "Your name", so a fresh index is built with it and no re-index follows.
+    pub fn open_with_name(
+        root: impl Into<PathBuf>,
+        index_path: impl AsRef<Path>,
+        your_name: Option<&str>,
+    ) -> Result<Self, LibraryError> {
         let root = root.into();
         fs::create_dir_all(&root)?;
         let index = Index::open(index_path.as_ref())?;
         let fresh = index.fresh;
-        let mut library = Self { root, index, your_name: None };
+        let your_name = your_name.map(str::trim).filter(|name| !name.is_empty()).map(str::to_owned);
+        let mut library = Self { root, index, your_name };
         if fresh {
             library.rescan()?;
         }
@@ -346,8 +356,31 @@ impl Library {
         &self.root
     }
 
-    pub fn set_your_name(&mut self, name: Option<&str>) {
-        self.your_name = name.map(str::trim).filter(|name| !name.is_empty()).map(str::to_owned);
+    pub fn set_your_name(&mut self, name: Option<&str>) -> Result<(), LibraryError> {
+        let next = name.map(str::trim).filter(|name| !name.is_empty()).map(str::to_owned);
+        if self.your_name != next {
+            self.your_name = next;
+            for meeting in self.index.list()? { self.refresh_transcript(&meeting.id)?; }
+        }
+        Ok(())
+    }
+
+    pub fn participants(&self, id: &str) -> Result<Participants, LibraryError> {
+        let folder = self.checked_meeting_dir(id)?;
+        let file: MeetingFile = serde_json::from_slice(&fs::read(folder.join("meeting.json"))?)?;
+        let voice_note = file.is_voice_note();
+        Ok(Participants::new(file.participants, file.segment_participants, self.your_name.as_deref(), voice_note))
+    }
+
+    pub fn summary_participants_changed(&self, id: &str) -> Result<bool, LibraryError> {
+        let folder = self.checked_meeting_dir(id)?;
+        let Some(summary) = read_summary(&folder)? else { return Ok(false); };
+        let transcript = match read_transcript_revision(&folder, summary.revision) {
+            Ok(transcript) => transcript,
+            Err(LibraryError::Io(error)) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => return Err(error),
+        };
+        Ok(summary.participants_changed(&transcript, &self.participants(id)?))
     }
 
     pub fn participant_names(&self) -> Result<Vec<String>, LibraryError> {
@@ -460,7 +493,7 @@ impl Library {
             return Err(error);
         }
         write_current_transcript_markdown(&folder, &transcript, self.your_name.as_deref())?;
-        self.index.set_transcript(id, Some(&transcript))?;
+        self.index.set_transcript(id, Some(&transcript), &self.participants(id)?)?;
         Ok(transcript)
     }
 
@@ -489,6 +522,7 @@ impl Library {
             if let Some(transcript) = self.transcript(id)? {
                 let markdown = markdown_from_metadata(metadata, &transcript, self.your_name.as_deref())?;
                 write_transcript_markdown(&folder, &markdown)?;
+                self.index.set_transcript(id, Some(&transcript), &self.participants(id)?)?;
             }
             Ok(())
         })
@@ -560,6 +594,7 @@ impl Library {
         if let Some(transcript) = self.transcript(id)? {
             let markdown = markdown_from_metadata(metadata, &transcript, self.your_name.as_deref())?;
             write_transcript_markdown(folder, &markdown)?;
+            self.index.set_transcript(id, Some(&transcript), &self.participants(id)?)?;
         }
         Ok(())
     }
@@ -734,7 +769,7 @@ impl Library {
 
     pub fn refresh_transcript(&mut self, id: &str) -> Result<(), LibraryError> {
         let transcript = self.transcript(id)?;
-        self.index.set_transcript(id, transcript.as_ref())
+        self.index.set_transcript(id, transcript.as_ref(), &self.participants(id)?)
     }
 
     pub fn search(&self, query: &str) -> Result<Vec<SearchHit>, LibraryError> {
@@ -775,7 +810,8 @@ impl Library {
                         .and_then(|revision| {
                             read_transcript_revision(&entry.path(), revision).ok()
                         });
-                    valid.push((meeting, started_at_ms, transcript));
+                    let participants = self.participants(&meeting.id)?;
+                    valid.push((meeting, started_at_ms, transcript, participants));
                 }
                 Err(reason) => malformed.push(MalformedFolder { folder, reason }),
             }

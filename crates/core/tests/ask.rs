@@ -7,8 +7,26 @@ use meeting_minutes_core::{
         build_ask, partial_answer, read_asks, retrieve, run_ask, write_asks, AnswerState, AskError,
         AskHistory, AskOptions, AskOutcome,
     },
+    participant::Participants,
     transcript::{Language, Segment, Speaker, Transcript},
 };
+
+#[test]
+fn ask_evidence_names_participants_and_identifies_the_user() {
+    let transcript = transcript(1);
+    let participants = Participants::new([("remote".into(), "Anna".into())].into(), None, Some("Duc"), false);
+    let ask = build_ask(&transcript, &participants, &AskHistory::default(), "Who owns the task?", &opts(5000));
+    assert!(ask.request.messages[0].content.contains("[s00001] Anna: Routine"));
+    assert!(ask.request.system.contains("Duc is the user"));
+}
+
+#[test]
+fn ask_retrieval_can_find_a_participant_by_name() {
+    let transcript = transcript(10);
+    let participants = Participants::new(Default::default(), Some(meeting_minutes_core::participant::SegmentParticipants { revision: 2, segments: [("s00008".into(), "Anna".into())].into() }), None, false);
+    let selected = retrieve(&transcript, &participants, "What did Anna say?", 45);
+    assert!(selected.iter().any(|segment| segment.id == "s00008"));
+}
 use serde_json::json;
 
 fn transcript(count: usize) -> Transcript {
@@ -36,7 +54,7 @@ fn transcript(count: usize) -> Transcript {
 fn retrieve_budgets_3000_segments_quickly() {
     let transcript = transcript(3000);
     let start = Instant::now();
-    let selected = retrieve(&transcript, "schedules", 100_000);
+    let selected = retrieve(&transcript, &Participants::new(Default::default(), None, None, false), "schedules", 100_000);
     assert_eq!(selected.len(), 3000);
     assert!(start.elapsed() < Duration::from_secs(1));
 }
@@ -98,6 +116,7 @@ fn response(answer: &str, ids: &[&str], insufficient: bool, off_topic: bool) -> 
 fn ask_with_all(transcript: &Transcript) -> meeting_minutes_core::ask::AskRequest {
     build_ask(
         transcript,
+        &Participants::new(Default::default(), None, None, false),
         &AskHistory::default(),
         "What was discussed?",
         &opts(5000),
@@ -185,7 +204,7 @@ fn answers_only_accept_citations_from_the_current_evidence() {
 fn retrieval_keeps_relevant_segments_neighbours_and_timeline_order() {
     let mut transcript = transcript(20);
     transcript.segments[10].text = "Ngân sách quý ba được duyệt".into();
-    let selected = retrieve(&transcript, "ngan sach", 80);
+    let selected = retrieve(&transcript, &Participants::new(Default::default(), None, None, false), "ngan sach", 80);
     let ids: Vec<_> = selected.iter().map(|s| s.id.as_str()).collect();
     assert!(ids.contains(&"s00011"));
     assert!(ids.contains(&"s00010"));
@@ -194,9 +213,9 @@ fn retrieval_keeps_relevant_segments_neighbours_and_timeline_order() {
     assert!(selected
         .windows(2)
         .all(|pair| pair[0].start_ms < pair[1].start_ms));
-    let evidence = meeting_minutes_core::citation::evidence_text(selected);
+    let evidence = meeting_minutes_core::citation::evidence_text(selected, &Participants::new(Default::default(), None, None, false), transcript.revision);
     assert!(meeting_minutes_core::citation::estimate_tokens(&evidence) <= 80);
-    let request = build_ask(&transcript, &AskHistory::default(), "ngan sach", &opts(340));
+    let request = build_ask(&transcript, &Participants::new(Default::default(), None, None, false), &AskHistory::default(), "ngan sach", &opts(340));
     assert!(request.allowed.contains("s00011"));
     assert!(!request.allowed.contains("s00001"));
     assert!(request
@@ -206,7 +225,7 @@ fn retrieval_keeps_relevant_segments_neighbours_and_timeline_order() {
         .unwrap()
         .content
         .contains("Ngân sách"));
-    let fallback = retrieve(&transcript, "what was this meeting about?", 100);
+    let fallback = retrieve(&transcript, &Participants::new(Default::default(), None, None, false), "what was this meeting about?", 100);
     assert!(fallback.len() > 1);
     assert!(fallback.last().unwrap().start_ms > fallback.first().unwrap().start_ms + 5000);
 }
@@ -256,7 +275,7 @@ fn small_transcript_and_history_use_only_supported_current_answers() {
             error: None,
         },
     );
-    let request = build_ask(&transcript, &history, "next?", &opts(5000));
+    let request = build_ask(&transcript, &Participants::new(Default::default(), None, None, false), &history, "next?", &opts(5000));
     assert_eq!(request.allowed.len(), 2);
     let text = request
         .request
@@ -278,6 +297,7 @@ fn small_transcript_and_history_use_only_supported_current_answers() {
     assert!(text.contains("[s00001]") && text.contains("[s00002]"));
     let limited = build_ask(
         &transcript,
+        &Participants::new(Default::default(), None, None, false),
         &history,
         "next?",
         &AskOptions {

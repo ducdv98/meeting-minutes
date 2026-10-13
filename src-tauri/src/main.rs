@@ -580,8 +580,9 @@ fn update_settings(
     settings.your_name = your_name.map(|name| name.trim().to_owned()).filter(|name| !name.is_empty());
     settings.save(&path.0).map_err(|e| e.to_string())?;
     if let Ok(mut guard) = app.state::<LibraryState>().lock() {
-        if let Ok(library) = guard.as_mut() { library.set_your_name(settings.your_name.as_deref()); }
+        if let Ok(library) = guard.as_mut() { library.set_your_name(settings.your_name.as_deref()).map_err(|error| error.to_string())?; }
     }
+    let _ = app.emit("library-changed", ());
     Ok(settings)
 }
 
@@ -700,7 +701,7 @@ fn configured_ai(app: &AppHandle) -> Result<ai::HttpProvider, String> {
 fn meeting_context(
     app: &AppHandle,
     id: &str,
-) -> Result<(MeetingDetail, Transcript, PathBuf), String> {
+) -> Result<(MeetingDetail, Transcript, meeting_minutes_core::participant::Participants, PathBuf), String> {
     let state = app.state::<LibraryState>();
     let guard = state.lock().map_err(|error| error.to_string())?;
     let library = guard.as_ref().map_err(Clone::clone)?;
@@ -709,7 +710,8 @@ fn meeting_context(
         .transcript(id)
         .map_err(|error| error.to_string())?
         .ok_or("Transcribe this Meeting first")?;
-    Ok((detail, transcript, library.meeting_dir(id)))
+    let participants = library.participants(id).map_err(|error| error.to_string())?;
+    Ok((detail, transcript, participants, library.meeting_dir(id)))
 }
 
 fn cloud_consented(app: &AppHandle, id: &str, kind: ProviderKind) -> Result<bool, String> {
@@ -766,6 +768,13 @@ fn meeting_summary(app: AppHandle, meeting_id: String) -> Result<Option<Summary>
         .map_err(|error| error.to_string())?;
     summary::read_summary(&library.meeting_dir(&meeting_id)).map_err(|error| error.to_string())
 }
+
+#[tauri::command]
+fn summary_participants_changed(app: AppHandle, meeting_id: String) -> Result<bool, String> {
+    let state = app.state::<LibraryState>();
+    let guard = state.lock().map_err(|error| error.to_string())?;
+    guard.as_ref().map_err(|error| error.clone())?.summary_participants_changed(&meeting_id).map_err(|error| error.to_string())
+}
 #[tauri::command]
 fn summary_status(app: AppHandle) -> Result<SummaryStatus, String> {
     summary_snapshot(&app)
@@ -773,11 +782,11 @@ fn summary_status(app: AppHandle) -> Result<SummaryStatus, String> {
 #[tauri::command]
 fn summary_send_plan(app: AppHandle, meeting_id: String) -> Result<SendPlan, String> {
     let provider = configured_ai(&app)?;
-    let (_, transcript, _) = meeting_context(&app, &meeting_id)?;
+    let (_, transcript, participants, _) = meeting_context(&app, &meeting_id)?;
     let kind = provider.kind();
     let consented = !kind.is_cloud() || cloud_consented(&app, &meeting_id, kind)?;
     let disclosure = if kind.is_cloud() && !consented {
-        let requests = summary::summary_requests(&transcript, &SummaryOptions::for_provider(kind));
+        let requests = summary::summary_requests(&transcript, &participants, &SummaryOptions::for_provider(kind));
         let first = requests.first().ok_or("The Transcript has no Segments")?;
         let mut disclosure = ai::disclosure(&provider, first);
         disclosure.messages = requests
@@ -840,10 +849,11 @@ fn start_summary(app: &AppHandle, id: String, provider: ai::HttpProvider) -> Res
             return;
         };
         let result = (|| -> Result<(), String> {
-            let (_detail, transcript, dir) = meeting_context(&app, &id)?;
+            let (_detail, transcript, participants, dir) = meeting_context(&app, &id)?;
             let summary = summary::summarize(
                 &provider,
                 &transcript,
+                &participants,
                 &SummaryOptions::for_provider(kind),
                 &mut |done, total| {
                     if let Ok(mut jobs) = app.state::<AiJobs>().lock() {
@@ -896,7 +906,7 @@ fn generate_summary(
     consent: bool,
 ) -> Result<SummaryStatus, String> {
     meeting_busy(&app, &meeting_id)?;
-    let (_, transcript, _) = meeting_context(&app, &meeting_id)?;
+    let (_, transcript, _, _) = meeting_context(&app, &meeting_id)?;
     if transcript.segments.is_empty() {
         return Err("The Transcript has no Segments".into());
     }
@@ -963,13 +973,14 @@ fn meeting_asks(app: AppHandle, meeting_id: String) -> Result<AskView, String> {
 #[tauri::command]
 fn ask_send_plan(app: AppHandle, meeting_id: String, question: String) -> Result<SendPlan, String> {
     let provider = configured_ai(&app)?;
-    let (_, transcript, dir) = meeting_context(&app, &meeting_id)?;
+    let (_, transcript, participants, dir) = meeting_context(&app, &meeting_id)?;
     let kind = provider.kind();
     let consented = !kind.is_cloud() || cloud_consented(&app, &meeting_id, kind)?;
     let disclosure = if kind.is_cloud() && !consented {
         let history = ask::read_asks(&dir).map_err(|error| error.to_string())?;
         let request = ask::build_ask(
             &transcript,
+            &participants,
             &history,
             &question,
             &AskOptions::for_provider(kind),
@@ -995,7 +1006,7 @@ fn begin_ask(
     let _update_gate = lock_update_start_gate(app)?;
     ensure_update_not_active(app)?;
     meeting_busy(app, &id)?;
-    let (_, transcript, dir) = meeting_context(app, &id)?;
+    let (_, transcript, participants, dir) = meeting_context(app, &id)?;
     let provider = configured_ai(app)?;
     let kind = provider.kind();
     // A retry uses the saved question. A new Ask uses the text supplied by the click.
@@ -1053,6 +1064,7 @@ fn begin_ask(
             history.asks.retain(|entry| entry.id != ask_id);
             let request = ask::build_ask(
                 &transcript,
+                &participants,
                 &history,
                 &ask_question,
                 &AskOptions::for_provider(kind),
@@ -1247,6 +1259,16 @@ fn processing_worker(app: AppHandle) {
                 return Err(processing::ProcessingError::Cancelled);
             }
             processing_stage(&app, &id, JobStage::Transcribing, 0.0);
+            let vocabulary = {
+                let state = app.state::<LibraryState>();
+                let guard = state.lock().map_err(|error| processing::ProcessingError::Engine(error.to_string()))?;
+                let library = guard.as_ref().map_err(|error| processing::ProcessingError::Engine(error.clone()))?;
+                let participants = library.participants(&id)?;
+                let mut vocabulary = settings.vocabulary.clone();
+                let transcript = library.transcript(&id)?;
+                for name in participants.vocabulary_names(transcript.as_ref()) { if !vocabulary.contains(&name) { vocabulary.push(name); } }
+                vocabulary
+            };
             let mut engine = WhisperEngine::load_with_vad(&model_path, vad_path.as_deref())
                 .map_err(processing::ProcessingError::Engine)?;
             let mut last = 0u32;
@@ -1254,7 +1276,7 @@ fn processing_worker(app: AppHandle) {
                 &TranscribeRequest {
                     meeting_dir: &meeting_dir,
                     model: model.name,
-                    vocabulary: &settings.vocabulary,
+                    vocabulary: &vocabulary,
                     default_language: settings.language,
                 },
                 &mut engine,
@@ -1471,7 +1493,7 @@ fn set_participant_name(app: AppHandle, meeting_id: String, label: Speaker, name
     let state = app.state::<LibraryState>();
     let mut guard = state.lock().map_err(|error| error.to_string())?;
     let library = guard.as_mut().map_err(|error| error.clone())?;
-    library.set_your_name(settings.your_name.as_deref());
+    library.set_your_name(settings.your_name.as_deref()).map_err(|error| error.to_string())?;
     library.set_participant_name(&meeting_id, label, name.as_deref()).map_err(|error| error.to_string())?;
     drop(guard);
     let _ = app.emit("library-changed", ());
@@ -1484,7 +1506,7 @@ fn assign_segments(app: AppHandle, meeting_id: String, revision: u32, segment_id
     let state = app.state::<LibraryState>();
     let mut guard = state.lock().map_err(|error| error.to_string())?;
     let library = guard.as_mut().map_err(|error| error.clone())?;
-    library.set_your_name(settings.your_name.as_deref());
+    library.set_your_name(settings.your_name.as_deref()).map_err(|error| error.to_string())?;
     library.assign_segments(&meeting_id, revision, &segment_ids, name.as_deref()).map_err(|error| error.to_string())?;
     drop(guard);
     let _ = app.emit("library-changed", ());
@@ -1497,7 +1519,7 @@ fn rename_participant(app: AppHandle, meeting_id: String, from: String, to: Stri
     let state = app.state::<LibraryState>();
     let mut guard = state.lock().map_err(|error| error.to_string())?;
     let library = guard.as_mut().map_err(|error| error.clone())?;
-    library.set_your_name(settings.your_name.as_deref());
+    library.set_your_name(settings.your_name.as_deref()).map_err(|error| error.to_string())?;
     library.rename_participant(&meeting_id, &from, &to).map_err(|error| error.to_string())?;
     drop(guard);
     let _ = app.emit("library-changed", ());
@@ -1510,7 +1532,7 @@ fn remove_participant(app: AppHandle, meeting_id: String, name: String) -> Resul
     let state = app.state::<LibraryState>();
     let mut guard = state.lock().map_err(|error| error.to_string())?;
     let library = guard.as_mut().map_err(|error| error.clone())?;
-    library.set_your_name(settings.your_name.as_deref());
+    library.set_your_name(settings.your_name.as_deref()).map_err(|error| error.to_string())?;
     library.remove_participant(&meeting_id, &name).map_err(|error| error.to_string())?;
     drop(guard);
     let _ = app.emit("library-changed", ());
@@ -2224,7 +2246,9 @@ fn main() {
                 keep_window_on_screen(&window)?;
             }
             log_event(LogEvent::Startup);
-            let mut library = (|| -> Result<Library, String> {
+            let settings_path = app.path().app_data_dir()?.join("settings.json");
+            let settings = Settings::load(&settings_path);
+            let library = (|| -> Result<Library, String> {
                 let root = app
                     .path()
                     .document_dir()
@@ -2235,11 +2259,8 @@ fn main() {
                     .app_data_dir()
                     .map_err(|error| error.to_string())?
                     .join("index.sqlite3");
-                Library::open(root, index).map_err(|error| error.to_string())
+                Library::open_with_name(root, index, settings.your_name.as_deref()).map_err(|error| error.to_string())
             })();
-            let settings_path = app.path().app_data_dir()?.join("settings.json");
-            let settings = Settings::load(&settings_path);
-            if let Ok(library) = library.as_mut() { library.set_your_name(settings.your_name.as_deref()); }
             app.manage(Mutex::new(library));
             app.manage(SettingsPath(settings_path));
             #[cfg(windows)]
@@ -2405,6 +2426,7 @@ fn main() {
             update_ai_settings,
             test_ai_provider,
             meeting_summary,
+            summary_participants_changed,
             summary_status,
             summary_send_plan,
             generate_summary,

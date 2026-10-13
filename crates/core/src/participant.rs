@@ -47,6 +47,18 @@ impl Participants {
         }
         names
     }
+
+    pub fn vocabulary_names(&self, transcript: Option<&Transcript>) -> Vec<String> {
+        let mut names = transcript.map(|transcript| self.list(transcript)).unwrap_or_default();
+        // This Meeting's Me Participant: the Settings name only when the Meeting does not override it.
+        let me = self.label_name(Speaker::Me);
+        for name in self.labels.values().chain([&me]) {
+            if !names.contains(name) { names.push(name.clone()); }
+        }
+        names.into_iter().filter(|name| {
+            !matches!(name.as_str(), "Me" | "Remote" | "Unknown") || self.settings_name.as_deref() == Some(name.as_str())
+        }).collect()
+    }
 }
 
 pub fn label_key(label: Speaker) -> &'static str {
@@ -149,5 +161,17 @@ mod tests {
         let participants = Participants::new(MeetingParticipants::new(), Some(SegmentParticipants { revision: 2, segments: [("s00000".into(), "  Anna  ".into()), ("s00002".into(), "  Anna  ".into())].into() }), None, false);
         assert_eq!(participants.list(&transcript), vec!["  Anna  ", "Unknown", "Remote"]);
         assert_eq!(participants.name(&transcript.segments[0], 1), "Unknown");
+    }
+
+    #[test]
+    fn vocabulary_uses_real_names_without_default_labels() {
+        let transcript = transcript(1, &[(0, 100, Speaker::Me), (100, 200, Speaker::Remote), (200, 300, Speaker::Unknown)]);
+        let participants = Participants::new([("remote".into(), "Nguyễn".into())].into(), Some(SegmentParticipants { revision: 1, segments: [("s00002".into(), "Bao".into())].into() }), Some("Duc"), false);
+        assert_eq!(participants.vocabulary_names(Some(&transcript)), vec!["Duc", "Nguyễn", "Bao"]);
+        assert_eq!(participants.vocabulary_names(None), vec!["Nguyễn", "Duc"]);
+        let overridden = Participants::new([("me".into(), "Alex".into())].into(), None, Some("Duc"), false);
+        assert_eq!(overridden.vocabulary_names(None), vec!["Alex"]);
+        let defaults = Participants::new(Default::default(), None, None, false);
+        assert!(defaults.vocabulary_names(Some(&transcript)).is_empty());
     }
 }

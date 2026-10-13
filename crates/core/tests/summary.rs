@@ -10,6 +10,7 @@ use std::{
 use meeting_minutes_core::{
     ai::{AiError, GenerateRequest, ProviderKind, TextProvider},
     citation::{check_citations, estimate_tokens, evidence_line, evidence_text},
+    participant::Participants,
     summary::{
         read_summary, render_summary_markdown, summarize, summary_requests, write_summary,
         SummaryOptions,
@@ -40,10 +41,37 @@ fn transcript(count: usize, language: Language) -> Transcript {
 }
 
 #[test]
+fn summary_evidence_names_participants_and_identifies_the_user() {
+    let mut transcript = transcript(2, Language::En);
+    transcript.segments[1].speaker = Speaker::Remote;
+    let participants = Participants::new([("remote".into(), "Anna".into())].into(), None, Some("Duc"), false);
+    let request = &summary_requests(&transcript, &participants, &SummaryOptions { input_tokens: 4000, max_tokens: 512 })[0];
+    assert!(request.messages[0].content.contains("[s00001] Duc: Discussion"));
+    assert!(request.messages[0].content.contains("[s00002] Anna: Discussion"));
+    assert!(request.system.contains("Duc is the user"));
+}
+
+#[test]
+fn summary_tracks_resolved_participants_and_old_files_default_safely() {
+    let transcript = transcript(1, Language::En);
+    let defaults = Participants::new(Default::default(), None, None, false);
+    let named = Participants::new([("me".into(), "Duc".into())].into(), None, None, false);
+    let provider = FakeProvider::with(&[&raw(json!([]), json!([]))]);
+    let summary = summarize(&provider, &transcript, &defaults, &SummaryOptions { input_tokens: 4000, max_tokens: 512 }, &mut |_, _| {}, &AtomicBool::new(false)).unwrap();
+    assert!(!summary.participants_changed(&transcript, &defaults));
+    assert!(summary.participants_changed(&transcript, &named));
+    let mut old = serde_json::to_value(&summary).unwrap();
+    old.as_object_mut().unwrap().remove("participants_fingerprint");
+    let old: meeting_minutes_core::summary::Summary = serde_json::from_value(old).unwrap();
+    assert!(!old.participants_changed(&transcript, &defaults));
+    assert!(old.participants_changed(&transcript, &named));
+}
+
+#[test]
 fn summary_requests_budget_3000_segments_quickly() {
     let transcript = transcript(3000, Language::En);
     let start = Instant::now();
-    let requests = summary_requests(&transcript, &SummaryOptions { input_tokens: 100_000, max_tokens: 512 });
+    let requests = summary_requests(&transcript, &Participants::new(Default::default(), None, None, false), &SummaryOptions { input_tokens: 100_000, max_tokens: 512 });
     assert_eq!(requests.len(), 1);
     assert!(start.elapsed() < Duration::from_secs(1));
 }
@@ -133,10 +161,10 @@ fn citation_ids_are_checked_against_this_revision_and_sent_evidence() {
         ["s00098"]
     );
     assert_eq!(
-        evidence_line(&transcript.segments[0]),
+        evidence_line(&transcript.segments[0], &Participants::new(Default::default(), None, None, false), transcript.revision),
         "[s00001] Me: Discussion point 1 about launch schedule and budget."
     );
-    assert_eq!(evidence_text(&transcript.segments).lines().count(), 2);
+    assert_eq!(evidence_text(&transcript.segments, &Participants::new(Default::default(), None, None, false), transcript.revision).lines().count(), 2);
     assert_eq!(estimate_tokens("abcd"), 2);
 }
 #[test]
@@ -150,6 +178,7 @@ fn single_chunk_drops_unsupported_items_and_keeps_transcript_times() {
     let result = summarize(
         &provider,
         &transcript(2, Language::Vi),
+        &Participants::new(Default::default(), None, None, false),
         &SummaryOptions {
             input_tokens: 4000,
             max_tokens: 512,
@@ -176,7 +205,7 @@ fn long_transcript_is_chunked_without_losing_late_segments_and_reduced() {
         input_tokens: 750,
         max_tokens: 200,
     };
-    let maps = summary_requests(&transcript, &options);
+    let maps = summary_requests(&transcript, &Participants::new(Default::default(), None, None, false), &options);
     assert!(maps.len() > 1);
     for segment in &transcript.segments {
         assert_eq!(
@@ -224,6 +253,7 @@ fn long_transcript_is_chunked_without_losing_late_segments_and_reduced() {
     let result = summarize(
         &provider,
         &transcript,
+        &Participants::new(Default::default(), None, None, false),
         &options,
         &mut |_, _| {},
         &AtomicBool::new(false),
@@ -244,13 +274,14 @@ fn cancel_between_map_calls_stops_before_another_request() {
         input_tokens: 500,
         max_tokens: 100,
     };
-    assert!(summary_requests(&transcript, &options).len() > 1);
+    assert!(summary_requests(&transcript, &Participants::new(Default::default(), None, None, false), &options).len() > 1);
     let output = raw(json!([]), json!([]));
     let provider = FakeProvider::with(&[&output]);
     let cancel = AtomicBool::new(false);
     let result = summarize(
         &provider,
         &transcript,
+        &Participants::new(Default::default(), None, None, false),
         &options,
         &mut |_, _| cancel.store(true, Ordering::SeqCst),
         &cancel,
@@ -269,6 +300,7 @@ fn summary_round_trip_and_markdown_sections() {
     let summary = summarize(
         &provider,
         &transcript(2, Language::En),
+        &Participants::new(Default::default(), None, None, false),
         &SummaryOptions {
             input_tokens: 4000,
             max_tokens: 200,
@@ -290,4 +322,16 @@ fn summary_round_trip_and_markdown_sections() {
     assert!(std::fs::read_to_string(dir.path().join("summary.json"))
         .unwrap()
         .ends_with('\n'));
+}
+
+#[test]
+fn renaming_the_user_changes_the_fingerprint_even_without_their_segments() {
+    let mut remote_only = transcript(2, Language::En);
+    for segment in &mut remote_only.segments { segment.speaker = Speaker::Remote; }
+    let before = Participants::new(Default::default(), None, Some("Duc"), false);
+    let after = Participants::new([("me".into(), "Alex".into())].into(), None, Some("Duc"), false);
+    assert_ne!(
+        meeting_minutes_core::summary::participants_fingerprint(&remote_only, &before),
+        meeting_minutes_core::summary::participants_fingerprint(&remote_only, &after)
+    );
 }

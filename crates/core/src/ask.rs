@@ -15,7 +15,8 @@ use crate::{
         ProviderKind, Role, TextProvider,
     },
     citation::{check_citations, estimate_tokens, evidence_line, evidence_text, Citation},
-    transcript::{Segment, Transcript},
+    participant::Participants,
+    transcript::{Segment, Speaker, Transcript},
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -236,8 +237,8 @@ pub struct AskRequest {
     pub request: GenerateRequest,
     pub allowed: HashSet<String>,
 }
-fn system() -> String {
-    "Answer questions about one meeting only from the transcript segments given as [segment-id] Speaker: text. Put supporting segment ids in citations exactly as written; never write times or ids in the answer text. If the segments do not contain the answer, set insufficient_evidence true, citations [], and say briefly that the transcript does not cover it. If the input is not a question or request about this meeting (a greeting, general knowledge, coding, etc.), set off_topic true, citations [], and politely suggest asking something about the meeting. Answer in the language of the question. Return only the JSON object.".into()
+fn system(user_name: &str) -> String {
+    format!("Answer questions about one meeting only from the transcript segments given as [segment-id] Participant: text. {user_name} is the user. Put supporting segment ids in citations exactly as written; never write times or ids in the answer text. If the segments do not contain the answer, set insufficient_evidence true, citations [], and say briefly that the transcript does not cover it. If the input is not a question or request about this meeting (a greeting, general knowledge, coding, etc.), set off_topic true, citations [], and politely suggest asking something about the meeting. Answer in the language of the question. Return only the JSON object.")
 }
 fn schema() -> OutputSchema {
     OutputSchema {
@@ -252,11 +253,12 @@ fn schema() -> OutputSchema {
 }
 pub fn build_ask(
     transcript: &Transcript,
+    participants: &Participants,
     history: &AskHistory,
     question: &str,
     options: &AskOptions,
 ) -> AskRequest {
-    let system = system();
+    let system = system(&participants.label_name(Speaker::Me));
     let eligible: Vec<_> = history
         .asks
         .iter()
@@ -302,11 +304,11 @@ pub fn build_ask(
             + estimate_tokens(question)
             + estimate_tokens("Transcript segments:\n\n\nQuestion: "),
     );
-    let all = evidence_text(&transcript.segments);
+    let all = evidence_text(&transcript.segments, participants, transcript.revision);
     let segments: Vec<&Segment> = if estimate_tokens(&all) <= budget {
         transcript.segments.iter().collect()
     } else {
-        retrieve(transcript, question, budget)
+        retrieve(transcript, participants, question, budget)
     };
     let allowed = segments.iter().map(|segment| segment.id.clone()).collect();
     let mut messages: Vec<_> = pairs.into_iter().flatten().collect();
@@ -314,7 +316,7 @@ pub fn build_ask(
         role: Role::User,
         content: format!(
             "Transcript segments:\n{}\n\nQuestion: {question}",
-            evidence_text(segments)
+            evidence_text(segments, participants, transcript.revision)
         ),
     });
     AskRequest {
@@ -355,6 +357,7 @@ fn terms(question: &str) -> HashSet<String> {
 }
 pub fn retrieve<'a>(
     transcript: &'a Transcript,
+    participants: &Participants,
     question: &str,
     budget_tokens: usize,
 ) -> Vec<&'a Segment> {
@@ -362,11 +365,11 @@ pub fn retrieve<'a>(
     if segments.is_empty() {
         return Vec::new();
     }
-    let line_chars: Vec<_> = segments.iter().map(|segment| evidence_line(segment).chars().count()).collect();
+    let line_chars: Vec<_> = segments.iter().map(|segment| evidence_line(segment, participants, transcript.revision).chars().count()).collect();
     let query = terms(question);
     let segment_words: Vec<_> = segments
         .iter()
-        .map(|segment| words(&segment.text))
+        .map(|segment| words(&format!("{} {}", participants.name(segment, transcript.revision), segment.text)))
         .collect();
     let mut df = HashMap::new();
     for words in &segment_words {

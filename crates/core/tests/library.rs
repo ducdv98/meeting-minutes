@@ -20,6 +20,82 @@ fn write_transcript(library: &Library, id: &str, revision: u32, text: &str) {
 }
 
 #[test]
+fn search_tracks_participant_names_after_rename() {
+    let temp = TempDir::new().unwrap();
+    let mut library = Library::open(temp.path().join("Library"), temp.path().join("index.sqlite3")).unwrap();
+    let meeting = library.create_meeting("Planning", at("2026-10-12T09:30:00Z")).unwrap();
+    write_transcript(&library, &meeting.id, 1, "Budget");
+    library.refresh_transcript(&meeting.id).unwrap();
+    library.set_participant_name(&meeting.id, Speaker::Me, Some("Anna")).unwrap();
+    assert_eq!(library.search("Anna").unwrap()[0].meeting_id, meeting.id);
+    library.rename_participant(&meeting.id, "Anna", "Bao").unwrap();
+    assert!(library.search("Anna").unwrap().is_empty());
+    assert_eq!(library.search("Bao").unwrap()[0].snippet, "Budget");
+}
+
+#[test]
+fn settings_name_reindexes_every_meeting() {
+    let temp = TempDir::new().unwrap();
+    let mut library = Library::open(temp.path().join("Library"), temp.path().join("index.sqlite3")).unwrap();
+    let first = library.create_meeting("First", at("2026-10-12T09:30:00Z")).unwrap();
+    let second = library.create_meeting("Second", at("2026-10-13T09:30:00Z")).unwrap();
+    for meeting in [&first, &second] { write_transcript(&library, &meeting.id, 1, "Budget"); library.refresh_transcript(&meeting.id).unwrap(); }
+    library.set_your_name(Some("Duc")).unwrap();
+    assert_eq!(library.search("Duc").unwrap().len(), 2);
+    library.set_your_name(Some("Bao")).unwrap();
+    assert!(library.search("Duc").unwrap().is_empty());
+    assert_eq!(library.search("Bao").unwrap().len(), 2);
+}
+
+#[test]
+fn a_fresh_index_opened_with_your_name_indexes_it() {
+    let temp = TempDir::new().unwrap();
+    let library = Library::open(temp.path().join("Library"), temp.path().join("index.sqlite3")).unwrap();
+    let meeting = library_meeting(library);
+    std::fs::remove_file(temp.path().join("index.sqlite3")).unwrap();
+    let library = Library::open_with_name(temp.path().join("Library"), temp.path().join("index.sqlite3"), Some("Duc")).unwrap();
+    assert_eq!(library.search("Duc").unwrap()[0].meeting_id, meeting);
+}
+
+fn library_meeting(mut library: Library) -> String {
+    let meeting = library.create_meeting("First", at("2026-10-12T09:30:00Z")).unwrap();
+    write_transcript(&library, &meeting.id, 1, "Budget");
+    meeting.id
+}
+
+#[test]
+fn summary_participants_unchanged_without_its_revision() {
+    let temp = TempDir::new().unwrap();
+    let library = Library::open(temp.path().join("Library"), temp.path().join("index.sqlite3")).unwrap();
+    let id = library_meeting(library);
+    let library = Library::open(temp.path().join("Library"), temp.path().join("index.sqlite3")).unwrap();
+    std::fs::write(library.meeting_dir(&id).join("summary.json"), r#"{"schema_version":1,"revision":7,"created_at":"now","provider":"ollama","model":"m","overview":[],"key_points":[],"decisions":[],"action_items":[],"dropped_items":0}"#).unwrap();
+    assert!(!library.summary_participants_changed(&id).unwrap());
+}
+
+#[test]
+fn library_checks_summary_participants_for_saved_and_legacy_files() {
+    let temp = TempDir::new().unwrap();
+    let mut library = Library::open(temp.path().join("Library"), temp.path().join("index.sqlite3")).unwrap();
+    let meeting = library.create_meeting("Planning", at("2026-10-12T09:30:00Z")).unwrap();
+    write_transcript(&library, &meeting.id, 1, "Budget");
+    let folder = library.meeting_dir(&meeting.id);
+    let transcript = library.transcript(&meeting.id).unwrap().unwrap();
+    let participants = library.participants(&meeting.id).unwrap();
+    let mut summary = serde_json::json!({"schema_version":1,"revision":1,"created_at":"now","provider":"ollama","model":"local","overview":[],"key_points":[],"decisions":[],"action_items":[],"dropped_items":0,
+        "participants_fingerprint":meeting_minutes_core::summary::participants_fingerprint(&transcript, &participants)});
+    std::fs::write(folder.join("summary.json"), serde_json::to_vec(&summary).unwrap()).unwrap();
+    assert!(!library.summary_participants_changed(&meeting.id).unwrap());
+    library.set_participant_name(&meeting.id, Speaker::Me, Some("Anna")).unwrap();
+    assert!(library.summary_participants_changed(&meeting.id).unwrap());
+    summary.as_object_mut().unwrap().remove("participants_fingerprint");
+    std::fs::write(folder.join("summary.json"), serde_json::to_vec(&summary).unwrap()).unwrap();
+    assert!(library.summary_participants_changed(&meeting.id).unwrap());
+    library.set_participant_name(&meeting.id, Speaker::Me, None).unwrap();
+    assert!(!library.summary_participants_changed(&meeting.id).unwrap());
+}
+
+#[test]
 fn import_segments_can_be_moved_in_groups_and_return_to_unknown() {
     let temp = TempDir::new().unwrap();
     let mut library = Library::open(temp.path().join("Library"), temp.path().join("index.sqlite3")).unwrap();
@@ -51,7 +127,7 @@ fn import_segments_can_be_moved_in_groups_and_return_to_unknown() {
 fn rename_participant_merges_defaults_labels_and_segment_assignments() {
     let temp = TempDir::new().unwrap();
     let mut library = Library::open(temp.path().join("Library"), temp.path().join("index.sqlite3")).unwrap();
-    library.set_your_name(Some("Duc"));
+    library.set_your_name(Some("Duc")).unwrap();
     let meeting = library.create_meeting("Call", at("2026-10-12T09:30:00Z")).unwrap();
     write_transcript(&library, &meeting.id, 1, "Hello");
     library.set_participant_name(&meeting.id, Speaker::Remote, Some("Anna")).unwrap();
@@ -86,7 +162,7 @@ fn participant_names_survive_rescan_and_update_transcript_markdown() {
 fn participant_defaults_merging_and_voice_notes_use_meeting_sources() {
     let temp = TempDir::new().unwrap();
     let mut library = Library::open(temp.path().join("Library"), temp.path().join("index.sqlite3")).unwrap();
-    library.set_your_name(Some("Duc"));
+    library.set_your_name(Some("Duc")).unwrap();
     let meeting = library.create_meeting("Planning", at("2026-10-12T09:30:00Z")).unwrap();
     let path = library.meeting_dir(&meeting.id);
     let transcript = serde_json::json!({"schema_version":1,"revision":1,"created_at":"2026-10-12T10:00:00Z","model":"small","language":"en","language_detected":false,"duration_ms":3000,"segments":[
