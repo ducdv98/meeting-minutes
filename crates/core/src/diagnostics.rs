@@ -19,6 +19,12 @@ pub struct DiagnosticsInput {
 #[derive(Clone, Copy)]
 pub enum LogEvent {
     Startup,
+    UpdateCheckFailed,
+    UpdateAvailable,
+    UpdatePromptFailed,
+    UpdateInstalled,
+    UpdateDeclined,
+    UpdateInstallFailed,
     RecordingStarted,
     RecordingStopped,
     RecordingPaused,
@@ -76,6 +82,12 @@ impl fmt::Display for LogEvent {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let name = match self {
             Self::Startup => "startup",
+            Self::UpdateCheckFailed => "update_check_failed",
+            Self::UpdateAvailable => "update_available",
+            Self::UpdatePromptFailed => "update_prompt_failed",
+            Self::UpdateInstalled => "update_installed",
+            Self::UpdateDeclined => "update_declined",
+            Self::UpdateInstallFailed => "update_install_failed",
             Self::RecordingStarted => "recording_started",
             Self::RecordingStopped => "recording_stopped",
             Self::RecordingPaused => "recording_paused",
@@ -168,6 +180,12 @@ fn safe_log_line(line: &str) -> bool {
     if matches!(
         event,
         "startup"
+            | "update_check_failed"
+            | "update_available"
+            | "update_prompt_failed"
+            | "update_installed"
+            | "update_declined"
+            | "update_install_failed"
             | "recording_started"
             | "recording_stopped"
             | "recording_paused"

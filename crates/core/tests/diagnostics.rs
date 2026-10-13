@@ -104,6 +104,12 @@ fn diagnostics_distinguishes_no_audio_devices_from_unavailable_enumeration() {
 fn every_log_event_is_accepted_in_the_plugin_format() {
     let events = [
         LogEvent::Startup,
+        LogEvent::UpdateCheckFailed,
+        LogEvent::UpdateAvailable,
+        LogEvent::UpdatePromptFailed,
+        LogEvent::UpdateInstalled,
+        LogEvent::UpdateDeclined,
+        LogEvent::UpdateInstallFailed,
         LogEvent::RecordingStarted,
         LogEvent::RecordingStopped,
         LogEvent::RecordingPaused,

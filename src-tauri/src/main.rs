@@ -37,9 +37,10 @@ use tauri::{
     tray::{TrayIcon, TrayIconBuilder},
     AppHandle, DragDropEvent, Emitter, Manager, State, WindowEvent,
 };
-use tauri_plugin_dialog::DialogExt;
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 use tauri_plugin_global_shortcut::{Shortcut, ShortcutState};
 use tauri_plugin_log::{RotationStrategy, Target, TargetKind};
+use tauri_plugin_updater::UpdaterExt;
 
 type LibraryState = Mutex<Result<Library, String>>;
 type RecorderState = Mutex<Recorder<WasapiOpener, QpcClock>>;
@@ -47,10 +48,14 @@ type ProcessorState = Mutex<Processor>;
 
 const RECORD_SHORTCUT: &str = "ctrl+alt+shift+r";
 const PAUSE_SHORTCUT: &str = "ctrl+alt+shift+p";
+const UPDATER_PUBLIC_KEY_PLACEHOLDER: &str = "REPLACE_WITH_TICKET_04_PUBLIC_KEY";
 
 struct SettingsPath(PathBuf);
 struct ModelsDir(PathBuf);
 struct Quitting(AtomicBool);
+struct PromptingUpdate(AtomicBool);
+struct InstallingUpdate(AtomicBool);
+struct UpdateStartGate(Mutex<()>);
 struct Secrets(Box<dyn SecretStore>);
 struct Http(Arc<dyn HttpClient>);
 
@@ -243,6 +248,8 @@ fn publish_import(app: &AppHandle) -> Result<ImportStatus, String> {
 }
 
 fn queue_imports(app: &AppHandle, paths: Vec<PathBuf>) -> Result<ImportStatus, String> {
+    let _update_gate = lock_update_start_gate(app)?;
+    ensure_update_not_active(app)?;
     let queue = app.state::<ImportQueue>();
     let mut state = queue.lock().map_err(|e| e.to_string())?;
     for path in paths {
@@ -320,8 +327,12 @@ fn import_worker(app: AppHandle) {
                 if !app.state::<Quitting>().0.load(Ordering::SeqCst)
                     && Settings::load(&app.state::<SettingsPath>().0).auto_process
                 {
-                    if let Ok(mut processor) = lock_processor(&app) {
-                        processor.enqueue(&meeting.id);
+                    if let Ok(_gate) = lock_update_start_gate(&app) {
+                        if ensure_update_not_active(&app).is_ok() {
+                            if let Ok(mut processor) = lock_processor(&app) {
+                                processor.enqueue(&meeting.id);
+                            }
+                        }
                     }
                     let _ = publish_processing(&app);
                 }
@@ -380,6 +391,14 @@ fn lock_processor(app: &AppHandle) -> Result<std::sync::MutexGuard<'_, Processor
         .inner()
         .lock()
         .map_err(|e| e.to_string())
+}
+
+fn lock_update_start_gate(app: &AppHandle) -> Result<std::sync::MutexGuard<'_, ()>, String> {
+    app.state::<UpdateStartGate>()
+        .inner()
+        .0
+        .lock()
+        .map_err(|error| error.to_string())
 }
 
 fn meeting_busy(app: &AppHandle, meeting_id: &str) -> Result<(), String> {
@@ -456,6 +475,8 @@ fn transcribe_meeting(
     meeting_id: String,
     model: Option<String>,
 ) -> Result<ProcessingStatus, String> {
+    let _update_gate = lock_update_start_gate(&app)?;
+    ensure_update_not_active(&app)?;
     if let Some(name) = model.as_deref() {
         if !MODELS.iter().any(|candidate| candidate.name == name) {
             return Err(format!("Unknown transcription model: {name}"));
@@ -771,6 +792,8 @@ fn summary_send_plan(app: AppHandle, meeting_id: String) -> Result<SendPlan, Str
 }
 
 fn start_summary(app: &AppHandle, id: String, provider: ai::HttpProvider) -> Result<(), String> {
+    let _update_gate = lock_update_start_gate(app)?;
+    ensure_update_not_active(app)?;
     let kind = provider.kind();
     {
         let state = app.state::<AiJobs>();
@@ -958,6 +981,8 @@ fn begin_ask(
     question: Option<String>,
     consent: bool,
 ) -> Result<AskView, String> {
+    let _update_gate = lock_update_start_gate(app)?;
+    ensure_update_not_active(app)?;
     meeting_busy(app, &id)?;
     let (_, transcript, dir) = meeting_context(app, &id)?;
     let provider = configured_ai(app)?;
@@ -1098,10 +1123,7 @@ fn processing_worker(app: AppHandle) {
         if app.state::<Quitting>().0.load(Ordering::SeqCst) {
             continue;
         }
-        if !matches!(status(&app), Ok(status)
-            if status.phase == Phase::Idle
-                && !status.saves.iter().any(|save| save.state == SaveState::Saving))
-        {
+        if !recorder_is_idle(&app).unwrap_or(false) {
             continue;
         }
         // The model is read with `next()`, so a rerun's choice cannot leak into this run.
@@ -1201,10 +1223,6 @@ fn processing_worker(app: AppHandle) {
         } else {
             LogEvent::ProcessingFailed
         });
-        if let Ok(mut processor) = lock_processor(&app) {
-            processor.finished(&id, result);
-        }
-        let _ = publish_processing(&app);
         if success {
             let library_state = app.state::<LibraryState>();
             if let Ok(mut library) = library_state.lock() {
@@ -1224,6 +1242,11 @@ fn processing_worker(app: AppHandle) {
                 }
             }
         }
+        // Keep the job running until transcript refresh and optional auto-summary have started.
+        if let Ok(mut processor) = lock_processor(&app) {
+            processor.finished(&id, result);
+        }
+        let _ = publish_processing(&app);
     });
 }
 
@@ -1359,6 +1382,8 @@ fn stop_recording(app: AppHandle) -> Result<RecorderStatus, String> {
 
 #[tauri::command]
 fn retry_save(app: AppHandle, meeting_id: String) -> Result<RecorderStatus, String> {
+    let _update_gate = lock_update_start_gate(&app)?;
+    ensure_update_not_active(&app)?;
     let job = lock_recorder(&app)?
         .retry_save(&meeting_id)
         .map_err(|error| error.to_string())?;
@@ -1453,7 +1478,9 @@ fn start_with(
 ) -> Result<RecorderStatus, String> {
     let result = (|| {
         {
+            let _update_gate = lock_update_start_gate(app)?;
             let mut recorder = lock_recorder(app)?;
+            ensure_update_not_active(app)?;
             let library_state = app.state::<LibraryState>();
             let mut library = library_state.lock().map_err(|error| error.to_string())?;
             let library = library.as_mut().map_err(|error| error.clone())?;
@@ -1511,8 +1538,12 @@ fn spawn_saves(app: AppHandle, jobs: Vec<SaveJob>) {
                 if !app.state::<Quitting>().0.load(Ordering::SeqCst)
                     && Settings::load(&app.state::<SettingsPath>().0).auto_process
                 {
-                    if let Ok(mut processor) = lock_processor(&app) {
-                        processor.enqueue(&job.meeting_id);
+                    if let Ok(_gate) = lock_update_start_gate(&app) {
+                        if ensure_update_not_active(&app).is_ok() {
+                            if let Ok(mut processor) = lock_processor(&app) {
+                                processor.enqueue(&job.meeting_id);
+                            }
+                        }
                     }
                     let _ = publish_processing(&app);
                 }
@@ -1685,6 +1716,222 @@ fn recording_icon(icon: &Image<'_>) -> Image<'static> {
     Image::new_owned(rgba, width, height)
 }
 
+fn recorder_is_idle(app: &AppHandle) -> Result<bool, String> {
+    Ok(recorder_status_is_idle(&status(app)?))
+}
+
+fn recorder_status_is_idle(status: &RecorderStatus) -> bool {
+    status.phase == Phase::Idle
+        && !status
+            .saves
+            .iter()
+            .any(|save| save.state == SaveState::Saving)
+}
+
+fn ensure_update_not_active(app: &AppHandle) -> Result<(), String> {
+    if app.state::<PromptingUpdate>().0.load(Ordering::SeqCst)
+        || app.state::<InstallingUpdate>().0.load(Ordering::SeqCst)
+    {
+        return Err("Finish the update prompt or installation before starting new work".into());
+    }
+    Ok(())
+}
+
+// Keep the established processor -> AI -> recorder lock order used by meeting_busy_locked.
+fn with_update_state<T>(
+    app: &AppHandle,
+    check: impl FnOnce(&Processor, &AiJobsInner, &RecorderStatus, &ImportState) -> T,
+) -> Result<T, String> {
+    let processor = lock_processor(app)?;
+    let jobs = app.state::<AiJobs>();
+    let jobs = jobs.lock().map_err(|error| error.to_string())?;
+    let recorder = lock_recorder(app)?;
+    let recorder_status = recorder.status();
+    let imports = app.state::<ImportQueue>();
+    let imports = imports.lock().map_err(|error| error.to_string())?;
+    Ok(check(&processor, &jobs, &recorder_status, &imports))
+}
+
+fn app_is_idle_for_update(
+    recorder: &RecorderStatus,
+    processor: &Processor,
+    imports: &ImportState,
+    jobs: &AiJobsInner,
+) -> bool {
+    recorder_status_is_idle(recorder)
+        && !processor.is_running()
+        && !processor
+            .status()
+            .jobs
+            .iter()
+            .any(|job| job.stage != JobStage::Failed)
+        && !imports.running
+        && imports.current.is_none()
+        && imports.queue.is_empty()
+        && !jobs
+            .summaries
+            .values()
+            .any(|job| matches!(job.state, SummaryJobState::Running))
+        && jobs.asks.is_empty()
+}
+
+struct UpdatePromptGuard(AppHandle);
+
+impl Drop for UpdatePromptGuard {
+    fn drop(&mut self) {
+        self.0
+            .state::<PromptingUpdate>()
+            .0
+            .store(false, Ordering::SeqCst);
+    }
+}
+
+fn claim_update_prompt(app: &AppHandle) -> Result<Option<UpdatePromptGuard>, String> {
+    let _update_gate = lock_update_start_gate(app)?;
+    with_update_state(app, |processor, jobs, recorder, imports| {
+        if !app_is_idle_for_update(recorder, processor, imports, jobs)
+            || app.state::<Quitting>().0.load(Ordering::SeqCst)
+            || app.state::<PromptingUpdate>().0.load(Ordering::SeqCst)
+            || app.state::<InstallingUpdate>().0.load(Ordering::SeqCst)
+        {
+            return None;
+        }
+        app.state::<PromptingUpdate>()
+            .0
+            .store(true, Ordering::SeqCst);
+        Some(UpdatePromptGuard(app.clone()))
+    })
+}
+
+async fn wait_for_idle_app(app: &AppHandle) -> Result<(), String> {
+    loop {
+        if app.state::<Quitting>().0.load(Ordering::SeqCst) {
+            return Err("App is quitting".into());
+        }
+        if with_update_state(app, |processor, jobs, recorder, imports| {
+            app_is_idle_for_update(recorder, processor, imports, jobs)
+        })? {
+            return Ok(());
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+}
+
+fn claim_update_install(app: &AppHandle) -> Result<bool, String> {
+    let _update_gate = lock_update_start_gate(app)?;
+    with_update_state(app, |processor, jobs, recorder, imports| {
+        if !app_is_idle_for_update(recorder, processor, imports, jobs)
+            || app.state::<Quitting>().0.load(Ordering::SeqCst)
+            || app.state::<PromptingUpdate>().0.load(Ordering::SeqCst)
+            || app.state::<InstallingUpdate>().0.load(Ordering::SeqCst)
+        {
+            return false;
+        }
+        app.state::<InstallingUpdate>()
+            .0
+            .store(true, Ordering::SeqCst);
+        true
+    })
+}
+
+async fn check_for_update(app: AppHandle) {
+    let key_is_placeholder = app
+        .config()
+        .plugins
+        .0
+        .get("updater")
+        .and_then(|config| config.get("pubkey"))
+        .and_then(|key| key.as_str())
+        == Some(UPDATER_PUBLIC_KEY_PLACEHOLDER);
+    if key_is_placeholder {
+        log_event(LogEvent::UpdateCheckFailed);
+        return;
+    }
+
+    let update = match app.updater() {
+        Ok(updater) => match updater.check().await {
+            Ok(Some(update)) => update,
+            Ok(None) => return,
+            Err(_) => {
+                log_event(LogEvent::UpdateCheckFailed);
+                return;
+            }
+        },
+        Err(_) => {
+            log_event(LogEvent::UpdateCheckFailed);
+            return;
+        }
+    };
+    log_event(LogEvent::UpdateAvailable);
+
+    let install = loop {
+        if wait_for_idle_app(&app).await.is_err() {
+            if !app.state::<Quitting>().0.load(Ordering::SeqCst) {
+                log_event(LogEvent::UpdatePromptFailed);
+            }
+            return;
+        }
+        let dialog_app = app.clone();
+        let version = update.version.clone();
+        match tauri::async_runtime::spawn_blocking(move || {
+            let _guard = claim_update_prompt(&dialog_app).ok()??;
+            Some(
+                dialog_app
+                    .dialog()
+                    .message(format!(
+                        "Meeting Minutes {version} is available. Install it now? The app will restart."
+                    ))
+                    .title("Update available")
+                    .buttons(MessageDialogButtons::OkCancelCustom(
+                        "Install".into(),
+                        "Later".into(),
+                    ))
+                    .blocking_show(),
+            )
+        })
+        .await
+        {
+            Ok(Some(install)) => break install,
+            Ok(None) => continue,
+            Err(_) => {
+                log_event(LogEvent::UpdatePromptFailed);
+                return;
+            }
+        }
+    };
+    if !install {
+        log_event(LogEvent::UpdateDeclined);
+        return;
+    }
+
+    loop {
+        if wait_for_idle_app(&app).await.is_err() {
+            if !app.state::<Quitting>().0.load(Ordering::SeqCst) {
+                log_event(LogEvent::UpdateInstallFailed);
+            }
+            return;
+        }
+        match claim_update_install(&app) {
+            Ok(true) => break,
+            Ok(false) => continue,
+            Err(_) => {
+                log_event(LogEvent::UpdateInstallFailed);
+                return;
+            }
+        }
+    }
+    if update.download_and_install(|_, _| {}, || {}).await.is_err() {
+        app.state::<InstallingUpdate>()
+            .0
+            .store(false, Ordering::SeqCst);
+        log_event(LogEvent::UpdateInstallFailed);
+        return;
+    }
+    // Only non-Windows reaches this point; on Windows the updater exits after launching NSIS.
+    log_event(LogEvent::UpdateInstalled);
+    app.restart();
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(
@@ -1699,6 +1946,7 @@ fn main() {
                 .build(),
         )
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_shortcuts([RECORD_SHORTCUT, PAUSE_SHORTCUT])
@@ -1745,6 +1993,9 @@ fn main() {
             app.manage(Mutex::new(AiJobsInner::default()));
             app.manage(ModelsDir(app.path().app_data_dir()?.join("models")));
             app.manage(Quitting(AtomicBool::new(false)));
+            app.manage(PromptingUpdate(AtomicBool::new(false)));
+            app.manage(InstallingUpdate(AtomicBool::new(false)));
+            app.manage(UpdateStartGate(Mutex::new(())));
             app.manage(Mutex::new(Processor::new()));
             app.manage(Mutex::new(ImportState::default()));
             app.manage(ImportCancel(AtomicBool::new(false)));
@@ -1810,6 +2061,7 @@ fn main() {
 
             recover(app.handle());
             processing_worker(app.handle().clone());
+            tauri::async_runtime::spawn(check_for_update(app.handle().clone()));
 
             // Elapsed time for the window indicator and the tray while a Recording runs.
             let handle = app.handle().clone();

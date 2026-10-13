@@ -24,6 +24,7 @@ jobs:
           cache: pnpm
       - run: cargo test -p meeting_minutes_core
       - run: cargo test -p capture-spike
+      - run: node --test scripts/check-release-version.node.mjs
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm test

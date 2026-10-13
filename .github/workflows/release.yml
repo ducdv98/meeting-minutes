@@ -1,0 +1,61 @@
+name: Release draft
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+jobs:
+  draft:
+    runs-on: windows-latest
+    env:
+      RELEASE_TAG: ${{ github.ref_name }}
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.3.4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: pnpm
+      - name: Check tag and app versions
+        run: node scripts/check-release-version.mjs
+      - name: Refuse to change a published Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if release_draft=$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft 2>&1); then
+            if [ "$release_draft" != true ]; then
+              echo "Release $RELEASE_TAG is already published" >&2
+              exit 1
+            fi
+          elif [[ "${release_draft,,}" != *"release not found"* ]]; then
+            echo "$release_draft" >&2
+            exit 1
+          fi
+      - uses: Swatinem/rust-cache@v2
+      - run: pnpm install --frozen-lockfile
+      - run: node --test scripts/check-release-version.node.mjs
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+      - run: cargo test --workspace
+      - uses: tauri-apps/tauri-action@v0.6.2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: Meeting Minutes ${{ github.ref_name }}
+          releaseDraft: true
+          includeUpdaterJson: true
+          args: --bundles nsis --config src-tauri/tauri.release.conf.json

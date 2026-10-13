@@ -42,5 +42,12 @@
       "icons/icon.png",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": ["https://github.com/ducdv98/meeting-minutes/releases/latest/download/latest.json"],
+      "pubkey": "REPLACE_WITH_TICKET_04_PUBLIC_KEY",
+      "windows": { "installMode": "passive" }
+    }
   }
 }
