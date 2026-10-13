@@ -45,6 +45,7 @@ impl SpeechEngine for FakeEngine {
                 start_ms: 0,
                 end_ms: 120,
                 text: format!(" words {} ", self.calls),
+                words: vec![],
             })
             .into_iter()
             .collect())
@@ -300,6 +301,7 @@ impl SpeechEngine for AudibleEngine {
                 start_ms: 0,
                 end_ms: 80,
                 text: "Speech".into(),
+                words: vec![],
             })
             .into_iter()
             .collect())

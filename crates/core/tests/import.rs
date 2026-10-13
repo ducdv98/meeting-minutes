@@ -200,6 +200,7 @@ impl meeting_minutes_core::processing::SpeechEngine for FakeEngine {
             start_ms: 0,
             end_ms: 120,
             text: "hello".into(),
+            words: vec![],
         }])
     }
 }

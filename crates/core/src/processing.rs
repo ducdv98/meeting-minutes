@@ -3,7 +3,8 @@ use crate::{
     diagnostics::{log_event, LogEvent, TranscriptionEnvironment},
     meeting_file::{MeetingFile, RecordingEntry},
     transcript::{
-        assign_ids, place_segments, Language, PlacedSegment, RawSegment, Speaker, Transcript,
+        assign_ids, place_segments, segment_sentences, Language, PlacedSegment, RawSegment,
+        Speaker, Transcript,
     },
 };
 use serde::{Serialize, Serializer};
@@ -427,7 +428,7 @@ fn transcribe_meeting_inner(
         language_detected: detected && language.is_some(),
         duration_ms: metadata.duration_ms,
         segments: assign_ids(
-            per_source.into_iter().flatten().collect(),
+            per_source.into_iter().flat_map(segment_sentences).collect(),
             metadata.duration_ms,
         ),
     };
