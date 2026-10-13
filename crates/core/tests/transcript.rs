@@ -1,7 +1,7 @@
 use meeting_minutes_core::participant::{MeetingParticipants, Participants};
 use meeting_minutes_core::transcript::{
     assign_ids, place_segments, render_markdown, segment_sentences, Language, PlacedSegment,
-    RawSegment, RawWord, Speaker, Transcript,
+    RawSegment, RawWord, Speaker, Transcript, MAX_SEGMENT_MS, MAX_WORD_MS, MIN_SEGMENT_WORDS,
 };
 use meeting_minutes_core::Library;
 use tempfile::TempDir;
@@ -508,4 +508,59 @@ fn meeting_language_updates_without_discarding_other_metadata() {
     assert_eq!(updated["future"], metadata["future"]);
     library.set_language(&meeting.id, None).unwrap();
     assert_eq!(library.meeting(&meeting.id).unwrap().language, None);
+}
+
+fn timed_words(words: &[(u64, u64, &str)]) -> RawSegment {
+    RawSegment {
+        start_ms: words[0].0,
+        end_ms: words[words.len() - 1].1,
+        text: words.iter().map(|word| word.2).collect::<Vec<_>>().join(" "),
+        words: words
+            .iter()
+            .map(|&(start_ms, end_ms, text)| RawWord {
+                start_ms,
+                end_ms,
+                text: text.into(),
+            })
+            .collect(),
+    }
+}
+
+#[test]
+fn a_word_timed_across_a_long_silence_does_not_stretch_its_segment() {
+    let raw = timed_words(&[
+        (0, 400, "Police"),
+        (500, 900, "said"),
+        (1_000, 1_400, "he"),
+        (1_500, 1_900, "appeared"),
+        (2_000, 28_000, "today."),
+    ]);
+    let segments = segment_sentences(place_segments(&[raw], 30_000, 0, Speaker::Remote));
+    assert_eq!(
+        segments
+            .iter()
+            .map(|s| (s.start_ms, s.end_ms, s.text.as_str()))
+            .collect::<Vec<_>>(),
+        vec![(0, 2_000 + MAX_WORD_MS, "Police said he appeared today.")]
+    );
+}
+
+#[test]
+fn a_long_split_does_not_leave_a_fragment_too_short_to_stand_alone() {
+    // Sixteen 1 s words with 0.5 s pauses, and the longest pause before the last word.
+    let mut words = Vec::new();
+    let mut at = 0;
+    for index in 0..16u64 {
+        if index == 15 {
+            at += 1_000;
+        }
+        words.push((at, at + 1_000, "word"));
+        at += 1_500;
+    }
+    let segments = segment_sentences(place_segments(&[timed_words(&words)], at, 0, Speaker::Me));
+    assert!(segments.len() >= 2);
+    for segment in &segments {
+        assert!(segment.words.len() >= MIN_SEGMENT_WORDS, "{segments:?}");
+        assert!(segment.end_ms - segment.start_ms <= MAX_SEGMENT_MS);
+    }
 }

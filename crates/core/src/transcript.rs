@@ -64,6 +64,8 @@ pub const MAX_VAD_GAP_MS: u64 = 2_000;
 pub const MIN_SEGMENT_MS: u64 = 1_000;
 pub const MIN_SEGMENT_WORDS: usize = 3;
 pub const MAX_SEGMENT_MS: u64 = 20_000;
+/// Whisper can time a sentence's last word across the silence after it; no spoken word is longer.
+pub const MAX_WORD_MS: u64 = 5_000;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct PlacedSegment {
@@ -167,6 +169,9 @@ pub fn segment_sentences(placed: Vec<PlacedSegment>) -> Vec<PlacedSegment> {
             1 => Speaker::Remote,
             _ => Speaker::Unknown,
         };
+        for word in &mut words {
+            word.end_ms = word.end_ms.min(word.start_ms + MAX_WORD_MS);
+        }
         words.sort_by_key(|word| (word.start_ms, word.end_ms));
         let mut sentence = Vec::new();
         let mut sentences = Vec::new();
@@ -232,9 +237,15 @@ pub fn segment_sentences(placed: Vec<PlacedSegment>) -> Vec<PlacedSegment> {
             if words.last().unwrap().end_ms - words[0].start_ms > MAX_SEGMENT_MS && words.len() > 1
             {
                 let middle = words.len() / 2;
+                // Neither part may be a fragment too short to stand alone, when the words allow it.
+                let fragment = |part: &[RawWord]| {
+                    part.len() < MIN_SEGMENT_WORDS
+                        || part[part.len() - 1].end_ms - part[0].start_ms < MIN_SEGMENT_MS
+                };
                 let split = (1..words.len())
                     .max_by_key(|&index| {
                         (
+                            !fragment(&words[..index]) && !fragment(&words[index..]),
                             words[index]
                                 .start_ms
                                 .saturating_sub(words[index - 1].end_ms),
