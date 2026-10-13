@@ -4,7 +4,7 @@ import Player, { PlayerContext, type PlayerHandle } from "./Player";
 import type { TimelinePlayer } from "./timeline";
 import { formatElapsed } from "./recording";
 import { onLibraryChanged } from "./recording";
-import { cancelProcessing, dismissProcessing, enqueueTranscription, getSettings, meetingTranscript, MODELS, onProcessingStatus, onTranscriptDraft, processingStageLabel, processingStatus, setMeetingLanguage, type DraftSegment, type Language, type ProcessingJob, type Speaker, type Transcript } from "./processing";
+import { cancelProcessing, dismissProcessing, enqueueTranscription, getSettings, meetingTranscript, MODELS, onProcessingStatus, onTranscriptDraft, processingStageLabel, processingStatus, setMeetingLanguage, transcriptDraft, type DraftSegment, type Language, type ProcessingJob, type Speaker, type Transcript } from "./processing";
 import TranscriptView from "./TranscriptView";
 import DraftView from "./DraftView";
 import { editSegment, labelParticipantName, participantList, speakerName } from "./transcript";
@@ -51,6 +51,15 @@ function meetingDateTime(value: string): string {
   const label = days === 0 ? "Today" : days === 1 ? "Yesterday" : new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", year: "numeric" }).format(date);
   const time = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", hour12: false }).format(date);
   return `${label}, ${time}`;
+}
+
+const draftKey = (segment: DraftSegment) => `${segment.start_ms}:${segment.end_ms}:${segment.speaker}:${segment.text}`;
+
+/** Adds Draft Segments in time order, skipping ones already shown (the stored Draft and live events overlap). */
+function mergeDraft(current: DraftSegment[], incoming: DraftSegment[]): DraftSegment[] {
+  const seen = new Set(current.map(draftKey));
+  const added = incoming.filter((segment) => { const key = draftKey(segment); if (seen.has(key)) return false; seen.add(key); return true; });
+  return added.length ? [...current, ...added].sort((a, b) => a.start_ms - b.start_ms || a.end_ms - b.end_ms) : current;
 }
 
 export default function MeetingView({ id, onBack, onRenamed, onOpenSettings, openAt, onOpened, onDeleted, recordingMeetingId }: Props) {
@@ -105,7 +114,12 @@ export default function MeetingView({ id, onBack, onRenamed, onOpenSettings, ope
       (reason) => { if (active && detailRequest === detailVersion.current) setError(String(reason)); },
     );
     meetingTranscript(id).then((next) => { if (active && transcriptRequest === transcriptVersion.current) { publishedRevision.current = next?.revision ?? 0; setTranscript(next); setTranscriptLoaded(true); } }, (reason) => { if (active && transcriptRequest === transcriptVersion.current) { setError(String(reason)); setTranscriptLoaded(true); } });
-    processingStatus().then((next) => { if (active && !processingEventSeen.current) { jobRef.current = next.jobs.find((item) => item.meeting_id === id) ?? null; jobKnown.current = true; setJob(jobRef.current); } }, (reason) => { if (active) setError(String(reason)); });
+    processingStatus().then((next) => {
+      if (!active || processingEventSeen.current) return;
+      jobRef.current = next.jobs.find((item) => item.meeting_id === id) ?? null; jobKnown.current = true; setJob(jobRef.current);
+      // Segments emitted before this view opened only live in the stored Draft.
+      if (jobRef.current?.stage === "transcribing") void transcriptDraft(id).then((stored) => { if (active && jobRef.current?.stage === "transcribing") setDraft((current) => mergeDraft(current, stored)); }, () => {});
+    }, (reason) => { if (active) setError(String(reason)); });
     aiStatus().then((next) => { if (active) setProviderStatus(next); }, (reason) => { if (active) setError(String(reason)); });
     getSettings().then((next) => { if (active) setYourName(next.your_name); }, (reason) => { if (active) setError(String(reason)); });
     participantNames().then((next) => { if (active) setSuggestions(next); }, () => {});
@@ -134,7 +148,7 @@ export default function MeetingView({ id, onBack, onRenamed, onOpenSettings, ope
   useEffect(() => {
     let active = true;
     const processing = onProcessingStatus((status) => { if (active) { processingEventSeen.current = true; const next = status.jobs.find((item) => item.meeting_id === id) ?? null; jobRef.current = next; jobKnown.current = true; setJob(next); if (!next || next.stage === "failed") setDraft([]); } });
-    const draftListener = onTranscriptDraft((event) => { if (active && event.meeting_id === id && (!jobKnown.current || jobRef.current?.stage === "transcribing")) setDraft((current) => [...current, ...event.segments].sort((a, b) => a.start_ms - b.start_ms || a.end_ms - b.end_ms)); });
+    const draftListener = onTranscriptDraft((event) => { if (active && event.meeting_id === id && (!jobKnown.current || jobRef.current?.stage === "transcribing")) setDraft((current) => mergeDraft(current, event.segments)); });
     const library = onLibraryChanged(() => {
       const transcriptRequest = ++transcriptVersion.current;
       const detailRequest = ++detailVersion.current;

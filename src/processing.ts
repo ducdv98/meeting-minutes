@@ -33,6 +33,7 @@ export const enqueueTranscription = (meetingId: string, model?: string) => invok
 export const cancelProcessing = (meetingId: string) => invoke<ProcessingStatus>("cancel_processing", { meetingId });
 export const dismissProcessing = (meetingId: string) => invoke<ProcessingStatus>("dismiss_processing", { meetingId });
 export const meetingTranscript = (meetingId: string) => invoke<Transcript | null>("meeting_transcript", { meetingId });
+export const transcriptDraft = (meetingId: string) => invoke<DraftSegment[]>("transcript_draft", { meetingId });
 export const setMeetingLanguage = (meetingId: string, language: Language | null) => invoke<void>("set_meeting_language", { meetingId, language });
 export const getSettings = () => invoke<Settings>("get_settings");
 export const updateSettings = (autoProcess: boolean, model: string, vocabulary: string[], language: Language | null, yourName: string | null) => invoke<Settings>("update_settings", { autoProcess, model, vocabulary, language, yourName });

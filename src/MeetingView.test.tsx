@@ -4,7 +4,7 @@ import MeetingView from "./MeetingView";
 import { deleteMeeting, meetingDetail, openMeetingFolder, renameMeeting, setParticipantName, participantNames, renameParticipant, removeParticipant, assignSegments, type MeetingDetail } from "./library";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { onLibraryChanged } from "./recording";
-import { processingStatus, meetingTranscript, enqueueTranscription, cancelProcessing, onProcessingStatus, onTranscriptDraft, setMeetingLanguage, getSettings, type ProcessingStatus } from "./processing";
+import { processingStatus, meetingTranscript, enqueueTranscription, cancelProcessing, onProcessingStatus, onTranscriptDraft, transcriptDraft, setMeetingLanguage, getSettings, type ProcessingStatus } from "./processing";
 import { editSegment } from "./transcript";
 import { aiStatus } from "./ai";
 import { meetingSummary, summaryStatus } from "./summary";
@@ -14,7 +14,7 @@ vi.mock("./ai", async (original) => ({ ...(await original<typeof import("./ai")>
 vi.mock("./summary", () => ({ meetingSummary: vi.fn(), summaryParticipantsChanged: vi.fn(() => Promise.resolve(false)), summaryStatus: vi.fn(), onSummaryStatus: vi.fn(() => Promise.resolve(() => {})) }));
 vi.mock("./ask", () => ({ meetingAsks: vi.fn(), onAskDelta: vi.fn(() => Promise.resolve(() => {})), onAsksChanged: vi.fn(() => Promise.resolve(() => {})), answerLabel: () => "" }));
 vi.mock("./library", () => ({ meetingDetail: vi.fn(), openMeetingFolder: vi.fn(), renameMeeting: vi.fn(), deleteMeeting: vi.fn(), setParticipantName: vi.fn(), participantNames: vi.fn(), renameParticipant: vi.fn(), removeParticipant: vi.fn(), assignSegments: vi.fn() }));
-vi.mock("./processing", async (importOriginal) => ({ ...(await importOriginal<typeof import("./processing")>()), processingStatus: vi.fn(), meetingTranscript: vi.fn(), enqueueTranscription: vi.fn(), cancelProcessing: vi.fn(), dismissProcessing: vi.fn(), setMeetingLanguage: vi.fn(), getSettings: vi.fn(), onProcessingStatus: vi.fn(() => Promise.resolve(() => {})), onTranscriptDraft: vi.fn(() => Promise.resolve(() => {})) }));
+vi.mock("./processing", async (importOriginal) => ({ ...(await importOriginal<typeof import("./processing")>()), processingStatus: vi.fn(), meetingTranscript: vi.fn(), enqueueTranscription: vi.fn(), cancelProcessing: vi.fn(), dismissProcessing: vi.fn(), setMeetingLanguage: vi.fn(), getSettings: vi.fn(), transcriptDraft: vi.fn(), onProcessingStatus: vi.fn(() => Promise.resolve(() => {})), onTranscriptDraft: vi.fn(() => Promise.resolve(() => {})) }));
 vi.mock("./recording", async (importOriginal) => ({ ...(await importOriginal<typeof import("./recording")>()), onLibraryChanged: vi.fn(() => Promise.resolve(() => {})) }));
 vi.mock("./transcript", async (importOriginal) => ({ ...(await importOriginal<typeof import("./transcript")>()), editSegment: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ convertFileSrc: vi.fn((path: string) => `asset:${path}`) }));
@@ -45,6 +45,7 @@ beforeEach(() => {
   vi.mocked(assignSegments).mockResolvedValue();
   vi.mocked(getSettings).mockResolvedValue({ recording_notice_acknowledged: true, auto_process: true, model: "small", vocabulary: [], language: null, your_name: "Duc", ai: { provider: null, ollama_model: null, openai_model: null, anthropic_model: null } });
   vi.mocked(processingStatus).mockResolvedValue({ jobs: [] });
+  vi.mocked(transcriptDraft).mockResolvedValue([]);
   vi.mocked(meetingTranscript).mockResolvedValue(null);
   vi.mocked(enqueueTranscription).mockResolvedValue({ jobs: [{ meeting_id: "old", model: null, stage: "queued", progress: 0, error: null }] });
   vi.mocked(cancelProcessing).mockResolvedValue({ jobs: [] });
@@ -409,6 +410,31 @@ it("shows arriving Draft Segments instead of the old Revision and restores it on
   expect(screen.queryByText("Earlier words")).toBeNull();
   expect(screen.queryByText("Late Draft words")).toBeNull();
   expect(screen.getByText("Old Revision words")).toBeTruthy();
+});
+
+it("shows the stored Draft when a Meeting opens mid-Processing and appends later Segments once", async () => {
+  vi.mocked(processingStatus).mockResolvedValue({ jobs: [{ meeting_id: "old", model: "small", stage: "transcribing", progress: 0.4, error: null }] });
+  vi.mocked(transcriptDraft).mockResolvedValue([
+    { start_ms: 0, end_ms: 900, text: "Stored first", speaker: "me" },
+    { start_ms: 1000, end_ms: 2000, text: "Stored second", speaker: "remote" },
+  ]);
+  render(<MeetingView id="old" onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
+  expect(await screen.findByText("Stored first")).toBeTruthy();
+  expect(transcriptDraft).toHaveBeenCalledWith("old");
+  expect(screen.getByText("Draft · Transcribing…")).toBeTruthy();
+  await act(async () => vi.mocked(onTranscriptDraft).mock.calls[0][0]({ meeting_id: "old", segments: [
+    { start_ms: 1000, end_ms: 2000, text: "Stored second", speaker: "remote" },
+    { start_ms: 2500, end_ms: 3000, text: "Arrived later", speaker: "me" },
+  ] }));
+  expect(within(screen.getByRole("list", { name: "Draft Segments" })).getAllByRole("listitem").map((row) => row.textContent)).toEqual(["00:00DucStored first", "00:01RemoteStored second", "00:02DucArrived later"]);
+});
+
+it("does not fetch a stored Draft when the Meeting is not transcribing", async () => {
+  vi.mocked(processingStatus).mockResolvedValue({ jobs: [{ meeting_id: "old", model: "small", stage: "queued", progress: 0, error: null }] });
+  render(<MeetingView id="old" onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
+  await screen.findByRole("heading", { name: "Planning" });
+  await waitFor(() => expect(processingStatus).toHaveBeenCalled());
+  expect(transcriptDraft).not.toHaveBeenCalled();
 });
 
 it("replaces the Draft with the published Revision and clears it on failure", async () => {

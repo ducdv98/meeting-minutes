@@ -69,6 +69,43 @@ struct TranscriptDraftEvent {
     segments: Vec<meeting_minutes_core::transcript::PlacedSegment>,
 }
 
+/// The Draft of the Meeting being transcribed, kept in memory only so a Meeting
+/// view opened mid-Processing can catch up. Never written to the Library.
+#[derive(Default)]
+struct DraftState {
+    meeting_id: String,
+    segments: Vec<meeting_minutes_core::transcript::PlacedSegment>,
+}
+
+type DraftStore = Mutex<DraftState>;
+
+fn emit_draft(
+    app: &AppHandle,
+    meeting_id: &str,
+    segments: &[meeting_minutes_core::transcript::PlacedSegment],
+) {
+    if let Ok(mut draft) = app.state::<DraftStore>().lock() {
+        if draft.meeting_id != meeting_id {
+            draft.meeting_id = meeting_id.to_string();
+            draft.segments.clear();
+        }
+        draft.segments.extend_from_slice(segments);
+    }
+    let _ = app.emit(
+        "transcript-draft",
+        TranscriptDraftEvent {
+            meeting_id: meeting_id.to_string(),
+            segments: segments.to_vec(),
+        },
+    );
+}
+
+fn clear_draft(app: &AppHandle) {
+    if let Ok(mut draft) = app.state::<DraftStore>().lock() {
+        *draft = DraftState::default();
+    }
+}
+
 const RECORD_SHORTCUT: &str = "ctrl+alt+shift+r";
 const PAUSE_SHORTCUT: &str = "ctrl+alt+shift+p";
 const UPDATER_PUBLIC_KEY_PLACEHOLDER: &str = "REPLACE_WITH_TICKET_04_PUBLIC_KEY";
@@ -483,6 +520,19 @@ fn processing_stage(app: &AppHandle, id: &str, stage: JobStage, progress: f32) {
 #[tauri::command]
 fn processing_status(app: AppHandle) -> Result<ProcessingStatus, String> {
     publish_processing(&app)
+}
+
+#[tauri::command]
+fn transcript_draft(
+    state: State<'_, DraftStore>,
+    meeting_id: String,
+) -> Result<Vec<meeting_minutes_core::transcript::PlacedSegment>, String> {
+    let draft = state.lock().map_err(|error| error.to_string())?;
+    Ok(if draft.meeting_id == meeting_id {
+        draft.segments.clone()
+    } else {
+        Vec::new()
+    })
 }
 
 #[tauri::command]
@@ -1453,12 +1503,7 @@ fn processing_worker(app: AppHandle) {
                 },
                 &cancel,
                 settings.your_name.as_deref(),
-                &mut |segments| {
-                    let _ = app.emit("transcript-draft", TranscriptDraftEvent {
-                        meeting_id: id.clone(),
-                        segments: segments.to_vec(),
-                    });
-                },
+                &mut |segments| emit_draft(&app, &id, segments),
                 &cached,
             )?;
             Ok(())
@@ -1492,6 +1537,7 @@ fn processing_worker(app: AppHandle) {
                 }
             }
         }
+        clear_draft(&app);
         // Keep the job running until transcript refresh and optional auto-summary have started.
         if let Ok(mut processor) = lock_processor(&app) {
             processor.finished(&id, result);
@@ -2454,6 +2500,7 @@ fn main() {
             app.manage(UpdateStartGate(Mutex::new(())));
             app.manage(Mutex::new(Processor::new()));
             app.manage(BackgroundState::default());
+            app.manage(DraftStore::default());
             app.manage(Mutex::new(ImportState::default()));
             app.manage(ImportCancel(AtomicBool::new(false)));
             app.manage(Mutex::new(Recorder::new(
@@ -2589,6 +2636,7 @@ fn main() {
             dismiss_continue,
             acknowledge_recording_notice,
             processing_status,
+            transcript_draft,
             transcribe_meeting,
             cancel_processing,
             dismiss_processing,
