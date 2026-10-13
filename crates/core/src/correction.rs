@@ -11,7 +11,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 pub const DEFAULT_CHAR_BUDGET: usize = 2_000_000;
-const MAX_OUTPUT_CHARS: usize = 60_000;
+/// Gemini Flash returns up to 65,536 tokens; Vietnamese JSON runs about 2 characters per token.
+const MAX_OUTPUT_CHARS: usize = 120_000;
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct CorrectedSegment {
@@ -138,7 +139,7 @@ pub fn correct_with_budget(
                 content,
             }],
             schema: Some(schema()),
-            max_tokens: output_chars.clamp(256, 65_536) as u32,
+            max_tokens: (output_chars / 2 + 1024).min(65_536) as u32,
             inline_audio: None,
         };
         let response: CorrectionResponse = generate_json(provider, &request, &mut |_| {}, cancel)?;
@@ -355,5 +356,35 @@ mod tests {
         assert!(requests[0].messages[0].content.contains("s2"));
         assert!(!requests[0].messages[0].content.contains("s3"));
         assert!(requests[1].messages[0].content.contains("s3"));
+    }
+
+    #[test]
+    fn an_hour_long_meeting_is_corrected_in_one_request_within_gemini_output_limits() {
+        // About 700 sentence Segments of about 80 characters: an hour of speech.
+        let original: Vec<Segment> = (0..700)
+            .map(|index| {
+                segment(
+                    &format!("s{index:05}"),
+                    index * 5000,
+                    "Chúng ta sẽ chốt lịch phát hành vào thứ sáu tuần sau nhé, rồi gửi cho anh Minh.",
+                )
+            })
+            .collect();
+        let provider = FakeProvider {
+            requests: Mutex::new(vec![]),
+            responses: Mutex::new(vec![Ok(r#"{"segments":[]}"#.into())]),
+        };
+        correct(
+            &provider,
+            &original,
+            Language::Vi,
+            &[],
+            &[],
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        let requests = provider.requests.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert!(requests[0].max_tokens <= 65_536);
     }
 }

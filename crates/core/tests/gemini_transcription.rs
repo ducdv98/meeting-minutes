@@ -187,3 +187,24 @@ fn long_cloud_span_is_sent_as_pieces_and_times_use_span_origin() {
     assert!((25_000..26_000).contains(&segments[1].start_ms));
     assert_eq!(segments[1].end_ms - segments[1].start_ms, 1000);
 }
+
+#[test]
+fn real_gemini_429_bodies_tell_per_minute_from_daily_limits() {
+    let per_minute = r#"{"error":{"code":429,"message":"You exceeded your current quota, please check your plan and billing details.","status":"RESOURCE_EXHAUSTED","details":[{"@type":"type.googleapis.com/google.rpc.QuotaFailure","violations":[{"quotaMetric":"generativelanguage.googleapis.com/generate_content_free_tier_requests","quotaId":"GenerateRequestsPerMinutePerProjectPerModel-FreeTier"}]},{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"37s"}]}}"#;
+    let per_day = r#"{"error":{"code":429,"message":"You exceeded your current quota, please check your plan and billing details.","status":"RESOURCE_EXHAUSTED","details":[{"@type":"type.googleapis.com/google.rpc.QuotaFailure","violations":[{"quotaMetric":"generativelanguage.googleapis.com/generate_content_free_tier_requests","quotaId":"GenerateRequestsPerDayPerProjectPerModel-FreeTier"}]},{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"9s"}]}}"#;
+    for (body, expected) in [
+        (
+            per_minute,
+            EngineError::RateLimited {
+                retry_after: Duration::from_secs(37),
+            },
+        ),
+        (per_day, EngineError::QuotaExhausted),
+    ] {
+        let mut engine = engine(FakeHttp::new(vec![reply(429, &[], body)]));
+        assert_eq!(
+            engine.transcribe_span(&[0.1; 160], Language::En, None, &AtomicBool::new(false)),
+            Err(expected)
+        );
+    }
+}

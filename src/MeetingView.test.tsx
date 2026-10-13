@@ -64,6 +64,12 @@ it("shows why part of the Meeting used local transcription", async () => {
   expect(await screen.findByText("Part of this Meeting was transcribed locally: Groq daily limit reached.")).toBeTruthy();
 });
 
+it("says local when a cached local span precedes a Gemini fallback", async () => {
+  vi.mocked(meetingTranscript).mockResolvedValue({ schema_version: 1, revision: 1, created_at: "now", model: ["small", "Groq", "Gemini"], fallback_reason: "Groq daily limit reached", language: "en", language_detected: false, duration_ms: 1000, segments: [] });
+  render(<MeetingView id="old" onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
+  expect(await screen.findByText("Part of this Meeting was transcribed locally: Groq daily limit reached.")).toBeTruthy();
+});
+
 it("names the cloud fallback engine in the Meeting notice", async () => {
   vi.mocked(meetingTranscript).mockResolvedValue({ schema_version: 1, revision: 1, created_at: "now", model: ["Groq", "Gemini"], fallback_reason: "Groq daily limit reached", language: "en", language_detected: false, duration_ms: 1000, segments: [] });
   render(<MeetingView id="old" onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);

@@ -300,6 +300,9 @@ fn checked_response(
         let mut raw = String::new();
         response.body.take(64 * 1024).read_to_string(&mut raw)?;
         if kind == ProviderKind::Gemini && status == 429 {
+            if let Some(limit) = gemini_quota_limit(&raw, retry_after) {
+                return Err(limit);
+            }
             if let Some(seconds) = retry_after {
                 let reason = raw.to_ascii_lowercase();
                 let daily = ["quota", "per day", "daily", "/day"]
@@ -322,6 +325,34 @@ fn checked_response(
         });
     }
     Ok(response)
+}
+/// Classifies a Gemini 429 by the `quotaId` it names: per-day limits end Gemini for the day,
+/// others wait for `RetryInfo.retryDelay`. None when the body names no quota.
+fn gemini_quota_limit(raw: &str, retry_after: Option<u64>) -> Option<AiError> {
+    let value: Value = serde_json::from_str(raw).ok()?;
+    let details = value.pointer("/error/details")?.as_array()?;
+    let quota_ids: Vec<&str> = details
+        .iter()
+        .filter_map(|detail| detail["violations"].as_array())
+        .flatten()
+        .filter_map(|violation| violation["quotaId"].as_str())
+        .collect();
+    if quota_ids.is_empty() {
+        return None;
+    }
+    if quota_ids.iter().any(|id| id.contains("PerDay")) {
+        return Some(AiError::GeminiLimit);
+    }
+    let delay = details
+        .iter()
+        .filter_map(|detail| detail["retryDelay"].as_str())
+        .find_map(|delay| delay.trim_end_matches('s').parse::<f64>().ok())
+        .map(|seconds| seconds.ceil() as u64)
+        .or(retry_after)
+        .unwrap_or(60);
+    Some(AiError::RateLimited {
+        retry_after: Duration::from_secs(delay),
+    })
 }
 fn unreachable(error: AiError, kind: ProviderKind) -> AiError {
     if kind == ProviderKind::Ollama && matches!(error, AiError::Unreachable(_)) {
@@ -506,6 +537,10 @@ impl TextProvider for HttpProvider {
                 if let Some(schema) = &request.schema {
                     body["generationConfig"]["responseMimeType"] = json!("application/json");
                     body["generationConfig"]["responseSchema"] = gemini_schema(&schema.schema);
+                    // Thinking tokens count against maxOutputTokens; Flash can turn them off.
+                    if self.model.contains("flash") {
+                        body["generationConfig"]["thinkingConfig"] = json!({"thinkingBudget": 0});
+                    }
                 }
                 body
             }

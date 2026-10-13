@@ -233,10 +233,13 @@ fn detects_meeting_language_without_sending_language_field() {
 }
 
 #[test]
-fn trims_meeting_vocabulary_to_groq_prompt_budget() {
+fn trims_meeting_vocabulary_to_groq_prompt_budget_keeping_whole_terms_from_the_end() {
     let http = FakeHttp::reply(200, &[], r#"{"language":"english","segments":[]}"#);
     let engine = GroqEngine::with_boundary(http.clone(), ApiKey::new("secret").unwrap(), "test");
-    let vocabulary = "A".repeat(1000);
+    // Participant names come last in the Vocabulary, so they must survive the trim.
+    let mut terms: Vec<String> = (0..200).map(|index| format!("Term{index:03}")).collect();
+    terms.push("Nguyễn Minh".into());
+    let vocabulary = terms.join(", ");
     engine
         .transcribe_typed(
             &[0.1; 160],
@@ -248,8 +251,17 @@ fn trims_meeting_vocabulary_to_groq_prompt_budget() {
     let request = http.request.lock().unwrap().take().unwrap();
     let body =
         String::from_utf8_lossy(request.body.unwrap().multipart_bytes().unwrap()).into_owned();
-    assert!(body.contains(&"A".repeat(80)));
-    assert!(!body.contains(&"A".repeat(81)));
+    let prompt = body
+        .split("name=\"prompt\"\r\n\r\n")
+        .nth(1)
+        .unwrap()
+        .split("\r\n")
+        .next()
+        .unwrap();
+    assert!(prompt.ends_with("Term199, Nguyễn Minh"), "{prompt}");
+    assert!(prompt.starts_with("Term"), "{prompt}");
+    assert!(prompt.chars().count() <= 300);
+    assert!(prompt.chars().count() > 250);
 }
 
 #[test]

@@ -488,6 +488,11 @@ fn gemini_generate_json_sends_supported_schema_and_parses_response() {
         body["generationConfig"]["responseSchema"],
         json!({"type":"object","properties":{"ok":{"type":"boolean"}},"required":["ok"]})
     );
+    // Flash would otherwise spend the output budget on thinking before the JSON.
+    assert_eq!(
+        body["generationConfig"]["thinkingConfig"],
+        json!({"thinkingBudget":0})
+    );
 }
 
 #[test]

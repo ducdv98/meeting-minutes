@@ -71,9 +71,9 @@ impl GroqEngine {
     ) -> Result<(Vec<RawSegment>, Option<Language>), EngineError> {
         let mut all = Vec::new();
         let mut detected = None;
-        for (chunk_number, chunk) in samples.chunks(MAX_SPAN_SAMPLES).enumerate() {
-            let offset_ms = chunk_number as u64 * MAX_SPAN_SAMPLES as u64 * 1000 / 16_000;
-            let (mut segments, found) = self.upload(chunk, language, vocabulary, cancel)?;
+        for (piece_number, piece) in samples.chunks(MAX_SPAN_SAMPLES).enumerate() {
+            let offset_ms = piece_number as u64 * MAX_SPAN_SAMPLES as u64 * 1000 / 16_000;
+            let (mut segments, found) = self.upload(piece, language, vocabulary, cancel)?;
             detected = detected.or(found);
             for segment in &mut segments {
                 segment.start_ms += offset_ms;
@@ -362,15 +362,34 @@ fn multipart(
         );
     }
     if let Some(prompt) = vocabulary {
-        let trimmed: String = prompt.chars().take(80).collect();
-        if !trimmed.trim().is_empty() {
-            field("prompt", trimmed.trim());
+        let trimmed = trim_prompt(prompt);
+        if !trimmed.is_empty() {
+            field("prompt", &trimmed);
         }
     }
     body.extend_from_slice(format!("--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"span.flac\"\r\nContent-Type: audio/flac\r\n\r\n").as_bytes());
     body.extend_from_slice(audio);
     body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
     body
+}
+
+/// Groq accepts a 224-token prompt. Like Whisper, keep the end of an over-long Vocabulary,
+/// where the Meeting's Participant names are, and drop whole terms from the start.
+fn trim_prompt(prompt: &str) -> String {
+    // About 1.5 characters per token for Vietnamese names keeps this under the limit.
+    const MAX_PROMPT_CHARS: usize = 300;
+    let mut kept: Vec<&str> = Vec::new();
+    let mut length = 0;
+    for term in prompt.rsplit(", ").map(str::trim) {
+        let added = term.chars().count() + if kept.is_empty() { 0 } else { 2 };
+        if length + added > MAX_PROMPT_CHARS {
+            break;
+        }
+        length += added;
+        kept.push(term);
+    }
+    kept.reverse();
+    kept.join(", ")
 }
 
 pub fn with_default_http(key: ApiKey) -> GroqEngine {
