@@ -429,6 +429,7 @@ impl Library {
             voice_note,
             participants: file.participants,
             segment_participants: file.segment_participants,
+            correction_notice: file.correction_notice,
         })
     }
 

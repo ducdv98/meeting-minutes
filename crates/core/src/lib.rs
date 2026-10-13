@@ -15,6 +15,7 @@ pub mod audio_prep;
 pub mod background;
 pub mod capture;
 pub mod cloud;
+pub mod correction;
 pub mod citation;
 pub mod diagnostics;
 pub mod import;

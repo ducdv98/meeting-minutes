@@ -1524,9 +1524,19 @@ fn processing_worker(app: AppHandle) {
             }
             let mut engine = WhisperEngine::load_with_vad(&model_path, vad_path.as_deref())
                 .map_err(processing::ProcessingError::Engine)?;
+            let correction = ai::correction_provider(
+                &settings.ai,
+                app.state::<Secrets>().0.as_ref(),
+                app.state::<Http>().0.clone(),
+            );
+            let correction = match &correction {
+                Ok(Some(provider)) => processing::CorrectionProvider::Ready(provider),
+                Ok(None) => processing::CorrectionProvider::Disabled,
+                Err(_) => processing::CorrectionProvider::Unavailable,
+            };
             let mut last = 0u32;
             transcription_started = true;
-            processing::transcribe_meeting_resuming(
+            processing::transcribe_meeting_resuming_with_correction(
                 &request,
                 &mut engine,
                 &mut |fraction| {
@@ -1539,7 +1549,7 @@ fn processing_worker(app: AppHandle) {
                 &cancel,
                 settings.your_name.as_deref(),
                 &mut |segments| emit_draft(&app, &id, segments),
-                &cached,
+                processing::TranscriptionContext { background: &cached, correction },
             )?;
             Ok(())
         })();

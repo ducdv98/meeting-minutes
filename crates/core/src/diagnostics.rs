@@ -40,6 +40,7 @@ pub enum LogEvent {
     ProcessingDownloading,
     ProcessingTranscribing,
     ProcessingCompleted,
+    CorrectionResult { outcome: &'static str, changed_segments: usize, duration_ms: u128 },
     ProcessingFailed {
         stage: ProcessingStage,
         kind: &'static str,
@@ -292,6 +293,9 @@ impl fmt::Display for LogEvent {
             Self::ProcessingDownloading => "processing_downloading",
             Self::ProcessingTranscribing => "processing_transcribing",
             Self::ProcessingCompleted => "processing_completed",
+            Self::CorrectionResult { outcome, changed_segments, duration_ms } => {
+                return write!(f, "correction_result outcome={outcome} changed_segments={changed_segments} duration_ms={duration_ms}");
+            }
             Self::ProcessingFailed {
                 stage,
                 kind,
@@ -454,6 +458,9 @@ fn safe_log_line(line: &str) -> bool {
     if parse_processing_event(event) {
         return true;
     }
+    if parse_correction_event(event) {
+        return true;
+    }
     if parse_transcription_rtf(event).is_some() {
         return true;
     }
@@ -468,6 +475,17 @@ fn safe_log_line(line: &str) -> bool {
             || status
                 .parse::<u16>()
                 .is_ok_and(|value| value.to_string() == status))
+}
+
+fn parse_correction_event(event: &str) -> bool {
+    let Some((outcome, rest)) = event
+        .strip_prefix("correction_result outcome=")
+        .and_then(|rest| rest.split_once(" changed_segments="))
+    else { return false; };
+    let Some((changed, duration)) = rest.split_once(" duration_ms=") else { return false; };
+    matches!(outcome, "completed" | "failed" | "unavailable")
+        && changed.parse::<usize>().is_ok_and(|value| value.to_string() == changed)
+        && duration.parse::<u128>().is_ok_and(|value| value.to_string() == duration)
 }
 
 fn parse_processing_event(event: &str) -> bool {

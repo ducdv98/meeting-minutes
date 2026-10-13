@@ -342,6 +342,7 @@ fn every_log_event_is_accepted_in_the_plugin_format() {
         LogEvent::ProcessingDownloading,
         LogEvent::ProcessingTranscribing,
         LogEvent::ProcessingCompleted,
+        LogEvent::CorrectionResult { outcome: "completed", changed_segments: 3, duration_ms: 42 },
         LogEvent::processing_result(
             &ProcessingError::NoAudio,
             ProcessingStage::Preparing,

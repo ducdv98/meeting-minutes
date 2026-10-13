@@ -33,6 +33,7 @@ export interface MeetingDetail extends MeetingSummary {
   voice_note: boolean;
   participants: Partial<Record<Speaker, string>>;
   segment_participants?: { revision: number; segments: Record<string, string> } | null;
+  correction_notice?: string | null;
 }
 
 export interface MalformedFolder {
