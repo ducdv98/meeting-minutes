@@ -1,7 +1,8 @@
 use crate::{
+    background::BackgroundResult,
     audio_prep::{prepare_import, prepare_recording, PreparedRecording},
     diagnostics::{log_event, LogEvent, TranscriptionEnvironment},
-    meeting_file::{MeetingFile, RecordingEntry},
+    meeting_file::{MeetingFile, RecordingEntry, RecordingFile},
     transcript::{
         assign_ids, place_segments, segment_sentences, Language, PlacedSegment, RawSegment,
         Speaker, Transcript,
@@ -204,6 +205,34 @@ pub struct TranscribeRequest<'a> {
 
 type DraftCallback<'a> = dyn FnMut(&[PlacedSegment]) + 'a;
 
+/// The Vocabulary as Whisper's initial prompt, or None when it has no terms.
+pub fn initial_prompt(vocabulary: &[String]) -> Option<String> {
+    let prompt = vocabulary
+        .iter()
+        .map(|term| term.trim())
+        .filter(|term| !term.is_empty())
+        .collect::<Vec<_>>()
+        .join(", ");
+    (!prompt.is_empty()).then_some(prompt)
+}
+
+/// Moves Segments from a Recording's own timeline onto the Meeting timeline.
+fn shifted(segments: &[PlacedSegment], timeline_start_ms: u64) -> Vec<PlacedSegment> {
+    segments
+        .iter()
+        .cloned()
+        .map(|mut segment| {
+            segment.start_ms += timeline_start_ms;
+            segment.end_ms += timeline_start_ms;
+            for word in &mut segment.words {
+                word.start_ms += timeline_start_ms;
+                word.end_ms += timeline_start_ms;
+            }
+            segment
+        })
+        .collect()
+}
+
 pub fn transcribe_meeting(
     request: &TranscribeRequest,
     engine: &mut dyn SpeechEngine,
@@ -220,7 +249,7 @@ pub fn transcribe_meeting_named(
     cancel: &AtomicBool,
     your_name: Option<&str>,
 ) -> Result<Transcript, ProcessingError> {
-    transcribe_meeting_with_draft(request, engine, progress, cancel, your_name, None)
+    transcribe_meeting_with_draft(request, engine, progress, cancel, your_name, None, &[])
 }
 
 pub fn transcribe_meeting_named_with_draft(
@@ -231,7 +260,29 @@ pub fn transcribe_meeting_named_with_draft(
     your_name: Option<&str>,
     draft: &mut dyn FnMut(&[PlacedSegment]),
 ) -> Result<Transcript, ProcessingError> {
-    transcribe_meeting_with_draft(request, engine, progress, cancel, your_name, Some(draft))
+    transcribe_meeting_resuming(request, engine, progress, cancel, your_name, draft, &[])
+}
+
+/// Transcribes a Meeting, reusing what a background transcriber finished during its Recordings
+/// (ADR 0010): their Segments are shown as the Draft at once, and only later audio is transcribed.
+pub fn transcribe_meeting_resuming(
+    request: &TranscribeRequest,
+    engine: &mut dyn SpeechEngine,
+    progress: &mut dyn FnMut(f32),
+    cancel: &AtomicBool,
+    your_name: Option<&str>,
+    draft: &mut dyn FnMut(&[PlacedSegment]),
+    background: &[BackgroundResult],
+) -> Result<Transcript, ProcessingError> {
+    transcribe_meeting_with_draft(
+        request,
+        engine,
+        progress,
+        cancel,
+        your_name,
+        Some(draft),
+        background,
+    )
 }
 
 fn transcribe_meeting_with_draft(
@@ -241,6 +292,7 @@ fn transcribe_meeting_with_draft(
     cancel: &AtomicBool,
     your_name: Option<&str>,
     draft: Option<&mut DraftCallback<'_>>,
+    background: &[BackgroundResult],
 ) -> Result<Transcript, ProcessingError> {
     let mut telemetry = ProcessingTelemetry {
         stage: ProcessingStage::Preparing,
@@ -250,8 +302,18 @@ fn transcribe_meeting_with_draft(
     };
     let backend = engine.backend().to_owned();
     let device = engine.device().map(str::to_owned);
-    let result =
-        transcribe_meeting_inner(request, engine, progress, cancel, your_name, draft, &mut telemetry);
+    let result = transcribe_meeting_inner(
+        request,
+        engine,
+        progress,
+        cancel,
+        Resume {
+            your_name,
+            draft,
+            background,
+        },
+        &mut telemetry,
+    );
     if let Err(error) = &result {
         log_event(LogEvent::processing_result(
             error,
@@ -266,15 +328,27 @@ fn transcribe_meeting_with_draft(
     result
 }
 
+/// What a transcription shows and reuses besides the audio: the user's name for Participants,
+/// where Draft Segments go, and background results from the Recordings.
+struct Resume<'a, 'd> {
+    your_name: Option<&'a str>,
+    draft: Option<&'a mut DraftCallback<'d>>,
+    background: &'a [BackgroundResult],
+}
+
 fn transcribe_meeting_inner(
     request: &TranscribeRequest,
     engine: &mut dyn SpeechEngine,
     progress: &mut dyn FnMut(f32),
     cancel: &AtomicBool,
-    your_name: Option<&str>,
-    mut draft: Option<&mut DraftCallback<'_>>,
+    resume: Resume<'_, '_>,
     telemetry: &mut ProcessingTelemetry,
 ) -> Result<Transcript, ProcessingError> {
+    let Resume {
+        your_name,
+        mut draft,
+        background,
+    } = resume;
     if cancel.load(Ordering::SeqCst) {
         return Err(ProcessingError::Cancelled);
     }
@@ -300,14 +374,8 @@ fn transcribe_meeting_inner(
             .sum()
     };
     telemetry.total_ms = total;
-    let prompt = request
-        .vocabulary
-        .iter()
-        .map(|term| term.trim())
-        .filter(|term| !term.is_empty())
-        .collect::<Vec<_>>()
-        .join(", ");
-    let prompt = (!prompt.is_empty()).then_some(prompt.as_str());
+    let prompt = initial_prompt(request.vocabulary);
+    let prompt = prompt.as_deref();
     let mut language = match metadata.language.as_deref() {
         Some("en") => Some(Language::En),
         Some("vi") => Some(Language::Vi),
@@ -319,6 +387,38 @@ fn transcribe_meeting_inner(
         }
     };
     let detected = language.is_none();
+    // A cache made with another model, prompt or language would not match a fresh transcription.
+    let background = background
+        .iter()
+        .filter(|cache| {
+            metadata.import.is_none()
+                && cache.model == request.model
+                && cache.initial_prompt.as_deref() == prompt
+                && (language.is_none() || cache.language.is_none() || cache.language == language)
+        })
+        .collect::<Vec<_>>();
+    if language.is_none() {
+        language = background.iter().find_map(|cache| cache.language);
+    }
+    let cached = |recording: &RecordingFile| {
+        background
+            .iter()
+            .copied()
+            .find(|cache| cache.recording == recording.number)
+    };
+    if let Some(callback) = draft.as_deref_mut() {
+        for recording in &recordings {
+            let Some(cache) = cached(recording) else {
+                continue;
+            };
+            for source in &cache.sources {
+                let sentences = segment_sentences(shifted(&source.segments, recording.timeline_start_ms));
+                if !sentences.is_empty() {
+                    callback(&sentences);
+                }
+            }
+        }
+    }
     let mut per_source: [Vec<PlacedSegment>; 3] = std::array::from_fn(|_| Vec::new());
     let mut elapsed = 0u64;
     let mut preparation_wall_time = Duration::ZERO;
@@ -327,8 +427,20 @@ fn transcribe_meeting_inner(
     let mut audio_after_vad_ms = Some(0u64);
     let mut process = |prepared: Vec<PreparedRecording>,
                        elapsed: u64,
+                       cache: Option<&BackgroundResult>,
                        telemetry: &mut ProcessingTelemetry|
      -> Result<(), ProcessingError> {
+        // Audio before a Source's committed point was transcribed during the Recording.
+        let skipped = prepared
+            .iter()
+            .map(|stream| {
+                cache
+                    .and_then(|cache| cache.source(stream.speaker))
+                    .map_or(0, |source| {
+                        ((source.committed_ms * 16) as usize).min(stream.samples_16k.len())
+                    })
+            })
+            .collect::<Vec<_>>();
         telemetry.stage = ProcessingStage::Transcribing;
         let whisper_started = Instant::now();
         if language.is_none() {
@@ -361,8 +473,14 @@ fn transcribe_meeting_inner(
         };
         let streams = prepared
             .iter()
-            .map(|stream| stream.samples_16k.as_slice())
+            .zip(&skipped)
+            .map(|(stream, &skip)| &stream.samples_16k[skip..])
             .collect::<Vec<_>>();
+        let remaining_ms: u64 = streams
+            .iter()
+            .map(|samples| samples.len() as u64 * 1000 / 16_000)
+            .sum();
+        let done = 1.0 - remaining_ms as f32 / group_ms.max(1) as f32;
         let mut group_progress = 0.0f32;
         let result = engine.transcribe_streams(
             &streams,
@@ -370,7 +488,7 @@ fn transcribe_meeting_inner(
             prompt,
             &mut |p| {
                 group_progress = group_progress.max(p.clamp(0.0, 1.0));
-                progress((offset + group_progress * weight).clamp(0.0, 1.0));
+                progress((offset + (done + group_progress * (1.0 - done)) * weight).clamp(0.0, 1.0));
             },
             cancel,
         );
@@ -391,7 +509,7 @@ fn transcribe_meeting_inner(
         if cancel.load(Ordering::SeqCst) {
             return Err(ProcessingError::Cancelled);
         }
-        for (stream, result) in prepared.iter().zip(results) {
+        for ((stream, result), skip) in prepared.iter().zip(results).zip(skipped) {
             audio_after_vad_ms = audio_after_vad_ms
                 .and_then(|total| result.audio_after_vad_ms.map(|duration| total + duration));
             let index = match stream.speaker {
@@ -399,12 +517,16 @@ fn transcribe_meeting_inner(
                 Speaker::Remote => 1,
                 Speaker::Unknown => 2,
             };
+            let skipped_ms = skip as u64 / 16;
             let placed = place_segments(
                 &result.segments,
-                stream.duration_ms,
-                stream.timeline_start_ms,
+                stream.duration_ms.saturating_sub(skipped_ms),
+                stream.timeline_start_ms + skipped_ms,
                 stream.speaker,
             );
+            if let Some(source) = cache.and_then(|cache| cache.source(stream.speaker)) {
+                per_source[index].extend(shifted(&source.segments, stream.timeline_start_ms));
+            }
             // The Draft shows this Source's finished Segments; the Revision re-segments all of them at the end.
             if let Some(callback) = draft.as_deref_mut() {
                 let sentences = segment_sentences(placed.clone());
@@ -415,7 +537,7 @@ fn transcribe_meeting_inner(
             per_source[index].extend(placed);
         }
         whisper_wall_time += whisper_elapsed;
-        transcribed_ms += group_ms;
+        transcribed_ms += remaining_ms;
         telemetry.audio_ms += group_ms;
         Ok(())
     };
@@ -424,7 +546,7 @@ fn transcribe_meeting_inner(
         let preparation_started = Instant::now();
         let prepared = prepare_import(request.meeting_dir, &import.file, cancel)?;
         preparation_wall_time += preparation_started.elapsed();
-        process(vec![prepared], 0, telemetry)?;
+        process(vec![prepared], 0, None, telemetry)?;
     } else {
         for recording in recordings {
             telemetry.stage = ProcessingStage::Preparing;
@@ -434,7 +556,7 @@ fn transcribe_meeting_inner(
             let preparation_started = Instant::now();
             let prepared = prepare_recording(request.meeting_dir, recording, cancel)?;
             preparation_wall_time += preparation_started.elapsed();
-            process(prepared, elapsed, telemetry)?;
+            process(prepared, elapsed, cached(recording), telemetry)?;
             elapsed += recording.duration_ms * recording.files.len() as u64;
         }
     }

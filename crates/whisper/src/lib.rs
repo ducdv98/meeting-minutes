@@ -125,11 +125,17 @@ fn vulkan_devices() -> Option<Vec<(String, DeviceType)>> {
 
 #[cfg(windows)]
 fn selected_device(devices: &[whisper_rs::vulkan::VkDeviceInfo], power: PowerState) -> BackendPlan {
+    plan_backend(&ranked_devices(devices), power)
+}
+
+/// ggml's devices with the Vulkan device type, matched by name in enumeration order.
+#[cfg(windows)]
+fn ranked_devices(devices: &[whisper_rs::vulkan::VkDeviceInfo]) -> Vec<(i32, DeviceType, usize)> {
     let Some(physical) = vulkan_devices() else {
-        return BackendPlan::Cpu;
+        return Vec::new();
     };
     let mut used = vec![false; physical.len()];
-    let ranked = devices
+    devices
         .iter()
         .filter_map(|device| {
             let index = physical
@@ -139,8 +145,13 @@ fn selected_device(devices: &[whisper_rs::vulkan::VkDeviceInfo], power: PowerSta
             used[index] = true;
             Some((device.id, physical[index].1, device.vram.total))
         })
-        .collect::<Vec<_>>();
-    plan_backend(&ranked, power)
+        .collect()
+}
+
+/// Whether a plan runs on a discrete GPU, the only device background transcription uses (ADR 0010).
+#[cfg(any(windows, test))]
+fn runs_on_discrete_gpu(plan: &BackendPlan, devices: &[(i32, DeviceType, usize)]) -> bool {
+    matches!(plan, BackendPlan::Vulkan(id) if devices.iter().any(|&(device, kind, _)| device == *id && kind == DeviceType::Discrete))
 }
 
 #[cfg(any(windows, test))]
@@ -360,6 +371,22 @@ impl WhisperEngine {
         }
         #[cfg(not(windows))]
         Vec::new()
+    }
+
+    /// Whether transcription started now would run on a discrete GPU on AC power, so it may run
+    /// in the background during a Recording (ADR 0010).
+    pub fn discrete_gpu_on_ac_power() -> bool {
+        #[cfg(windows)]
+        {
+            let power = PowerState::current();
+            if power == PowerState::Battery {
+                return false;
+            }
+            let ranked = ranked_devices(&available_devices());
+            return runs_on_discrete_gpu(&plan_backend(&ranked, power), &ranked);
+        }
+        #[cfg(not(windows))]
+        false
     }
 
     pub fn backend_description() -> String {
@@ -893,6 +920,18 @@ mod tests {
             ),
             BackendPlan::Vulkan(0)
         );
+    }
+
+    #[test]
+    fn background_transcription_needs_the_discrete_gpu_on_ac_power() {
+        let devices = [
+            (0, DeviceType::Integrated, 16),
+            (1, DeviceType::Discrete, 6),
+        ];
+        assert!(runs_on_discrete_gpu(&plan_backend(&devices, PowerState::Ac), &devices));
+        assert!(!runs_on_discrete_gpu(&plan_backend(&devices, PowerState::Battery), &devices));
+        let integrated_only = [(0, DeviceType::Integrated, 16)];
+        assert!(!runs_on_discrete_gpu(&plan_backend(&integrated_only, PowerState::Ac), &integrated_only));
     }
 
     #[test]

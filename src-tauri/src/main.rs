@@ -18,11 +18,12 @@ use meeting_minutes_core::{
         SecretStore, TextProvider, UreqClient,
     },
     ask::{self, AskOptions},
+    background,
     capture::{audio_devices, QpcClock, Source, WasapiOpener},
     diagnostics::{build_diagnostics, log_event, DiagnosticsInput, LogEvent},
     import::import_extension,
     models::{self, DEFAULT_MODEL, MODELS},
-    processing::{self, JobStage, ProcessingStatus, Processor, TranscribeRequest},
+    processing::{self, JobStage, ProcessingStatus, Processor, SpeechEngine, TranscribeRequest},
     recorder::{Phase, Recorder, RecorderError, RecorderStatus, SaveJob, SaveState},
     settings::Settings,
     summary::{self, Summary, SummaryOptions},
@@ -46,6 +47,21 @@ use tauri_plugin_updater::UpdaterExt;
 type LibraryState = Mutex<Result<Library, String>>;
 type RecorderState = Mutex<Recorder<WasapiOpener, QpcClock>>;
 type ProcessorState = Mutex<Processor>;
+
+/// Background transcription of the Recording in progress, and the caches of stopped ones (ADR 0010).
+/// Everything lives in memory only, so a crash discards it and the Meeting is transcribed from its Chunks.
+#[derive(Default)]
+struct BackgroundTranscription {
+    runs: Vec<BackgroundRun>,
+}
+
+struct BackgroundRun {
+    meeting_id: String,
+    stop: Arc<AtomicBool>,
+    handle: thread::JoinHandle<Option<background::BackgroundResult>>,
+}
+
+type BackgroundState = Mutex<BackgroundTranscription>;
 
 #[derive(Clone, serde::Serialize)]
 struct TranscriptDraftEvent {
@@ -1146,6 +1162,145 @@ fn stop_ask(app: AppHandle, meeting_id: String) -> Result<(), String> {
     Ok(())
 }
 
+/// The Settings Vocabulary plus this Meeting's Participant names.
+fn meeting_vocabulary(
+    app: &AppHandle,
+    id: &str,
+    settings: &Settings,
+) -> Result<Vec<String>, processing::ProcessingError> {
+    let state = app.state::<LibraryState>();
+    let guard = state
+        .lock()
+        .map_err(|error| processing::ProcessingError::Engine(error.to_string()))?;
+    let library = guard
+        .as_ref()
+        .map_err(|error| processing::ProcessingError::Engine(error.clone()))?;
+    let participants = library.participants(id)?;
+    let mut vocabulary = settings.vocabulary.clone();
+    let transcript = library.transcript(id)?;
+    for name in participants.vocabulary_names(transcript.as_ref()) {
+        if !vocabulary.contains(&name) {
+            vocabulary.push(name);
+        }
+    }
+    Ok(vocabulary)
+}
+
+/// Starts transcribing the new Recording's Chunks in the background when it would run on a
+/// discrete GPU on AC power and the model is already installed; otherwise it waits for Stop.
+fn start_background(app: &AppHandle) {
+    if !WhisperEngine::discrete_gpu_on_ac_power() {
+        return;
+    }
+    let Some(job) = lock_recorder(app)
+        .ok()
+        .and_then(|recorder| recorder.active_job().cloned())
+    else {
+        return;
+    };
+    let settings = Settings::load(&app.state::<SettingsPath>().0);
+    let models_dir = app.state::<ModelsDir>().0.clone();
+    let Some(model) = MODELS
+        .iter()
+        .find(|m| m.name == settings.model)
+        .or_else(|| MODELS.iter().find(|m| m.name == DEFAULT_MODEL))
+        .filter(|model| models::is_installed(&models_dir, model))
+    else {
+        return;
+    };
+    let vad_path = models::is_installed(&models_dir, &models::VAD_MODEL)
+        .then(|| models::model_path(&models_dir, &models::VAD_MODEL));
+    let Ok(vocabulary) = meeting_vocabulary(app, &job.meeting_id, &settings) else {
+        return;
+    };
+    let language = fs::read(job.meeting_dir.join("meeting.json"))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        .and_then(|meeting| match meeting["language"].as_str() {
+            Some("en") => Some(Language::En),
+            Some("vi") => Some(Language::Vi),
+            _ => None,
+        })
+        .or(settings.language);
+    let chunk_dir = job
+        .meeting_dir
+        .join(format!(".chunks/recording-{}", job.number));
+    let stop = Arc::new(AtomicBool::new(false));
+    let handle = {
+        let app = app.clone();
+        let stop = Arc::clone(&stop);
+        let model_path = models::model_path(&models_dir, model);
+        thread::spawn(move || {
+            // Never load a second model while Processing has one on the GPU.
+            while lock_processor(&app).map(|p| p.is_running()).unwrap_or(true) {
+                if stop.load(Ordering::SeqCst) {
+                    return None;
+                }
+                thread::sleep(Duration::from_secs(1));
+            }
+            let mut engine = WhisperEngine::load_with_vad(&model_path, vad_path.as_deref()).ok()?;
+            if engine.backend() != "Vulkan" {
+                return None;
+            }
+            let mut transcriber = background::BackgroundTranscriber::new(
+                job.number,
+                model.name,
+                language,
+                processing::initial_prompt(&vocabulary),
+            );
+            let _ = background::run(
+                &mut transcriber,
+                &mut engine,
+                &chunk_dir,
+                background::BackgroundControl {
+                    stop: &stop,
+                    // On battery, stop after the current span and keep the results; resume on AC.
+                    allowed: &mut || processing::PowerState::current() != processing::PowerState::Battery,
+                    wait: &mut || thread::sleep(Duration::from_secs(2)),
+                },
+                &mut |_| {},
+            );
+            Some(transcriber.finish())
+        })
+    };
+    if let Ok(mut state) = app.state::<BackgroundState>().lock() {
+        state.runs.push(BackgroundRun {
+            meeting_id: job.meeting_id,
+            stop,
+            handle,
+        });
+    }
+}
+
+/// Stops background work for a Meeting's Recordings; the results wait for Processing.
+fn stop_background(app: &AppHandle, meeting_id: Option<&str>) {
+    if let Ok(state) = app.state::<BackgroundState>().lock() {
+        for run in &state.runs {
+            if meeting_id.is_none_or(|id| id == run.meeting_id) {
+                run.stop.store(true, Ordering::SeqCst);
+            }
+        }
+    }
+}
+
+/// Takes what background transcription finished for a Meeting, waiting for its runs to stop.
+fn take_background_results(app: &AppHandle, meeting_id: &str) -> Vec<background::BackgroundResult> {
+    stop_background(app, Some(meeting_id));
+    let runs = match app.state::<BackgroundState>().lock() {
+        Ok(mut state) => {
+            let (taken, kept) = std::mem::take(&mut state.runs)
+                .into_iter()
+                .partition::<Vec<_>, _>(|run| run.meeting_id == meeting_id);
+            state.runs = kept;
+            taken
+        }
+        Err(_) => Vec::new(),
+    };
+    runs.into_iter()
+        .filter_map(|run| run.handle.join().ok().flatten())
+        .collect()
+}
+
 fn processing_worker(app: AppHandle) {
     thread::spawn(move || loop {
         thread::sleep(Duration::from_millis(100));
@@ -1274,21 +1429,14 @@ fn processing_worker(app: AppHandle) {
                 return Err(processing::ProcessingError::Cancelled);
             }
             processing_stage(&app, &id, JobStage::Transcribing, 0.0);
-            let vocabulary = {
-                let state = app.state::<LibraryState>();
-                let guard = state.lock().map_err(|error| processing::ProcessingError::Engine(error.to_string()))?;
-                let library = guard.as_ref().map_err(|error| processing::ProcessingError::Engine(error.clone()))?;
-                let participants = library.participants(&id)?;
-                let mut vocabulary = settings.vocabulary.clone();
-                let transcript = library.transcript(&id)?;
-                for name in participants.vocabulary_names(transcript.as_ref()) { if !vocabulary.contains(&name) { vocabulary.push(name); } }
-                vocabulary
-            };
+            let vocabulary = meeting_vocabulary(&app, &id, &settings)?;
+            // Joined before the engine loads, so two models never share the GPU.
+            let cached = take_background_results(&app, &id);
             let mut engine = WhisperEngine::load_with_vad(&model_path, vad_path.as_deref())
                 .map_err(processing::ProcessingError::Engine)?;
             let mut last = 0u32;
             transcription_started = true;
-            processing::transcribe_meeting_named_with_draft(
+            processing::transcribe_meeting_resuming(
                 &TranscribeRequest {
                     meeting_dir: &meeting_dir,
                     model: model.name,
@@ -1311,6 +1459,7 @@ fn processing_worker(app: AppHandle) {
                         segments: segments.to_vec(),
                     });
                 },
+                &cached,
             )?;
             Ok(())
         })();
@@ -1705,6 +1854,7 @@ fn start_with(
         }
         let _ = app.emit("library-changed", ());
         log_event(LogEvent::RecordingStarted);
+        start_background(app);
         publish(app)
     })();
     if result.is_err() {
@@ -1719,6 +1869,7 @@ fn stop(app: &AppHandle) -> Result<RecorderStatus, String> {
         match stopped {
             Ok(job) => {
                 log_event(LogEvent::RecordingStopped);
+                stop_background(app, Some(&job.meeting_id));
                 spawn_save(app.clone(), job)
             }
             Err(error) => {
@@ -1829,6 +1980,7 @@ fn toggle_pause(app: &AppHandle) {
 /// half-written. Waits off the main thread: tray updates from the save thread need it.
 fn quit(app: &AppHandle) {
     app.state::<Quitting>().0.store(true, Ordering::SeqCst);
+    stop_background(app, None);
     app.state::<ImportCancel>().0.store(true, Ordering::SeqCst);
     if let Ok(jobs) = app.state::<AiJobs>().lock() {
         for job in jobs.summaries.values() {
@@ -2301,6 +2453,7 @@ fn main() {
             app.manage(InstallingUpdate(AtomicBool::new(false)));
             app.manage(UpdateStartGate(Mutex::new(())));
             app.manage(Mutex::new(Processor::new()));
+            app.manage(BackgroundState::default());
             app.manage(Mutex::new(ImportState::default()));
             app.manage(ImportCancel(AtomicBool::new(false)));
             app.manage(Mutex::new(Recorder::new(

@@ -12,6 +12,7 @@ pub use recording::{finalize_recording, FinalizedRecording};
 pub mod ai;
 pub mod ask;
 pub mod audio_prep;
+pub mod background;
 pub mod capture;
 pub mod citation;
 pub mod diagnostics;

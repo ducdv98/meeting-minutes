@@ -144,6 +144,12 @@ pub fn place_segments(
     result
 }
 
+/// Whether a word closes a sentence, looking past closing quotes and brackets.
+pub fn ends_sentence(word: &str) -> bool {
+    word.trim_end_matches(['"', '\'', '”', '’', ')', ']'])
+        .ends_with(['.', '?', '!', '…', '。', '？', '！'])
+}
+
 pub fn segment_sentences(placed: Vec<PlacedSegment>) -> Vec<PlacedSegment> {
     let mut by_source: [Vec<RawWord>; 3] = std::array::from_fn(|_| Vec::new());
     for segment in placed {
@@ -170,12 +176,9 @@ pub fn segment_sentences(placed: Vec<PlacedSegment>) -> Vec<PlacedSegment> {
             }) {
                 sentences.push(std::mem::take(&mut sentence));
             }
-            let ends_sentence = word
-                .text
-                .trim_end_matches(['"', '\'', '”', '’', ')', ']'])
-                .ends_with(['.', '?', '!', '…', '。', '？', '！']);
+            let ends = ends_sentence(&word.text);
             sentence.push(word);
-            if ends_sentence {
+            if ends {
                 sentences.push(std::mem::take(&mut sentence));
             }
         }

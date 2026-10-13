@@ -154,6 +154,11 @@ impl<O: InputOpener, C: Clock> Recorder<O, C> {
         }
     }
 
+    /// The Recording being captured now, if any.
+    pub fn active_job(&self) -> Option<&SaveJob> {
+        self.active.as_ref().map(|active| &active.job)
+    }
+
     pub fn acknowledge_notice(&mut self) {
         self.notice_acknowledged = true;
     }

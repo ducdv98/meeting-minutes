@@ -41,6 +41,49 @@ fn coefficients() -> [f32; TAPS] {
     taps
 }
 
+/// Low-pass filters 48 kHz mono audio and keeps every third sample, one sample at a time,
+/// so audio read in pieces (such as Chunks) gives the same 16 kHz stream as one read.
+pub struct Decimator {
+    taps: [f32; TAPS],
+    history: VecDeque<f32>,
+    frames: usize,
+    pub output: Vec<f32>,
+}
+
+impl Default for Decimator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Decimator {
+    pub fn new() -> Self {
+        Self {
+            taps: coefficients(),
+            history: VecDeque::with_capacity(TAPS),
+            frames: 0,
+            output: Vec::new(),
+        }
+    }
+
+    pub fn push(&mut self, sample: f32) {
+        self.history.push_front(sample);
+        if self.history.len() > TAPS {
+            self.history.pop_back();
+        }
+        if self.frames.is_multiple_of((INPUT_RATE / WHISPER_RATE) as usize) {
+            self.output.push(
+                self.taps
+                    .iter()
+                    .zip(self.history.iter())
+                    .map(|(tap, sample)| tap * sample)
+                    .sum(),
+            );
+        }
+        self.frames += 1;
+    }
+}
+
 pub(crate) fn prepare_recording(
     meeting_dir: &Path,
     recording: &RecordingFile,
@@ -78,9 +121,7 @@ pub(crate) fn prepare_recording(
             continue;
         };
         let mut samples = reader.samples();
-        let mut output = Vec::new();
-        let mut history = VecDeque::with_capacity(TAPS);
-        let taps = coefficients();
+        let mut decimator = Decimator::new();
         let mut frames = 0usize;
         loop {
             if frames.is_multiple_of(INPUT_RATE as usize) && cancel.load(Ordering::SeqCst) {
@@ -103,20 +144,10 @@ pub(crate) fn prepare_recording(
             } else {
                 first as f32 / 32767.0
             };
-            history.push_front(sample);
-            if history.len() > TAPS {
-                history.pop_back();
-            }
-            if frames.is_multiple_of((INPUT_RATE / WHISPER_RATE) as usize) {
-                output.push(
-                    taps.iter()
-                        .zip(history.iter())
-                        .map(|(tap, sample)| tap * sample)
-                        .sum(),
-                );
-            }
+            decimator.push(sample);
             frames += 1;
         }
+        let output = decimator.output;
         prepared.push(PreparedRecording {
             samples_16k: output,
             speaker,
