@@ -1,6 +1,6 @@
 # Move Segments between Participants
 
-Status: ready-for-agent
+Status: ready-for-human
 Blocked by: 02
 Spec: ../spec.md
 
@@ -25,7 +25,7 @@ Let the user attribute single Segments to any Participant. This covers group cal
 
 ## Comments
 
-### 2026-10-13: implemented
+### 2026-10-13: implemented; laptop check pending
 
 - `meeting.json` gains `"segment_participants": {"revision": N, "segments": {id: name}}`, used only for Revision N and holding only assignments that differ from the Segment's label Participant. `Participants` in `crates/core/src/participant.rs` is the single resolver (segment assignment, then label override, then default); `src/transcript.ts` mirrors it for the view.
 - Library: `assign_segments` (current Revision only; refused for Voice notes), `rename_participant` (rename everywhere; onto an existing name merges), `remove_participant` (Segments go back to their label's default). Each re-renders `transcript.md`.
@@ -33,3 +33,4 @@ Let the user attribute single Segments to any Participant. This covers group cal
 - UI: Participants panel lists every Participant in use plus each present label's Participant (rename, merge, remove); Transcript Segments have checkboxes and a "Move to" bar with "New Participant…". Voice notes have neither moves nor checkboxes. After each change the view reloads the Meeting instead of re-applying the rules itself.
 - Checks: core tests and clippy, `pnpm typecheck`, Vitest, Windows-gnu clippy of `src-tauri`.
 - Review notes left as is: no dedicated Import test (the all-Unknown case is covered on a recorded Meeting); `Participants::new(...)` from a `MeetingFile` repeats in a few places.
+- Laptop check: In an Import, tick several Segments and move them to a new Participant, rename it onto an existing name (merge), remove it, then Re-transcribe: the moves carry over to the new Revision.

@@ -1,6 +1,6 @@
 # Use Participant names in Summary, Ask, search and Vocabulary
 
-Status: ready-for-agent
+Status: ready-for-human
 Blocked by: 02
 Spec: ../spec.md
 
@@ -23,7 +23,7 @@ Give the models and search Participant names instead of Speaker labels.
 
 ## Comments
 
-### 2026-10-13: implemented
+### 2026-10-13: implemented; laptop check pending
 
 - Summary and Ask lines are `[segment-id] <Participant>: text`; both system prompts say lines are `Participant: text` and name the user (the Meeting's Me Participant). Send plans and disclosures use the same lines. Ask retrieval also matches Participant names.
 - Library search: the FTS `segments` table has an indexed `participant` column (index schema 4, rebuilt on first open). Participant changes re-index that Meeting; a Settings "Your name" change re-indexes every Meeting. The app opens the Library with "Your name", so a fresh index is built with it and startup does not re-index.
@@ -31,3 +31,4 @@ Give the models and search Participant names instead of Speaker labels.
 - Stale Summary: summary.json stores `participants_fingerprint` (the Me Participant plus each Segment's resolved name). The Summary panel offers "Participants changed: regenerate Summary?"; nothing regenerates on its own. Old summaries count as changed only when a Segment now resolves to a non-default name; a missing Revision counts as unchanged.
 - Checks: core tests and clippy, `pnpm typecheck`, Vitest, Windows-gnu clippy of `src-tauri`.
 - Review notes left as is: the cloud disclosure for long Meetings lists the map requests but not the later reduce requests (as before this ticket); a failed "Participants changed?" check hides the prompt rather than the Summary.
+- Laptop check: With Remote named, generate a Summary (Action item owners use the name), Ask about that person, search the Library for the name, then rename them: the Summary panel offers to regenerate and search finds the new name.

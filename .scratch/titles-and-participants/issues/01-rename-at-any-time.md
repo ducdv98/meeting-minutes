@@ -1,6 +1,6 @@
 # Rename a Meeting at any time
 
-Status: ready-for-agent
+Status: ready-for-human
 Spec: ../spec.md
 
 ## What
@@ -30,10 +30,11 @@ Stop moving the Meeting folder on rename (ADR 0009).
 
 ## Comments
 
-### 2026-10-13: implemented
+### 2026-10-13: implemented; laptop check pending
 
 - New folders are `YYYY-MM-DD HHMM` (+ ` (n)`). Rename writes only `meeting.json`, updates the index row and re-renders the Markdown files; ID and folder never change.
 - `crates/core/src/metadata.rs`: every `meeting.json` writer after creation (rename, language, cloud consent, recording finalization) goes through one process-wide lock. Transcript and Summary Markdown are written with the Title read under that lock, so a rename during Processing or Summary isn't overwritten by the old Title.
 - Rename is no longer disabled while busy; the player stays open; the Recording screen can edit the Title.
 - Checks: core tests, `pnpm typecheck`, Vitest, Windows-gnu clippy of `src-tauri` with a whisper stub.
 - Review notes left as is: Markdown write errors on rename are ignored (as before; `meeting.json` is the source of truth); the global lock is held during the small Markdown writes.
+- Laptop check: Rename a Meeting while it transcribes, while audio plays, and from the Recording screen while recording: the Title changes at once, playback keeps going, and a new Meeting's folder is named `YYYY-MM-DD HHMM`.
