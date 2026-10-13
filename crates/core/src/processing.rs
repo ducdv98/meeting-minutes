@@ -59,6 +59,12 @@ pub trait SpeechEngine {
     fn has_speech(&mut self, samples_16k: &[f32]) -> bool {
         samples_16k.iter().any(|sample| sample.abs() > 0.01)
     }
+    fn is_offline(&self) -> bool {
+        false
+    }
+    fn is_deferred(&self) -> bool {
+        false
+    }
     fn transcribe(
         &mut self,
         samples_16k: &[f32],
@@ -124,6 +130,9 @@ pub struct EngineChain<'a> {
     local_name: String,
     local_factory: LocalFactory<'a>,
     local: Option<Box<dyn SpeechEngine>>,
+    background_local_allowed: Option<Box<dyn FnMut() -> bool + 'a>>,
+    offline: bool,
+    deferred: bool,
     sleeper: RetrySleeper<'a>,
     used: Vec<String>,
     fallback: Option<String>,
@@ -143,6 +152,9 @@ impl<'a> EngineChain<'a> {
             local_name: local_name.into(),
             local_factory,
             local: None,
+            background_local_allowed: None,
+            offline: false,
+            deferred: false,
             sleeper: Box::new(|duration, cancel| {
                 let mut left = duration;
                 while !left.is_zero() {
@@ -165,9 +177,21 @@ impl<'a> EngineChain<'a> {
         self.sleeper = sleeper;
     }
 
+    /// During a Recording, local Whisper may run only while the GPU and power allow it.
+    pub fn set_background_local_allowed(&mut self, allowed: Box<dyn FnMut() -> bool + 'a>) {
+        self.background_local_allowed = Some(allowed);
+    }
+
     fn local(&mut self) -> Result<&mut dyn SpeechEngine, ProcessingError> {
+        if self.background_local_allowed.as_mut().is_some_and(|allowed| !allowed()) {
+            self.local = None;
+            self.deferred = true;
+            return Err(ProcessingError::Deferred);
+        }
         if self.local.is_none() {
-            self.local = Some((self.local_factory)()?);
+            let loaded = (self.local_factory)();
+            self.deferred = matches!(&loaded, Err(ProcessingError::Deferred));
+            self.local = Some(loaded?);
         }
         Ok(self.local.as_deref_mut().expect("loaded local engine"))
     }
@@ -194,6 +218,8 @@ impl<'a> EngineChain<'a> {
         prompt: Option<&str>,
         cancel: &AtomicBool,
     ) -> Result<Vec<RawSegment>, ProcessingError> {
+        self.offline = false;
+        self.deferred = false;
         let mut failed = Vec::new();
         for index in 0..self.cloud.len() {
             if self.unavailable[index] {
@@ -225,6 +251,10 @@ impl<'a> EngineChain<'a> {
                         return Ok(segments);
                     }
                     Err(EngineError::Cancelled) => return Err(ProcessingError::Cancelled),
+                    Err(EngineError::Offline) if self.background_local_allowed.is_some() => {
+                        self.offline = true;
+                        return Err(ProcessingError::Offline);
+                    }
                     Err(EngineError::RateLimited { retry_after })
                         if waited < Duration::from_secs(60) =>
                     {
@@ -287,6 +317,12 @@ impl<'a> EngineChain<'a> {
 }
 
 impl SpeechEngine for EngineChain<'_> {
+    fn is_offline(&self) -> bool {
+        self.offline
+    }
+    fn is_deferred(&self) -> bool {
+        self.deferred
+    }
     fn backend(&self) -> &str {
         self.local
             .as_ref()
@@ -347,6 +383,8 @@ impl SpeechEngine for EngineChain<'_> {
         samples: &[f32],
         cancel: &AtomicBool,
     ) -> Result<Language, String> {
+        self.offline = false;
+        self.deferred = false;
         for (index, engine) in self.cloud.iter_mut().enumerate() {
             if self.unavailable[index] {
                 continue;
@@ -355,6 +393,10 @@ impl SpeechEngine for EngineChain<'_> {
                 Ok(Some(language)) => return Ok(language),
                 Ok(None) => continue,
                 Err(EngineError::Cancelled) => return Err("Processing cancelled".into()),
+                Err(EngineError::Offline) if self.background_local_allowed.is_some() => {
+                    self.offline = true;
+                    return Err("Provider unavailable".into());
+                }
                 Err(error) => {
                     if matches!(
                         error,
@@ -386,6 +428,10 @@ impl SpeechEngine for EngineChain<'_> {
         progress: &mut dyn FnMut(f32),
         cancel: &AtomicBool,
     ) -> Result<Vec<RawSegment>, ProcessingError> {
+        if samples.is_empty() {
+            progress(1.0);
+            return Ok(Vec::new());
+        }
         if self.cloud.is_empty() {
             let result = self
                 .local()?
@@ -529,6 +575,8 @@ struct ProcessingTelemetry {
 #[derive(Debug)]
 pub enum ProcessingError {
     Cancelled,
+    Offline,
+    Deferred,
     Io(io::Error),
     Json(serde_json::Error),
     Audio(String),
@@ -542,6 +590,8 @@ impl fmt::Display for ProcessingError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Cancelled => write!(f, "Processing cancelled"),
+            Self::Offline => write!(f, "Provider unavailable"),
+            Self::Deferred => write!(f, "Background transcription deferred"),
             Self::Io(e) => write!(f, "Processing I/O error: {e}"),
             Self::Json(e) => write!(f, "Meeting metadata error: {e}"),
             Self::Audio(e) => write!(f, "Audio error: {e}"),
@@ -1060,8 +1110,21 @@ fn transcribe_meeting_inner(
         revision,
         created_at: chrono::Local::now().to_rfc3339(),
         model: {
-            let mut used = engine.engines_used();
-            if cached_local && !used.iter().any(|name| name == request.model) {
+            let mut used = Vec::new();
+            let processing_used = engine.engines_used();
+            for name in background
+                .iter()
+                .flat_map(|cache| cache.engines_used.iter())
+                .chain(processing_used.iter())
+            {
+                if !used.contains(name) {
+                    used.push(name.clone());
+                }
+            }
+            if cached_local
+                && background.iter().any(|cache| cache.engines_used.is_empty())
+                && !used.iter().any(|name| name == request.model)
+            {
                 used.insert(0, request.model.into());
             }
             if used.is_empty() {
@@ -1070,7 +1133,10 @@ fn transcribe_meeting_inner(
                 used
             }
         },
-        fallback_reason: engine.fallback_reason().map(str::to_owned),
+        fallback_reason: background
+            .iter()
+            .find_map(|cache| cache.fallback_reason.clone())
+            .or_else(|| engine.fallback_reason().map(str::to_owned)),
         language: language.unwrap_or(Language::En),
         language_detected: detected && language.is_some(),
         duration_ms: metadata.duration_ms,
@@ -1258,12 +1324,17 @@ fn transcribe_meeting_inner(
         preparation_wall_time,
         whisper_wall_time,
     ));
-    if let Some((groq_ms, gemini_ms, local_ms)) = engine.engine_audio_ms() {
+    let cached_audio = background.iter().filter_map(|cache| cache.engine_audio_ms).fold(
+        (0, 0, 0),
+        |totals, audio| (totals.0 + audio.0, totals.1 + audio.1, totals.2 + audio.2),
+    );
+    if engine.engine_audio_ms().is_some() || background.iter().any(|cache| cache.engine_audio_ms.is_some()) {
+        let (groq_ms, gemini_ms, local_ms) = engine.engine_audio_ms().unwrap_or((0, 0, 0));
         log_event(LogEvent::engine_usage(
-            groq_ms,
-            gemini_ms,
-            local_ms,
-            engine.fallback_reason(),
+            groq_ms + cached_audio.0,
+            gemini_ms + cached_audio.1,
+            local_ms + cached_audio.2,
+            transcript.fallback_reason.as_deref(),
         ));
     }
     Ok(transcript)

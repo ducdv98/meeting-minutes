@@ -1264,11 +1264,28 @@ fn meeting_vocabulary(
     Ok(vocabulary)
 }
 
-/// Starts transcribing the new Recording's Chunks in the background when the PC has a discrete
-/// GPU and the model is already installed. Spans run only on AC power; otherwise all of the audio
-/// is transcribed after Stop.
+fn transcription_chain<'a>(
+    app: &AppHandle,
+    model: &str,
+    local: Box<dyn FnMut() -> Result<Box<dyn SpeechEngine>, processing::ProcessingError> + 'a>,
+) -> Result<processing::EngineChain<'a>, processing::ProcessingError> {
+    let mut cloud: Vec<Box<dyn CloudEngine>> = Vec::new();
+    if let Some(key) = app.state::<Secrets>().0.get(ProviderKind::Groq).map_err(processing::ProcessingError::Engine)? {
+        cloud.push(Box::new(GroqEngine::new(app.state::<Http>().0.clone(), key)));
+    }
+    Ok(processing::EngineChain::new(cloud, model, local))
+}
+
+/// Starts transcribing the new Recording's Chunks in the background when Groq is configured or
+/// local Whisper can run on a discrete GPU. The cache remains in memory until Stop.
 fn start_background(app: &AppHandle) {
-    if !WhisperEngine::discrete_gpu_available() {
+    let has_groq_key = matches!(app.state::<Secrets>().0.get(ProviderKind::Groq), Ok(Some(_)));
+    let discrete_gpu = WhisperEngine::discrete_gpu_available();
+    let on_ac = processing::PowerState::current() != processing::PowerState::Battery;
+    // Cloud availability is learned from Offline errors; the worker retries after its backoff.
+    if background::start_decision(has_groq_key, true, discrete_gpu, on_ac)
+        == background::BackgroundStart::Disabled
+    {
         return;
     }
     let Some(job) = lock_recorder(app)
@@ -1283,7 +1300,7 @@ fn start_background(app: &AppHandle) {
         .iter()
         .find(|m| m.name == settings.model)
         .or_else(|| MODELS.iter().find(|m| m.name == DEFAULT_MODEL))
-        .filter(|model| models::is_installed(&models_dir, model))
+        .filter(|model| has_groq_key || models::is_installed(&models_dir, model))
     else {
         return;
     };
@@ -1312,27 +1329,45 @@ fn start_background(app: &AppHandle) {
                 language,
                 processing::initial_prompt(&vocabulary),
             );
+            let mut chain = match transcription_chain(&app, model.name, Box::new(|| {
+                // Never load a second model while Processing has one on the GPU.
+                if lock_processor(&app).map(|p| p.is_running()).unwrap_or(true) {
+                    return Err(processing::ProcessingError::Deferred);
+                }
+                if !models::is_installed(&models_dir, model) {
+                    return Err(processing::ProcessingError::Deferred);
+                }
+                let engine = WhisperEngine::load_with_vad(&model_path, vad_path.as_deref())
+                    .map_err(processing::ProcessingError::Engine)?;
+                if engine.backend() != "Vulkan" {
+                    return Err(processing::ProcessingError::Deferred);
+                }
+                Ok(Box::new(engine) as Box<dyn SpeechEngine>)
+            })) {
+                Ok(chain) => chain,
+                Err(_) => return Some(transcriber.finish()),
+            };
+            chain.set_background_local_allowed(Box::new(move || {
+                discrete_gpu && processing::PowerState::current() != processing::PowerState::Battery
+            }));
+            let mut chain = Some(chain);
+            let started = std::time::Instant::now();
             let _ = background::run(
                 &mut transcriber,
-                &mut || {
-                    // Never load a second model while Processing has one on the GPU.
-                    if lock_processor(&app).map(|p| p.is_running()).unwrap_or(true) {
-                        return None;
-                    }
-                    let engine = WhisperEngine::load_with_vad(&model_path, vad_path.as_deref())
-                        .ok()
-                        .filter(|engine| engine.backend() == "Vulkan");
-                    // A model that does not load on the GPU will not load next time either.
-                    if engine.is_none() {
-                        stop.store(true, Ordering::SeqCst);
-                    }
-                    engine
-                },
+                &mut || chain.take(),
                 &chunk_dir,
                 background::BackgroundControl {
                     stop: &stop,
-                    // On battery the engine is unloaded and the results kept; work resumes on AC.
-                    allowed: &mut || processing::PowerState::current() != processing::PowerState::Battery,
+                    allowed: &mut || matches!(
+                        background::start_decision(
+                            has_groq_key,
+                            true,
+                            discrete_gpu,
+                            processing::PowerState::current() != processing::PowerState::Battery,
+                        ),
+                        background::BackgroundStart::Cloud | background::BackgroundStart::Local
+                    ),
+                    now: &mut || started.elapsed(),
                     wait: &mut || thread::sleep(Duration::from_secs(2)),
                 },
                 &mut |_| {},
@@ -1459,11 +1494,7 @@ fn processing_worker(app: AppHandle) {
             if !early_draft.is_empty() {
                 emit_draft(&app, &id, &early_draft);
             }
-            let mut cloud: Vec<Box<dyn CloudEngine>> = Vec::new();
-            if let Some(key) = app.state::<Secrets>().0.get(ProviderKind::Groq).map_err(processing::ProcessingError::Engine)? {
-                cloud.push(Box::new(GroqEngine::new(app.state::<Http>().0.clone(), key)));
-            }
-            let mut engine = processing::EngineChain::new(cloud, model.name, Box::new(|| {
+            let mut engine = transcription_chain(&app, model.name, Box::new(|| {
                 let needs_model_download = !models::is_installed(models_dir, model);
                 let needs_vad_download = !models::is_installed(models_dir, &models::VAD_MODEL);
                 if needs_model_download || needs_vad_download {
@@ -1531,7 +1562,7 @@ fn processing_worker(app: AppHandle) {
                 let engine = WhisperEngine::load_with_vad(&model_path, vad_path.as_deref())
                     .map_err(processing::ProcessingError::Engine)?;
                 Ok(Box::new(engine) as Box<dyn SpeechEngine>)
-            }));
+            }))?;
             let correction = ai::correction_provider(
                 &settings.ai,
                 app.state::<Secrets>().0.as_ref(),

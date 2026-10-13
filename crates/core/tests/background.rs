@@ -13,6 +13,16 @@ use std::{
 };
 use tempfile::TempDir;
 
+#[test]
+fn cloud_recording_starts_on_battery_without_a_discrete_gpu() {
+    use background::BackgroundStart;
+    assert_eq!(background::start_decision(true, true, false, false), BackgroundStart::Cloud);
+    assert_eq!(background::start_decision(true, false, false, false), BackgroundStart::Waiting);
+    assert_eq!(background::start_decision(false, true, false, false), BackgroundStart::Disabled);
+    assert_eq!(background::start_decision(false, false, true, true), BackgroundStart::Local);
+    assert_eq!(background::start_decision(false, true, true, false), BackgroundStart::Waiting);
+}
+
 const RATE: usize = 48_000;
 const WORD_MS: usize = 400;
 const GAP_MS: usize = 200;
@@ -193,6 +203,7 @@ fn background_run(
         BackgroundControl {
             stop: &stop,
             allowed,
+            now: &mut || std::time::Duration::ZERO,
             wait: &mut || {
                 waits.set(waits.get() + 1);
                 if waits.get() > 3 {

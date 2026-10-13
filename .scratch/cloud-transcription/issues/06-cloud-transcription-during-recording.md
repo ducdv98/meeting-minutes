@@ -15,8 +15,12 @@ Blocked by: 03
 
 ## Acceptance criteria
 
-- [ ] Core tests with a fake Groq engine:
+- [x] Core tests with a fake Groq engine:
   - spans are transcribed during a Recording on "integrated GPU, battery";
   - offline pauses and online resumes;
   - Stop transcribes only the remainder.
 - [ ] Laptop check (record in `## Comments`): a one-hour call on battery with a Groq key publishes its Revision within about a minute of Stop.
+
+## Comments
+
+- The one-hour laptop check remains open: this Linux environment cannot run the Windows Recording app or verify real Groq latency on a battery-powered laptop.

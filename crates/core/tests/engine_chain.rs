@@ -4,7 +4,9 @@ use meeting_minutes_core::{
     transcript::{Language, RawSegment},
 };
 use std::{
+    cell::Cell,
     collections::VecDeque,
+    rc::Rc,
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
@@ -124,6 +126,16 @@ fn groq_only_does_not_load_local() {
 }
 
 #[test]
+fn an_empty_remainder_does_not_call_an_engine() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let loads = Arc::new(AtomicUsize::new(0));
+    let mut engine = chain(vec![cloud(vec![], calls.clone())], loads.clone());
+    run(&mut engine, &[]).unwrap();
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    assert_eq!(loads.load(Ordering::SeqCst), 0);
+}
+
+#[test]
 fn quota_midway_skips_groq_for_remaining_spans() {
     let calls = Arc::new(AtomicUsize::new(0));
     let loads = Arc::new(AtomicUsize::new(0));
@@ -150,6 +162,22 @@ fn no_key_uses_local_only() {
     assert_eq!(loads.load(Ordering::SeqCst), 1);
     assert_eq!(engine.engines_used(), vec!["small"]);
     assert_eq!(engine.fallback_reason(), None);
+}
+
+#[test]
+fn local_fallback_waits_for_ac_power_during_a_recording() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let loads = Arc::new(AtomicUsize::new(0));
+    let on_ac = Rc::new(Cell::new(false));
+    let power = Rc::clone(&on_ac);
+    let mut engine = chain(vec![cloud(vec![Err(EngineError::QuotaExhausted)], calls.clone())], loads.clone());
+    engine.set_background_local_allowed(Box::new(move || power.get()));
+    assert!(matches!(run(&mut engine, &[0.1; 16_000]), Err(ProcessingError::Deferred)));
+    assert_eq!(loads.load(Ordering::SeqCst), 0);
+    on_ac.set(true);
+    run(&mut engine, &[0.1; 16_000]).unwrap();
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(loads.load(Ordering::SeqCst), 1);
 }
 
 #[test]
