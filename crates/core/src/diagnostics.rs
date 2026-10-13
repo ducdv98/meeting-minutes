@@ -3,6 +3,7 @@ use std::{fmt, time::Duration};
 use crate::{
     ai::{AiError, ProviderKind},
     ask::AnswerState,
+    processing::PowerState,
 };
 
 pub struct DiagnosticsInput {
@@ -46,6 +47,8 @@ pub enum LogEvent {
     TranscriptionCompleted {
         model: String,
         backend: String,
+        device: Option<String>,
+        power: PowerState,
         threads: usize,
         audio_ms: u64,
         audio_after_vad_ms: Option<u64>,
@@ -73,10 +76,40 @@ pub enum LogEvent {
 /// Backends a `transcription_completed` line may name; anything else logs as `unknown`.
 pub const TRANSCRIPTION_BACKENDS: &[&str] = &["CPU", "Vulkan", "unknown"];
 
+pub struct TranscriptionEnvironment<'a> {
+    pub backend: &'a str,
+    pub device: Option<&'a str>,
+    pub power: PowerState,
+}
+
 impl LogEvent {
     pub fn transcription_completed(
         model: &str,
         backend: &str,
+        threads: usize,
+        audio_ms: u64,
+        audio_after_vad_ms: Option<u64>,
+        preparation: Duration,
+        whisper: Duration,
+    ) -> Self {
+        Self::transcription_completed_with_device(
+            model,
+            TranscriptionEnvironment {
+                backend,
+                device: None,
+                power: PowerState::Unknown,
+            },
+            threads,
+            audio_ms,
+            audio_after_vad_ms,
+            preparation,
+            whisper,
+        )
+    }
+
+    pub fn transcription_completed_with_device(
+        model: &str,
+        environment: TranscriptionEnvironment<'_>,
         threads: usize,
         audio_ms: u64,
         audio_after_vad_ms: Option<u64>,
@@ -90,11 +123,22 @@ impl LogEvent {
             .unwrap_or("unknown");
         let backend = TRANSCRIPTION_BACKENDS
             .iter()
-            .find(|candidate| **candidate == backend)
+            .find(|candidate| **candidate == environment.backend)
             .unwrap_or(&"unknown");
         Self::TranscriptionCompleted {
             model: model.to_owned(),
             backend: (*backend).to_owned(),
+            device: environment.device
+                .filter(|name| {
+                    !name.is_empty()
+                        && name.len() <= 128
+                        && name.chars().all(|c| {
+                            c.is_alphanumeric()
+                                || matches!(c, ' ' | '-' | '_' | '.' | '(' | ')' | '+')
+                        })
+                })
+                .map(str::to_owned),
+            power: environment.power,
             threads,
             audio_ms,
             audio_after_vad_ms,
@@ -156,6 +200,8 @@ impl fmt::Display for LogEvent {
             Self::TranscriptionCompleted {
                 model,
                 backend,
+                device,
+                power,
                 threads,
                 audio_ms,
                 audio_after_vad_ms,
@@ -163,7 +209,8 @@ impl fmt::Display for LogEvent {
                 whisper_ms,
                 rtf,
             } => {
-                return write!(f, "transcription_completed model={model} backend={backend} threads={threads} audio_ms={audio_ms} audio_after_vad_ms={} preparation_ms={preparation_ms} whisper_ms={whisper_ms} rtf={}",
+                let device = device.as_deref().unwrap_or("none");
+                return write!(f, "transcription_completed model={model} backend={backend} device=\"{device}\" power={} threads={threads} audio_ms={audio_ms} audio_after_vad_ms={} preparation_ms={preparation_ms} whisper_ms={whisper_ms} rtf={}", power.label(),
                     audio_after_vad_ms.map_or_else(|| "none".to_owned(), |ms| ms.to_string()),
                     rtf.map_or_else(|| "none".to_owned(), |factor| format!("{factor:.3}")));
             }
@@ -308,8 +355,20 @@ fn parse_transcription_rtf(event: &str) -> Option<&str> {
     {
         return None;
     }
-    let (backend, rest) = rest.split_once(" threads=")?;
+    let (backend, rest) = rest.split_once(" device=\"")?;
     if !TRANSCRIPTION_BACKENDS.contains(&backend) {
+        return None;
+    }
+    let (device, rest) = rest.split_once("\" power=")?;
+    if device.len() > 128
+        || !device
+            .chars()
+            .all(|c| c.is_alphanumeric() || matches!(c, ' ' | '-' | '_' | '.' | '(' | ')' | '+'))
+    {
+        return None;
+    }
+    let (power, rest) = rest.split_once(" threads=")?;
+    if !matches!(power, "ac" | "battery" | "unknown") {
         return None;
     }
     let (threads, rest) = rest.split_once(" audio_ms=")?;

@@ -1,13 +1,13 @@
 use meeting_minutes_core::{
     diagnostics::{log_event, LogEvent},
-    processing::{ProcessingError, SpeechEngine, StreamTranscription},
+    processing::{PowerState, ProcessingError, SpeechEngine, StreamTranscription},
     transcript::{Language, RawSegment},
 };
 use std::{
     path::Path,
     sync::{
         atomic::{AtomicBool, Ordering},
-        mpsc, Arc,
+        mpsc, Arc, Mutex, OnceLock,
     },
     time::Duration,
 };
@@ -19,9 +19,22 @@ use whisper_rs::{
 pub struct WhisperEngine {
     context: WhisperContext,
     backend: &'static str,
+    device: Option<String>,
+    power: PowerState,
     threads: usize,
     vad: Option<WhisperVadContext>,
     audio_after_vad_ms: Option<u64>,
+}
+
+static LAST_BACKEND: OnceLock<Mutex<String>> = OnceLock::new();
+
+#[cfg(windows)]
+fn diagnostic_device_name(name: &str) -> Option<String> {
+    (name.len() <= 128
+        && name.chars().all(|c| {
+            c.is_alphanumeric() || matches!(c, ' ' | '-' | '_' | '.' | '(' | ')' | '+')
+        }))
+    .then(|| name.to_owned())
 }
 
 const SAMPLE_RATE: usize = 16_000;
@@ -36,24 +49,36 @@ enum BackendPlan {
     Vulkan(i32),
 }
 
-// ggml lists discrete devices before integrated devices. Among available devices,
-// use the one with the most memory; equal sizes retain ggml's ordering.
 #[cfg(any(windows, test))]
-fn plan_backend(devices: &[(i32, usize)]) -> BackendPlan {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DeviceType {
+    Discrete,
+    Integrated,
+    Cpu,
+}
+
+#[cfg(any(windows, test))]
+fn plan_backend(devices: &[(i32, DeviceType, usize)], power: PowerState) -> BackendPlan {
     let mut best = None;
-    for &(id, memory) in devices {
-        if best.is_none_or(|(_, best_memory)| memory > best_memory) {
-            best = Some((id, memory));
+    for &(id, kind, memory) in devices {
+        let rank = match kind {
+            DeviceType::Discrete if power != PowerState::Battery => 2,
+            DeviceType::Integrated => 1,
+            _ => continue,
+        };
+        if best.is_none_or(|(_, best_rank, best_memory)| (rank, memory) > (best_rank, best_memory))
+        {
+            best = Some((id, rank, memory));
         }
     }
-    best.map_or(BackendPlan::Cpu, |(id, _)| BackendPlan::Vulkan(id))
+    best.map_or(BackendPlan::Cpu, |(id, _, _)| BackendPlan::Vulkan(id))
 }
 
 #[cfg(windows)]
 fn available_devices() -> Vec<whisper_rs::vulkan::VkDeviceInfo> {
     // ggml's Vulkan initializer throws a C++ exception when vkCreateInstance fails.
     // Check the loader and ICD through Vulkan's fallible API before crossing that FFI.
-    if vulkan_instance_available() {
+    if vulkan_devices().is_some() {
         whisper_rs::vulkan::list_devices()
     } else {
         Vec::new()
@@ -61,17 +86,18 @@ fn available_devices() -> Vec<whisper_rs::vulkan::VkDeviceInfo> {
 }
 
 #[cfg(windows)]
-fn vulkan_instance_available() -> bool {
+fn vulkan_devices() -> Option<Vec<(String, DeviceType)>> {
     use ash::{vk, Entry};
+    use std::ffi::CStr;
 
     let Ok(entry) = (unsafe { Entry::load() }) else {
-        return false;
+        return None;
     };
     let Ok(Some(version)) = (unsafe { entry.try_enumerate_instance_version() }) else {
-        return false;
+        return None;
     };
     if version < vk::API_VERSION_1_2 {
-        return false;
+        return None;
     }
     let application = vk::ApplicationInfo {
         api_version: vk::API_VERSION_1_2,
@@ -81,22 +107,48 @@ fn vulkan_instance_available() -> bool {
         p_application_info: &application,
         ..Default::default()
     };
-    match unsafe { entry.create_instance(&create, None) } {
-        Ok(instance) => {
-            unsafe { instance.destroy_instance(None) };
-            true
-        }
-        Err(_) => false,
-    }
+    let instance = unsafe { entry.create_instance(&create, None) }.ok()?;
+    let devices = unsafe { instance.enumerate_physical_devices() }
+        .ok()
+        .map(|physical| {
+            physical
+                .iter()
+                .map(|&device| {
+                    let properties = unsafe { instance.get_physical_device_properties(device) };
+                    let name = unsafe { CStr::from_ptr(properties.device_name.as_ptr()) }
+                        .to_string_lossy()
+                        .into_owned();
+                    let kind = match properties.device_type {
+                        vk::PhysicalDeviceType::DISCRETE_GPU => DeviceType::Discrete,
+                        vk::PhysicalDeviceType::INTEGRATED_GPU => DeviceType::Integrated,
+                        _ => DeviceType::Cpu,
+                    };
+                    (name, kind)
+                })
+                .collect()
+        });
+    unsafe { instance.destroy_instance(None) };
+    devices
 }
 
 #[cfg(windows)]
-fn selected_device(devices: &[whisper_rs::vulkan::VkDeviceInfo]) -> BackendPlan {
-    let memory = devices
+fn selected_device(devices: &[whisper_rs::vulkan::VkDeviceInfo], power: PowerState) -> BackendPlan {
+    let Some(physical) = vulkan_devices() else {
+        return BackendPlan::Cpu;
+    };
+    let mut used = vec![false; physical.len()];
+    let ranked = devices
         .iter()
-        .map(|device| (device.id, device.vram.total))
+        .filter_map(|device| {
+            let index = physical
+                .iter()
+                .enumerate()
+                .position(|(index, (name, _))| !used[index] && name == &device.name)?;
+            used[index] = true;
+            Some((device.id, physical[index].1, device.vram.total))
+        })
         .collect::<Vec<_>>();
-    plan_backend(&memory)
+    plan_backend(&ranked, power)
 }
 
 // whisper.cpp#3750: in static MSVC builds the Vulkan backend can fail to register during
@@ -117,16 +169,23 @@ fn ensure_vulkan_registered() -> bool {
     true
 }
 
-fn load_context(model_path: &Path) -> Result<(WhisperContext, &'static str), String> {
+fn load_context(
+    model_path: &Path,
+) -> Result<(WhisperContext, &'static str, Option<String>, PowerState), String> {
+    let power = PowerState::current();
     #[cfg(windows)]
     {
         let devices = available_devices();
-        match selected_device(&devices) {
+        match selected_device(&devices, power) {
             BackendPlan::Vulkan(id) if ensure_vulkan_registered() => {
                 let mut params = WhisperContextParameters::default();
                 params.use_gpu(true).gpu_device(id).flash_attn(true);
                 if let Ok(context) = WhisperContext::new_with_params(model_path, params) {
-                    return Ok((context, "Vulkan"));
+                    let name = devices
+                        .iter()
+                        .find(|device| device.id == id)
+                        .and_then(|device| diagnostic_device_name(&device.name));
+                    return Ok((context, "Vulkan", name, power));
                 }
                 log_event(LogEvent::GpuLoadFailed);
             }
@@ -137,7 +196,7 @@ fn load_context(model_path: &Path) -> Result<(WhisperContext, &'static str), Str
     let mut params = WhisperContextParameters::default();
     params.use_gpu(false);
     WhisperContext::new_with_params(model_path, params)
-        .map(|context| (context, "CPU"))
+        .map(|context| (context, "CPU", None, power))
         .map_err(|error| error.to_string())
 }
 
@@ -269,16 +328,22 @@ impl WhisperEngine {
     }
 
     pub fn backend_description() -> String {
+        if let Some(backend) = LAST_BACKEND.get().and_then(|last| last.lock().ok()) {
+            return backend.clone();
+        }
+        let power = PowerState::current();
         #[cfg(windows)]
         {
             let devices = available_devices();
-            if let BackendPlan::Vulkan(id) = selected_device(&devices) {
+            if let BackendPlan::Vulkan(id) = selected_device(&devices, power) {
                 if let Some(device) = devices.iter().find(|device| device.id == id) {
-                    return format!("Vulkan ({})", device.name);
+                    let name =
+                        diagnostic_device_name(&device.name).unwrap_or_else(|| "none".to_owned());
+                    return format!("Vulkan device=\"{name}\" power={}", power.label());
                 }
             }
         }
-        "CPU".to_owned()
+        format!("CPU device=\"none\" power={}", power.label())
     }
 
     pub fn load(model_path: &Path) -> Result<Self, String> {
@@ -295,12 +360,22 @@ impl WhisperEngine {
             }
             context
         });
-        load_context(model_path).map(|(context, backend)| Self {
-            context,
-            backend,
-            threads: threads(),
-            vad,
-            audio_after_vad_ms: None,
+        load_context(model_path).map(|(context, backend, device, power)| {
+            let description = format!(
+                "{backend} device=\"{}\" power={}",
+                device.as_deref().unwrap_or("none"),
+                power.label()
+            );
+            *LAST_BACKEND.get_or_init(|| Mutex::new(String::new())).lock().unwrap() = description;
+            Self {
+                context,
+                backend,
+                device,
+                power,
+                threads: threads(),
+                vad,
+                audio_after_vad_ms: None,
+            }
         })
     }
 }
@@ -404,6 +479,14 @@ impl SpeechEngine for WhisperEngine {
 
     fn thread_count(&self) -> usize {
         self.threads
+    }
+
+    fn device(&self) -> Option<&str> {
+        self.device.as_deref()
+    }
+
+    fn power_state(&self) -> PowerState {
+        self.power
     }
 
     fn audio_after_vad_ms(&self) -> Option<u64> {
@@ -628,15 +711,59 @@ mod tests {
     #[test]
     fn chooses_largest_gpu_and_keeps_ggml_order_for_ties() {
         assert_eq!(
-            plan_backend(&[(0, 4), (1, 8), (2, 2)]),
+            plan_backend(
+                &[
+                    (0, DeviceType::Discrete, 4),
+                    (1, DeviceType::Discrete, 8),
+                    (2, DeviceType::Discrete, 2)
+                ],
+                PowerState::Ac
+            ),
             BackendPlan::Vulkan(1)
         );
-        assert_eq!(plan_backend(&[(0, 8), (1, 8)]), BackendPlan::Vulkan(0));
+        assert_eq!(
+            plan_backend(
+                &[
+                    (0, DeviceType::Integrated, 8),
+                    (1, DeviceType::Integrated, 8)
+                ],
+                PowerState::Ac
+            ),
+            BackendPlan::Vulkan(0)
+        );
     }
 
     #[test]
     fn uses_cpu_without_a_device() {
-        assert_eq!(plan_backend(&[]), BackendPlan::Cpu);
+        assert_eq!(plan_backend(&[], PowerState::Ac), BackendPlan::Cpu);
+    }
+
+    #[test]
+    fn prefers_discrete_on_ac_and_integrated_on_battery() {
+        let devices = [
+            (0, DeviceType::Integrated, 16),
+            (1, DeviceType::Discrete, 6),
+        ];
+        assert_eq!(
+            plan_backend(&devices, PowerState::Ac),
+            BackendPlan::Vulkan(1)
+        );
+        assert_eq!(
+            plan_backend(&devices, PowerState::Battery),
+            BackendPlan::Vulkan(0)
+        );
+        assert_eq!(
+            plan_backend(&devices, PowerState::Unknown),
+            BackendPlan::Vulkan(1)
+        );
+    }
+
+    #[test]
+    fn battery_uses_cpu_without_integrated_gpu() {
+        assert_eq!(
+            plan_backend(&[(0, DeviceType::Discrete, 6), (1, DeviceType::Cpu, 32)], PowerState::Battery),
+            BackendPlan::Cpu
+        );
     }
 
     #[test]
