@@ -90,6 +90,33 @@ fn next_cloud_engine_can_handle_fallback_without_local_model() {
     assert_eq!(engine.engines_used(), vec!["Gemini"]);
     assert_eq!(engine.fallback_reason(), Some("Groq daily limit reached"));
 }
+
+#[test]
+fn one_revision_can_use_groq_then_gemini_then_local_after_quotas() {
+    let groq_calls = Arc::new(AtomicUsize::new(0));
+    let gemini_calls = Arc::new(AtomicUsize::new(0));
+    let loads = Arc::new(AtomicUsize::new(0));
+    let mut engine = chain(
+        vec![
+            cloud(
+                vec![Ok(vec![]), Err(EngineError::QuotaExhausted)],
+                groq_calls.clone(),
+            ),
+            Box::new(FakeCloud {
+                name: "Gemini",
+                calls: gemini_calls.clone(),
+                replies: vec![Ok(vec![]), Err(EngineError::QuotaExhausted)].into(),
+            }),
+        ],
+        loads.clone(),
+    );
+    run(&mut engine, &vec![0.5; 21 * 60 * 16_000]).unwrap();
+    assert_eq!(groq_calls.load(Ordering::SeqCst), 2);
+    assert_eq!(gemini_calls.load(Ordering::SeqCst), 2);
+    assert_eq!(loads.load(Ordering::SeqCst), 1);
+    assert_eq!(engine.engines_used(), vec!["Groq", "Gemini", "small"]);
+    assert_eq!(engine.fallback_reason(), Some("Groq daily limit reached"));
+}
 fn chain(clouds: Vec<Box<dyn CloudEngine>>, loads: Arc<AtomicUsize>) -> EngineChain<'static> {
     EngineChain::new(
         clouds,

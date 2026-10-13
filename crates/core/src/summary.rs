@@ -271,6 +271,7 @@ fn map_request(
         }],
         schema: Some(schema()),
         max_tokens,
+        inline_audio: None,
     }
 }
 fn reduce_request(
@@ -287,6 +288,7 @@ fn reduce_request(
         }],
         schema: Some(schema()),
         max_tokens,
+        inline_audio: None,
     }
 }
 pub struct SummaryOptions {

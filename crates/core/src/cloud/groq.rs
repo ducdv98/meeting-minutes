@@ -1,15 +1,8 @@
 use crate::{
     ai::{AiError, ApiKey, HttpBody, HttpClient, HttpRequest, HttpResponse, Method, UreqClient},
-    cloud::CloudEngine,
+    cloud::{encode_flac, CloudEngine},
     processing::{ProcessingError, SpeechEngine},
     transcript::{Language, RawSegment, RawWord},
-};
-use flacenc::{
-    bitsink::MemSink,
-    component::{BitRepr, StreamInfo},
-    config,
-    error::Verify,
-    source::{Fill, FrameBuf},
 };
 use serde_json::Value;
 use std::{
@@ -378,38 +371,6 @@ fn multipart(
     body.extend_from_slice(audio);
     body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
     body
-}
-
-fn encode_flac(samples: &[f32]) -> Result<Vec<u8>, EngineError> {
-    const BLOCK: usize = 4096;
-    let config = config::Encoder::default()
-        .into_verified()
-        .map_err(|_| EngineError::Other)?;
-    let mut info = StreamInfo::new(16_000, 1, 16).map_err(|_| EngineError::Other)?;
-    info.set_total_samples(samples.len());
-    info.set_block_sizes(16, BLOCK)
-        .map_err(|_| EngineError::Other)?;
-    info.set_frame_sizes(0, 0).map_err(|_| EngineError::Other)?;
-    let mut sink = MemSink::<u8>::new();
-    info.write(&mut sink).map_err(|_| EngineError::Other)?;
-    let mut audio = b"fLaC\x80\0\0\x22".to_vec();
-    audio.extend_from_slice(sink.as_slice());
-    let mut framebuf = FrameBuf::with_size(1, BLOCK).map_err(|_| EngineError::Other)?;
-    for (frame_number, chunk) in samples.chunks(BLOCK).enumerate() {
-        let pcm: Vec<i32> = chunk
-            .iter()
-            .map(|sample| (sample.clamp(-1.0, 1.0) * 32767.0).round() as i32)
-            .collect();
-        framebuf
-            .fill_interleaved(&pcm)
-            .map_err(|_| EngineError::Other)?;
-        let frame = flacenc::encode_fixed_size_frame(&config, &framebuf, frame_number, &info)
-            .map_err(|_| EngineError::Other)?;
-        sink.clear();
-        frame.write(&mut sink).map_err(|_| EngineError::Other)?;
-        audio.extend_from_slice(sink.as_slice());
-    }
-    Ok(audio)
 }
 
 pub fn with_default_http(key: ApiKey) -> GroqEngine {

@@ -293,10 +293,27 @@ fn checked_response(
     }
     if !(200..300).contains(&response.status) {
         let status = response.status;
+        let retry_after = response
+            .header("retry-after")
+            .and_then(|value| value.parse::<u64>().ok());
         crate::diagnostics::log_provider_status(kind, status);
         let mut raw = String::new();
         response.body.take(64 * 1024).read_to_string(&mut raw)?;
-        if kind == ProviderKind::Gemini && (status == 429 || raw.contains("RESOURCE_EXHAUSTED")) {
+        if kind == ProviderKind::Gemini && status == 429 {
+            if let Some(seconds) = retry_after {
+                let reason = raw.to_ascii_lowercase();
+                let daily = ["quota", "per day", "daily", "/day"]
+                    .iter()
+                    .any(|term| reason.contains(term));
+                if seconds <= 60 && !daily {
+                    return Err(AiError::RateLimited {
+                        retry_after: Duration::from_secs(seconds),
+                    });
+                }
+            }
+            return Err(AiError::GeminiLimit);
+        }
+        if kind == ProviderKind::Gemini && raw.contains("RESOURCE_EXHAUSTED") {
             return Err(AiError::GeminiLimit);
         }
         return Err(AiError::Http {
@@ -474,7 +491,17 @@ impl TextProvider for HttpProvider {
                 body
             }
             ProviderKind::Gemini => {
-                let contents: Vec<Value> = request.messages.iter().map(|message| json!({"role":if message.role == super::Role::Assistant { "model" } else { "user" }, "parts":[{"text":message.content}]})).collect();
+                let mut contents: Vec<Value> = request.messages.iter().map(|message| json!({"role":if message.role == super::Role::Assistant { "model" } else { "user" }, "parts":[{"text":message.content}]})).collect();
+                if let Some(audio) = &request.inline_audio {
+                    if let Some(user) = contents
+                        .iter_mut()
+                        .find(|content| content["role"] == "user")
+                    {
+                        user["parts"].as_array_mut().unwrap().push(
+                            json!({"inline_data":{"mime_type":audio.mime_type,"data":audio.data}}),
+                        );
+                    }
+                }
                 let mut body = json!({"systemInstruction":{"parts":[{"text":request.system}]},"contents":contents,"generationConfig":{"maxOutputTokens":request.max_tokens}});
                 if let Some(schema) = &request.schema {
                     body["generationConfig"]["responseMimeType"] = json!("application/json");

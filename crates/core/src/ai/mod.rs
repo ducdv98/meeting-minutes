@@ -87,6 +87,22 @@ pub struct GenerateRequest {
     pub messages: Vec<Message>,
     pub schema: Option<OutputSchema>,
     pub max_tokens: u32,
+    #[serde(skip_serializing)]
+    pub inline_audio: Option<InlineAudio>,
+}
+
+#[derive(Clone, PartialEq)]
+pub struct InlineAudio {
+    pub mime_type: String,
+    pub data: String,
+}
+impl fmt::Debug for InlineAudio {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("InlineAudio")
+            .field("mime_type", &self.mime_type)
+            .field("data", &"[redacted]")
+            .finish()
+    }
 }
 
 #[derive(Debug)]
@@ -97,6 +113,7 @@ pub enum AiError {
     KeyStore(String),
     Auth(ProviderKind),
     GeminiLimit,
+    RateLimited { retry_after: std::time::Duration },
     Http { status: u16, message: String },
     Refused,
     Truncated,
@@ -116,6 +133,7 @@ impl fmt::Display for AiError {
             Self::GeminiLimit => {
                 f.write_str("Gemini free limit reached, try later or pick another provider")
             }
+            Self::RateLimited { .. } => f.write_str("AI provider rate limit reached"),
             Self::Http { status, message } => write!(f, "AI provider error ({status}): {message}"),
             Self::Refused => f.write_str("The model declined to answer"),
             Self::Truncated => f.write_str("The response was cut off (output limit reached)"),

@@ -315,6 +315,22 @@ fn invalid_word_timing_keeps_the_engine_text() {
 }
 
 #[test]
+fn sentence_segmenter_keeps_segments_without_word_timings() {
+    let placed = vec![PlacedSegment {
+        start_ms: 100,
+        end_ms: 3100,
+        text: "First complete sentence.".into(),
+        speaker: Speaker::Remote,
+        words: vec![],
+    }];
+    let segments = segment_sentences(placed);
+    assert_eq!(segments.len(), 1);
+    assert_eq!(segments[0].start_ms, 100);
+    assert_eq!(segments[0].end_ms, 3100);
+    assert_eq!(segments[0].text, "First complete sentence.");
+}
+
+#[test]
 fn participants_follow_settings_merge_and_voice_note_rules() {
     let segment = |speaker| meeting_minutes_core::transcript::Segment {
         id: "s00001".into(),
