@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { AiSettings } from "./ai";
+import type { AiSettings, LanguageModelSettings } from "./ai";
 
 export type Language = "en" | "vi";
 export type Speaker = "me" | "remote" | "unknown";
@@ -30,7 +30,7 @@ export type SpeechProvider = "groq" | "gemini";
 export interface SpeechModel { provider: SpeechProvider; model: string }
 export interface SpeechSettings { models: SpeechModel[]; automatic_groq: string | null; automatic_gemini: string | null; automatic_whisper: string }
 export const GROQ_SPEECH_MODELS = ["whisper-large-v3", "whisper-large-v3-turbo"] as const;
-export interface Settings { recording_notice_acknowledged: boolean; cloud_notice_acknowledged: boolean; auto_process: boolean; model: string; vocabulary: string[]; language: Language | null; your_name: string | null; ai: AiSettings; speech?: SpeechSettings }
+export interface Settings { recording_notice_acknowledged: boolean; cloud_notice_acknowledged: boolean; auto_process: boolean; model: string; vocabulary: string[]; language: Language | null; your_name: string | null; ai: AiSettings; speech?: SpeechSettings; language_models?: LanguageModelSettings }
 
 export const processingStatus = () => invoke<ProcessingStatus>("processing_status");
 export const enqueueTranscription = (meetingId: string, model?: string) => invoke<ProcessingStatus>("transcribe_meeting", { meetingId, model: model ?? null });
@@ -46,3 +46,4 @@ export const testSpeechModel = (provider: SpeechProvider, model: string) => invo
 export const installedModels = () => invoke<string[]>("installed_models");
 export const onProcessingStatus = (handler: (status: ProcessingStatus) => void): Promise<UnlistenFn> => listen<ProcessingStatus>("processing-status", (event) => handler(event.payload));
 export const onTranscriptDraft = (handler: (draft: TranscriptDraftEvent) => void): Promise<UnlistenFn> => listen<TranscriptDraftEvent>("transcript-draft", (event) => handler(event.payload));
+

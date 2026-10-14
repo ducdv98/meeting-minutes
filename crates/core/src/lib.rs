@@ -17,6 +17,7 @@ pub mod capture;
 pub mod citation;
 pub mod cloud;
 pub mod correction;
+pub mod language_models;
 pub mod diagnostics;
 pub mod import;
 pub mod models;
