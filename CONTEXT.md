@@ -56,6 +56,22 @@ Turning a Meeting's audio into a Transcript, then a Summary and Action items. Pr
 Cloud transcription run by the Meeting Minutes service for a user who has connected it with an Invite code. It is tried before the user's own provider key, which is tried before local transcription. Connecting it is the user's consent to sending audio to the cloud.
 _Avoid_: Gateway, relay, hosted Groq
 
+**Provider**:
+A cloud service or local runtime that runs a model for the app: Managed transcription, Groq, Gemini, OpenAI, Anthropic, Ollama or local Whisper. A cloud Provider other than Managed transcription is used only with the user's own key.
+_Avoid_: Vendor, backend, engine
+
+**Speech-to-text model**:
+A model the user has added (or that is built in) for turning Meeting audio into a Transcript. Each Provider has one Speech-to-text model used automatically; the others are used only when the user chooses them for a run.
+_Avoid_: Transcription engine, ASR
+
+**Language model**:
+A model the user has added for working with text: Correction, Summary and Ask. Each of these has a default Language model, and the user can choose another for a single run of Summary or Ask.
+_Avoid_: General model, AI model, LLM
+
+**Transcription order**:
+The fixed order of Providers that Processing tries for transcription, each with its automatic Speech-to-text model: Managed transcription, then the user's own cloud keys, then local Whisper. A Provider that isn't set up is skipped, and one that fails or hits its limit passes the work to the next. The user can't reorder it. Transcribing with one chosen Speech-to-text model skips the order for that run only, with no fallback.
+_Avoid_: Engine chain, fallback chain
+
 **Invite code**:
 A one-time code from the operator that connects one install of the app to Managed transcription. Disconnecting, or the operator revoking access, returns the app to its own keys or local transcription.
 _Avoid_: License key, account, token
@@ -71,7 +87,7 @@ A span of transcribed speech with an app-assigned stable ID and a millisecond ra
 _Avoid_: Line, utterance, chunk
 
 **Correction**:
-The step of Processing that fixes a Transcript's wording (names, Vocabulary terms, punctuation, diacritics) before its Revision is published. It never changes a Segment's time range or Source, and never merges or splits Segments. If it fails, the uncorrected text is published.
+The step of Processing that fixes a Transcript's wording (names, Vocabulary terms, punctuation, diacritics) before its Revision is published. It never changes a Segment's time range or Source, and never merges or splits Segments. It runs on the user's chosen Language model, or not at all when the user has turned it off. If it fails, the uncorrected text is published.
 _Avoid_: Cleanup, polish, rewrite
 
 **Draft**:
@@ -127,4 +143,5 @@ A reference from an Answer, Summary or Action item to a Segment ID in the same M
 
 ## Flagged ambiguities
 
+- "Task" means an Action item. Transcription, Correction, Summary and Ask are not tasks; name them directly.
 - "Meetless" is the macOS reference product this app is modelled on, not this product's name.

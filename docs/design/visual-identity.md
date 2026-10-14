@@ -75,6 +75,22 @@ Sentence case everywhere: headings, buttons, menus. No all-caps except `--text-x
 
 Fast and functional: 120ms for hover and press, 180ms for popovers and panels, 240ms for dialogs, easing `cubic-bezier(.2, .8, .2, 1)`. Nothing animates on its own except progress, live audio levels and the recording pulse (a 2s opacity pulse on the red dot). Website sections may fade in once on scroll (opacity and 12px rise, 400ms). `prefers-reduced-motion` turns off all non-essential motion, including the recording pulse.
 
+Where the app uses motion. Every transition uses `--ease` and a duration token; nothing else moves.
+
+| Surface | Motion | Duration |
+|---|---|---|
+| Dialogs | fade + scale 0.98 → 1 | 240ms |
+| Dropdowns, tooltips, popovers | fade + 4px slide from the trigger | 180ms |
+| Main view change (Library, Meeting, Search, Settings, Help) | opacity cross-fade | 180ms |
+| Settings tab change | opacity fade | 120ms |
+| Details disclosures | height + opacity | 180ms |
+| Loading skeleton → content | opacity fade | 180ms |
+| "Saved" indicator | fade in, fade out after about 2s | 120ms |
+| New Meeting in the Library | fade + 8px rise, once | 180ms |
+| Draft → Revision | Transcript cross-fade, scroll kept on the nearest Segment | 180ms |
+
+No looping or self-starting motion beyond the three above, no page slides, bounces, springs or parallax.
+
 ## Iconography
 
 Lucide icons at 16px (app) or 20px (website), 1.5px stroke, `currentColor`. Icons sit next to a label or carry a tooltip; no decorative icon bubbles.
