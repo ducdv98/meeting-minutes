@@ -5,6 +5,7 @@ import { acknowledgeCloudNotice, type Settings } from "../processing";
 import { Button } from "../components/ui/Button";
 import { Input } from "../components/ui/Input";
 import { FormSection } from "../components/FormSection";
+import { CLOUD_NOTICE_TEXT } from "../privacy-text";
 
 type CloudProvider = Exclude<ProviderKind, "ollama">;
 const providers: { kind: CloudProvider; use: string }[] = [
@@ -45,7 +46,7 @@ export function KeysTab({ settings, setSettings, providerStatus, setProviderStat
         </div>;
       })}
     </FormSection>
-    {noticeVisible && <div role="alert" className="grid gap-2 rounded-md border border-line bg-raised p-3.5 text-sm"><p className="m-0">With a key saved, Meeting audio and text are sent to Groq or Gemini for Processing, or to OpenAI or Anthropic when you use their Language models. Gemini's free tier may use content for training.</p><Button variant="secondary" onClick={() => void acknowledgeCloudNotice().then((next) => { setSettings(next); setNoticeError(null); }, (reason) => setNoticeError(String(reason)))}>Got it</Button>{noticeError && <p role="status" className="m-0">{noticeError}</p>}</div>}
+    {noticeVisible && <div role="alert" className="grid gap-2 rounded-md border border-line bg-raised p-3.5 text-sm"><p className="m-0">{CLOUD_NOTICE_TEXT}</p><Button variant="secondary" onClick={() => void acknowledgeCloudNotice().then((next) => { setSettings(next); setNoticeError(null); }, (reason) => setNoticeError(String(reason)))}>Got it</Button>{noticeError && <p role="status" className="m-0">{noticeError}</p>}</div>}
     <FormSection title="Ollama" hint="On this PC. No key needed."><div className="grid gap-1.5 text-sm"><span className="font-medium">Address</span><span>http://localhost:11434</span><span className="text-ink-muted">This address is fixed in the app.</span></div></FormSection>
   </div>;
 }

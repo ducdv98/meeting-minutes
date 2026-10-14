@@ -105,7 +105,7 @@ export default function SettingsView({ initialTab }: { initialTab?: SettingsTabI
         <TabsContent forceMount hidden={tab !== "speech-to-text"} value="speech-to-text" className="settings-tab pt-7"><SpeechToTextTab settings={settings} save={save} installed={installed} vocabulary={vocabulary} setVocabulary={setVocabulary} saveVocabulary={saveVocabulary} providerStatus={providerStatus} onManageKeys={() => setTab("keys")} /></TabsContent>
         <TabsContent forceMount hidden={tab !== "language-models"} value="language-models" className="settings-tab pt-7"><LanguageModelsTab settings={settings} setSettings={setSettings} providerStatus={providerStatus} setProviderStatus={setProviderStatus} aiError={aiError} setAiError={setAiError} onManageKeys={() => setTab("keys")} /></TabsContent>
         <TabsContent forceMount hidden={tab !== "keys"} value="keys" className="settings-tab pt-7"><KeysTab settings={settings} setSettings={setSettings} providerStatus={providerStatus} setProviderStatus={setProviderStatus} /></TabsContent>
-        <TabsContent forceMount hidden={tab !== "privacy"} value="privacy" className="settings-tab pt-7"><PrivacyTab /></TabsContent>
+        <TabsContent forceMount hidden={tab !== "privacy"} value="privacy" className="settings-tab pt-7">{tab === "privacy" && <PrivacyTab settings={settings} providerStatus={providerStatus} aiError={aiError} />}</TabsContent>
       </Tabs>}
     </div>
   </section>;
