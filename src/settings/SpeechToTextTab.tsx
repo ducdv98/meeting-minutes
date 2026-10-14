@@ -8,6 +8,8 @@ import { Input } from "../components/ui/Input";
 import { RadioGroup, RadioGroupItem } from "../components/ui/RadioGroup";
 import { Textarea } from "../components/ui/Textarea";
 import { FormSection } from "../components/FormSection";
+import { Details } from "../components/Details";
+import { MANAGED_PRIVACY_STATEMENT, MANAGED_PRIVACY_SUMMARY } from "../privacy-text";
 
 type Props = {
   settings: Settings;
@@ -30,6 +32,7 @@ export function SpeechToTextTab({ settings, setSettings, save, installed, vocabu
   const [inviteCode, setInviteCode] = useState("");
   const [managedBusy, setManagedBusy] = useState(false);
   const [managedError, setManagedError] = useState<string | null>(null);
+  const [inviteOpen, setInviteOpen] = useState(false);
   useEffect(() => {
     let active = true;
     managedStatus().then((next) => { if (active) setManaged(next); }, (reason) => { if (active) setManagedError(String(reason)); });
@@ -71,22 +74,21 @@ export function SpeechToTextTab({ settings, setSettings, save, installed, vocabu
   }
   async function disconnectManaged() {
     setManagedBusy(true); setManagedError(null);
-    try { setManaged(await managedDisconnect()); setInviteCode(""); }
+    try { setManaged(await managedDisconnect()); setInviteCode(""); setInviteOpen(false); }
     catch (reason) { setManagedError(String(reason)); }
     finally { setManagedBusy(false); }
   }
   return <div className="grid gap-8">
     <FormSection title="Managed transcription (experimental)">
-      {managed?.connected ? <div className="flex flex-wrap items-center gap-2 text-sm"><span role="status">Connected</span><Button variant="secondary" disabled={managedBusy} onClick={() => void disconnectManaged()}>Disconnect</Button></div> : <>
-        <p className="m-0 text-sm">Disconnected</p>
+      {managed?.connected ? <div className="flex flex-wrap items-center gap-2 text-sm"><span role="status">Connected</span><Button variant="secondary" disabled={managedBusy} onClick={() => void disconnectManaged()}>Disconnect</Button></div> : (managed?.revoked || inviteOpen) ? <>
         {managed?.revoked && <p role="status" className="m-0 text-sm">Managed transcription was disconnected.</p>}
         <div className="grid max-w-sm gap-1.5">
           <label htmlFor="managed-invite-code" className="text-sm">Invite code</label>
           <div className="flex gap-2"><Input id="managed-invite-code" type="password" value={inviteCode} onChange={(event) => setInviteCode(event.target.value)} /><Button variant="secondary" disabled={managedBusy || !managed || !inviteCode.trim()} onClick={() => void connectManaged()}>Connect</Button></div>
         </div>
-      </>}
+      </> : <button type="button" className="justify-self-start text-sm font-medium text-accent hover:underline" onClick={() => setInviteOpen(true)}>Have an invite code?</button>}
       {managedError && <p role="alert" className="m-0 text-sm text-record">{managedError}</p>}
-      <p className="m-0 text-xs text-ink-muted">Managed transcription sends your meeting audio over HTTPS to the Meeting Minutes transcription service, which forwards it to Groq for speech-to-text. The service does not store audio: it is held in memory and a temporary file only while each part is checked, then deleted. The transcript of each part is kept for up to 5 minutes so a retry does not reprocess it, then discarded. Your Library stays on this PC. Service logs record request metadata (request ID, timing, outcome) and never audio, transcript text or access tokens.</p>
+      <div className="grid gap-1"><p className="m-0 text-xs text-ink-muted">{MANAGED_PRIVACY_SUMMARY}</p><Details><p className="m-0">{MANAGED_PRIVACY_STATEMENT}</p></Details></div>
     </FormSection>
     <FormSection title="Cloud transcription" hint="Use your own keys for cloud Processing. Keys stay in Windows Credential Manager.">
       {(["groq", "gemini"] as const).map((kind) => {

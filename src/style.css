@@ -42,3 +42,7 @@
 .settings-view { display: grid; gap: 0.75rem; max-width: 48rem; padding: 28px; }
 .settings-view textarea, .settings-view select { width: 100%; box-sizing: border-box; }
 .settings-view button { justify-self: start; }
+
+.details-panel { display: grid; grid-template-rows: 0fr; opacity: 0; transition: grid-template-rows var(--duration-panel) var(--ease), opacity var(--duration-panel) var(--ease); }
+.details-panel[data-expanded="true"] { grid-template-rows: 1fr; opacity: 1; }
+.details-panel-inner { min-height: 0; overflow: hidden; }

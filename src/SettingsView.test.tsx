@@ -86,6 +86,7 @@ it("connects Managed transcription and shows Connected", async () => {
   render(<SettingsView initialTab="general" />);
   await openTab("Speech-to-text");
   const section = await screen.findByRole("region", { name: "Managed transcription (experimental)" });
+  fireEvent.click(within(section).getByRole("button", { name: "Have an invite code?" }));
   fireEvent.change(within(section).getByLabelText("Invite code"), { target: { value: " code " } });
   fireEvent.click(within(section).getByRole("button", { name: "Connect" }));
   await waitFor(() => expect(managedConnect).toHaveBeenCalledWith(" code "));
@@ -100,6 +101,7 @@ it("shows the invite error when Managed transcription rejects a code", async () 
   render(<SettingsView initialTab="general" />);
   await openTab("Speech-to-text");
   const section = await screen.findByRole("region", { name: "Managed transcription (experimental)" });
+  fireEvent.click(within(section).getByRole("button", { name: "Have an invite code?" }));
   fireEvent.change(within(section).getByLabelText("Invite code"), { target: { value: "bad-code" } });
   fireEvent.click(within(section).getByRole("button", { name: "Connect" }));
   expect((await within(section).findByRole("alert")).textContent).toBe("This invite code is used, expired or unknown. Ask for a new one.");
@@ -115,8 +117,8 @@ it("disconnects Managed transcription and returns to an empty invite field", asy
   const section = await screen.findByRole("region", { name: "Managed transcription (experimental)" });
   fireEvent.click(await within(section).findByRole("button", { name: "Disconnect" }));
   await waitFor(() => expect(managedDisconnect).toHaveBeenCalledTimes(1));
+  fireEvent.click(within(section).getByRole("button", { name: "Have an invite code?" }));
   expect((await within(section).findByLabelText("Invite code") as HTMLInputElement).value).toBe("");
-  expect(within(section).getByText("Disconnected")).toBeTruthy();
 });
 
 it("explains when Managed transcription was revoked", async () => {
