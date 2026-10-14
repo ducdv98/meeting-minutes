@@ -32,8 +32,8 @@ pub enum BackgroundStart {
 }
 
 /// Selects background work for a Recording; a waiting worker can resume after power or network returns.
-pub fn start_decision(has_groq_key: bool, discrete_gpu: bool, on_ac: bool) -> BackgroundStart {
-    if has_groq_key {
+pub fn start_decision(has_cloud_engine: bool, discrete_gpu: bool, on_ac: bool) -> BackgroundStart {
+    if has_cloud_engine {
         return BackgroundStart::Cloud;
     }
     if discrete_gpu {
@@ -292,6 +292,7 @@ impl BackgroundTranscriber {
             if !self.streams[index].ready() {
                 continue;
             }
+            engine.set_source(Some(self.streams[index].source));
             let language = match self.language {
                 Some(language) => language,
                 None => {

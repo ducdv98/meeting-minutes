@@ -76,6 +76,12 @@ it("names the cloud fallback engine in the Meeting notice", async () => {
   expect(await screen.findByText("Part of this Meeting was transcribed with Gemini: Groq daily limit reached.")).toBeTruthy();
 });
 
+it("shows a Managed fallback notice when Groq finishes the Meeting", async () => {
+  vi.mocked(meetingTranscript).mockResolvedValue({ schema_version: 1, revision: 1, created_at: "now", model: ["Managed transcription", "Groq"], fallback_reason: "Managed transcription was disconnected", language: "en", language_detected: false, duration_ms: 1000, segments: [] });
+  render(<MeetingView id="old" onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
+  expect(await screen.findByText("Part of this Meeting was transcribed with Groq: Managed transcription was disconnected.")).toBeTruthy();
+});
+
 it("shows the Correction failure notice for the published Revision", async () => {
   vi.mocked(meetingDetail).mockResolvedValue({ ...detail, correction_notice: "Correction was unavailable; this Revision has uncorrected text." });
   vi.mocked(meetingTranscript).mockResolvedValue({ schema_version: 1, revision: 1, created_at: "now", model: ["small"], language: "en", language_detected: false, duration_ms: 1000, segments: [{ id: "s00001", start_ms: 0, end_ms: 800, text: "Uncorrected", speaker: "me" }] });

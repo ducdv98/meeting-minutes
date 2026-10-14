@@ -242,6 +242,74 @@ fn imported_audio_transcribes_with_unknown_speaker() {
     assert!(folder.join("transcript.r1.json").exists());
 }
 
+#[test]
+fn imported_audio_has_unknown_managed_source() {
+    use meeting_minutes_core::{
+        capture::Source,
+        cloud::{CloudEngine, EngineError},
+        processing::{transcribe_meeting, EngineChain, TranscribeRequest},
+        transcript::{Language, RawSegment},
+    };
+    use std::sync::{Arc, Mutex};
+    struct SourceCloud {
+        source: Option<Source>,
+        sent: Arc<Mutex<Vec<Option<Source>>>>,
+    }
+    impl CloudEngine for SourceCloud {
+        fn name(&self) -> &str {
+            "Managed transcription"
+        }
+        fn set_source(&mut self, source: Option<Source>) {
+            self.source = source;
+        }
+        fn transcribe_span(
+            &mut self,
+            _: &[f32],
+            _: Language,
+            _: Option<&str>,
+            _: &AtomicBool,
+        ) -> Result<Vec<RawSegment>, EngineError> {
+            self.sent.lock().unwrap().push(self.source);
+            Ok(vec![])
+        }
+    }
+    let temp = TempDir::new().unwrap();
+    let source = temp.path().join("Sound.wav");
+    wav(&source, 44_100, 1000.0, 1.0);
+    let mut library = Library::open(
+        temp.path().join("Library"),
+        temp.path().join("index.sqlite3"),
+    )
+    .unwrap();
+    let at = DateTime::parse_from_rfc3339("2026-10-12T10:00:00Z").unwrap();
+    let meeting = library
+        .import_audio(&source, at, &AtomicBool::new(false))
+        .unwrap();
+    let folder = library.meeting_dir(&meeting.id);
+    let sent = Arc::new(Mutex::new(Vec::new()));
+    let mut engine = EngineChain::new(
+        vec![Box::new(SourceCloud {
+            source: Some(Source::Microphone),
+            sent: sent.clone(),
+        })],
+        "small",
+        Box::new(|| panic!("local should not load")),
+    );
+    transcribe_meeting(
+        &TranscribeRequest {
+            meeting_dir: &folder,
+            model: "small",
+            vocabulary: &[],
+            default_language: Some(Language::En),
+        },
+        &mut engine,
+        &mut |_| {},
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    assert_eq!(*sent.lock().unwrap(), vec![None]);
+}
+
 fn flac(path: &Path) {
     use flacenc::{
         bitsink::MemSink,

@@ -476,7 +476,6 @@ const CUT_SEARCH_SAMPLES: usize = 10 * 16_000;
 const MAX_RETRIES: usize = 3;
 type Sleeper = Box<dyn FnMut(Duration, &AtomicBool) -> bool + Send>;
 
-/// A source belongs to one engine instance so the CloudEngine interface stays unchanged.
 pub struct ManagedEngine {
     http: Arc<dyn HttpClient>,
     tokens: Arc<TokenManager>,
@@ -627,6 +626,10 @@ impl ManagedEngine {
 impl CloudEngine for ManagedEngine {
     fn name(&self) -> &str {
         "Managed transcription"
+    }
+
+    fn set_source(&mut self, source: Option<Source>) {
+        self.source = source;
     }
 
     fn transcribe_span(

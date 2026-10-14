@@ -26,7 +26,8 @@ use meeting_minutes_core::{
         gemini::GeminiEngine,
         groq::GroqEngine,
         managed::{
-            self, GatewayErrorCode, ManagedCredential, ManagedCredentialStore, TokenManager,
+            self, GatewayErrorCode, ManagedCredential, ManagedCredentialStore, ManagedEngine,
+            TokenManager,
         },
         CloudEngine,
     },
@@ -1428,6 +1429,14 @@ fn transcription_chain<'a>(
 ) -> Result<processing::EngineChain<'a>, processing::ProcessingError> {
     let mut cloud: Vec<Box<dyn CloudEngine>> = Vec::new();
     let settings = Settings::load(&app.state::<SettingsPath>().0);
+    let managed = app.state::<Managed>();
+    if !managed.tokens.is_disconnected() && matches!(managed.store.get(), Ok(Some(_))) {
+        cloud.push(Box::new(ManagedEngine::new(
+            app.state::<Http>().0.clone(),
+            managed.tokens.clone(),
+            None,
+        )));
+    }
     // A saved key is the user's choice of cloud transcription (ADR 0011).
     if let Some(key) = app
         .state::<Secrets>()
@@ -1459,17 +1468,20 @@ fn transcription_chain<'a>(
     Ok(processing::EngineChain::new(cloud, model, local))
 }
 
-/// Starts transcribing the new Recording's Chunks in the background when Groq is configured or
+/// Starts transcribing the new Recording's Chunks in the background when cloud is configured or
 /// local Whisper can run on a discrete GPU. The cache remains in memory until Stop.
 fn start_background(app: &AppHandle) {
-    let has_groq_key = matches!(
-        app.state::<Secrets>().0.get(ProviderKind::Groq),
-        Ok(Some(_))
-    );
+    let managed = app.state::<Managed>();
+    let has_cloud_engine = (!managed.tokens.is_disconnected()
+        && matches!(managed.store.get(), Ok(Some(_))))
+        || matches!(
+            app.state::<Secrets>().0.get(ProviderKind::Groq),
+            Ok(Some(_))
+        );
     let discrete_gpu = WhisperEngine::discrete_gpu_available();
     let on_ac = processing::PowerState::current() != processing::PowerState::Battery;
     // Cloud availability is learned from Offline errors; the worker retries after its backoff.
-    if background::start_decision(has_groq_key, discrete_gpu, on_ac)
+    if background::start_decision(has_cloud_engine, discrete_gpu, on_ac)
         == background::BackgroundStart::Disabled
     {
         return;
@@ -1486,7 +1498,7 @@ fn start_background(app: &AppHandle) {
         .iter()
         .find(|m| m.name == settings.model)
         .or_else(|| MODELS.iter().find(|m| m.name == DEFAULT_MODEL))
-        .filter(|model| has_groq_key || models::is_installed(&models_dir, model))
+        .filter(|model| has_cloud_engine || models::is_installed(&models_dir, model))
     else {
         return;
     };
@@ -1551,7 +1563,7 @@ fn start_background(app: &AppHandle) {
                     allowed: &mut || {
                         matches!(
                             background::start_decision(
-                                has_groq_key,
+                                has_cloud_engine,
                                 discrete_gpu,
                                 processing::PowerState::current()
                                     != processing::PowerState::Battery,

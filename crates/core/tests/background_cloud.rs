@@ -347,3 +347,49 @@ fn stop_reuses_cloud_segments_and_transcribes_only_the_remainder() {
     assert!(after_stop_samples >= 68 * 16_000, "{after_stop_samples}");
     assert!(after_stop_samples <= 72 * 16_000, "{after_stop_samples}");
 }
+
+#[test]
+fn background_sets_managed_source_for_each_ready_stream() {
+    use std::sync::Mutex;
+    struct SourceCloud {
+        source: Option<Source>,
+        sent: Arc<Mutex<Vec<Option<Source>>>>,
+    }
+    impl CloudEngine for SourceCloud {
+        fn name(&self) -> &str {
+            "Managed transcription"
+        }
+        fn set_source(&mut self, source: Option<Source>) {
+            self.source = source;
+        }
+        fn transcribe_span(
+            &mut self,
+            _: &[f32],
+            _: Language,
+            _: Option<&str>,
+            _: &AtomicBool,
+        ) -> Result<Vec<RawSegment>, EngineError> {
+            self.sent.lock().unwrap().push(self.source);
+            Ok(vec![])
+        }
+    }
+    let sent = Arc::new(Mutex::new(Vec::new()));
+    let mut engine = EngineChain::new(
+        vec![Box::new(SourceCloud {
+            source: None,
+            sent: sent.clone(),
+        })],
+        "small",
+        Box::new(|| panic!("local should not load")),
+    );
+    let mut transcriber = BackgroundTranscriber::new(1, "small", Some(Language::En), None);
+    transcriber.push(Source::Microphone, &vec![0.1; 35 * 48_000]);
+    transcriber.push(Source::SystemAudio, &vec![0.1; 35 * 48_000]);
+    transcriber
+        .transcribe_ready(&mut engine, &AtomicBool::new(false))
+        .unwrap();
+    assert_eq!(
+        *sent.lock().unwrap(),
+        vec![Some(Source::Microphone), Some(Source::SystemAudio)]
+    );
+}

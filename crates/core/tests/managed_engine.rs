@@ -204,6 +204,22 @@ fn transcribe(
 }
 
 #[test]
+fn source_can_change_on_one_managed_engine() {
+    let http = FakeHttp::new([], false);
+    let mut engine = engine(http.clone(), None);
+    for source in [Some(Source::Microphone), Some(Source::SystemAudio), None] {
+        engine.set_source(source);
+        transcribe(&mut engine).unwrap();
+    }
+    let sources = http
+        .uploads()
+        .into_iter()
+        .map(|upload| upload.fields["source"].clone())
+        .collect::<Vec<_>>();
+    assert_eq!(sources, ["microphone", "system", "unknown"]);
+}
+
+#[test]
 fn seven_minutes_becomes_three_bounded_pieces_with_span_relative_segments() {
     let http = FakeHttp::new([], false);
     let mut engine = engine(http.clone(), Some(Source::Microphone));

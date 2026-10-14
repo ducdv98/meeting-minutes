@@ -113,6 +113,32 @@ fn diagnostics_keeps_engine_totals_after_many_spans() {
 }
 
 #[test]
+fn diagnostics_includes_managed_audio_total() {
+    let usage = LogEvent::engine_usage_with_managed(
+        30_000,
+        10_000,
+        0,
+        0,
+        Some(&FallbackReason::Quota(EngineName::Managed)),
+    );
+    let line = format!("[2026-10-13][10:47:02][meeting_minutes_events][INFO] {usage}");
+    let report = build_diagnostics(&DiagnosticsInput {
+        version: "0.1.0".into(),
+        windows_version: "Windows".into(),
+        cpu: "CPU".into(),
+        ram_mb: 1024,
+        audio_devices: Ok(vec![]),
+        selected_model: None,
+        provider: None,
+        whisper_system_info: None,
+        transcription_backend: None,
+        recent_log_lines: vec![line.clone()],
+    });
+    assert!(line.contains("engine_usage managed_ms=30000 groq_ms=10000"));
+    assert!(report.contains(&line));
+}
+
+#[test]
 fn transcription_event_formats_timings_and_rtf_without_meeting_content() {
     let event = LogEvent::transcription_completed(
         "small",

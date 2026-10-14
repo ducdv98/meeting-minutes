@@ -98,6 +98,7 @@ pub enum LogEvent {
         fallback: &'static str,
     },
     EngineUsage {
+        managed_ms: u64,
         groq_ms: u64,
         gemini_ms: u64,
         local_ms: u64,
@@ -195,7 +196,17 @@ impl LogEvent {
         local_ms: u64,
         reason: Option<&FallbackReason>,
     ) -> Self {
+        Self::engine_usage_with_managed(0, groq_ms, gemini_ms, local_ms, reason)
+    }
+    pub fn engine_usage_with_managed(
+        managed_ms: u64,
+        groq_ms: u64,
+        gemini_ms: u64,
+        local_ms: u64,
+        reason: Option<&FallbackReason>,
+    ) -> Self {
         Self::EngineUsage {
+            managed_ms,
             groq_ms,
             gemini_ms,
             local_ms,
@@ -449,11 +460,15 @@ impl fmt::Display for LogEvent {
                 return write!(f, "cloud_span engine={engine} audio_ms={audio_ms} round_trip_ms={round_trip_ms} fallback={fallback}");
             }
             Self::EngineUsage {
+                managed_ms,
                 groq_ms,
                 gemini_ms,
                 local_ms,
                 fallback,
             } => {
+                if *managed_ms > 0 {
+                    return write!(f, "engine_usage managed_ms={managed_ms} groq_ms={groq_ms} gemini_ms={gemini_ms} local_ms={local_ms} fallback={fallback}");
+                }
                 return write!(f, "engine_usage groq_ms={groq_ms} gemini_ms={gemini_ms} local_ms={local_ms} fallback={fallback}");
             }
             Self::SummaryStarted => "summary_started",
@@ -523,7 +538,21 @@ fn safe_fallback(reason: Option<&FallbackReason>) -> &'static str {
 }
 
 fn parse_engine_usage(event: &str) -> bool {
-    let Some(rest) = event.strip_prefix("engine_usage groq_ms=") else {
+    let Some(rest) = event.strip_prefix("engine_usage ") else {
+        return false;
+    };
+    let rest = if let Some(managed) = rest.strip_prefix("managed_ms=") {
+        let Some((audio, rest)) = managed.split_once(' ') else {
+            return false;
+        };
+        if audio.parse::<u64>().is_err() {
+            return false;
+        }
+        rest
+    } else {
+        rest
+    };
+    let Some(rest) = rest.strip_prefix("groq_ms=") else {
         return false;
     };
     let Some((groq, rest)) = rest.split_once(" gemini_ms=") else {

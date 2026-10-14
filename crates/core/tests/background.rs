@@ -14,7 +14,7 @@ use std::{
 use tempfile::TempDir;
 
 #[test]
-fn cloud_recording_starts_on_battery_without_a_discrete_gpu() {
+fn managed_cloud_recording_starts_on_battery_without_a_discrete_gpu() {
     use background::BackgroundStart;
     assert_eq!(
         background::start_decision(true, false, false),

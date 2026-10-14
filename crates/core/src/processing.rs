@@ -2,6 +2,7 @@ use crate::{
     ai::TextProvider,
     audio_prep::{prepare_import, prepare_recording, PreparedRecording},
     background::BackgroundResult,
+    capture::Source,
     cloud::{CloudEngine, EngineError},
     correction,
     diagnostics::{log_event, LogEvent, TranscriptionEnvironment},
@@ -185,6 +186,27 @@ impl SpeechEngine for BorrowedEngine<'_> {
 }
 
 impl<'a> EngineChain<'a> {
+    pub fn set_source(&mut self, source: Option<Source>) {
+        for engine in &mut self.cloud {
+            engine.set_source(source);
+        }
+    }
+
+    pub fn transcribe_sourced_streams(
+        &mut self,
+        streams: &[&[f32]],
+        sources: &[Option<Source>],
+        language: Language,
+        prompt: Option<&str>,
+        progress: &mut dyn FnMut(f32),
+        cancel: &AtomicBool,
+    ) -> Result<Vec<StreamTranscription>, ProcessingError> {
+        if self.cloud.is_empty() {
+            return self.transcribe_streams(streams, language, prompt, progress, cancel);
+        }
+        transcribe_sequentially_sourced(self, streams, sources, language, prompt, progress, cancel)
+    }
+
     pub fn borrow_local(name: &str, engine: &'a mut dyn SpeechEngine) -> Self {
         let mut engine = Some(engine);
         let mut chain = Self::new(
@@ -487,13 +509,23 @@ impl SpeechEngine for EngineChain<'_> {
                 }
             }
         }
-        // While a cloud engine can transcribe, the local model is never loaded just to detect.
-        if self.unavailable.iter().any(|unavailable| !unavailable) {
-            return Ok(Language::En);
+        if self.cloud.is_empty() {
+            return self
+                .local()
+                .map_err(|error| error.to_string())?
+                .detect_language(samples, cancel);
         }
-        self.local()
-            .map_err(|error| error.to_string())?
-            .detect_language(samples, cancel)
+        // No cloud engine could detect. During a Recording a deferred local engine defers
+        // detection rather than guessing, because the background guess becomes the Meeting language.
+        let recording = self.background_local_allowed.is_some();
+        match self.local() {
+            Ok(local) => local.detect_language(samples, cancel),
+            Err(ProcessingError::Cancelled) => Err("Processing cancelled".into()),
+            Err(ProcessingError::Deferred) if recording => {
+                Err("Language detection deferred".into())
+            }
+            Err(_) => Ok(Language::En),
+        }
     }
     fn transcribe(
         &mut self,
@@ -562,10 +594,53 @@ pub fn transcribe_sequentially<E: SpeechEngine + ?Sized>(
     progress: &mut dyn FnMut(f32),
     cancel: &AtomicBool,
 ) -> Result<Vec<StreamTranscription>, ProcessingError> {
+    transcribe_sequentially_inner(
+        engine,
+        streams,
+        language,
+        initial_prompt,
+        progress,
+        cancel,
+        |_, _| {},
+    )
+}
+
+fn transcribe_sequentially_sourced(
+    engine: &mut EngineChain<'_>,
+    streams: &[&[f32]],
+    sources: &[Option<Source>],
+    language: Language,
+    initial_prompt: Option<&str>,
+    progress: &mut dyn FnMut(f32),
+    cancel: &AtomicBool,
+) -> Result<Vec<StreamTranscription>, ProcessingError> {
+    transcribe_sequentially_inner(
+        engine,
+        streams,
+        language,
+        initial_prompt,
+        progress,
+        cancel,
+        |engine, index| {
+            engine.set_source(sources.get(index).copied().flatten());
+        },
+    )
+}
+
+fn transcribe_sequentially_inner<E: SpeechEngine + ?Sized>(
+    engine: &mut E,
+    streams: &[&[f32]],
+    language: Language,
+    initial_prompt: Option<&str>,
+    progress: &mut dyn FnMut(f32),
+    cancel: &AtomicBool,
+    mut before_stream: impl FnMut(&mut E, usize),
+) -> Result<Vec<StreamTranscription>, ProcessingError> {
     let total: usize = streams.iter().map(|samples| samples.len()).sum();
     let mut completed = 0usize;
     let mut results = Vec::with_capacity(streams.len());
-    for samples in streams {
+    for (index, samples) in streams.iter().enumerate() {
+        before_stream(engine, index);
         let base = completed as f32 / total.max(1) as f32;
         let weight = samples.len() as f32 / total.max(1) as f32;
         let segments = engine.transcribe(
@@ -1022,6 +1097,7 @@ fn transcribe_meeting_inner(
     let mut audio_after_vad_ms = Some(0u64);
     let mut process = |prepared: Vec<PreparedRecording>,
                        elapsed: u64,
+                       source_split: bool,
                        cache: Option<&BackgroundResult>,
                        telemetry: &mut ProcessingTelemetry|
      -> Result<(), ProcessingError> {
@@ -1082,8 +1158,23 @@ fn transcribe_meeting_inner(
             .sum();
         let done = 1.0 - remaining_ms as f32 / group_ms.max(1) as f32;
         let mut group_progress = 0.0f32;
-        let result = engine.transcribe_streams(
+        let sources = prepared
+            .iter()
+            .map(|stream| {
+                if source_split {
+                    match stream.speaker {
+                        Speaker::Me => Some(Source::Microphone),
+                        Speaker::Remote => Some(Source::SystemAudio),
+                        Speaker::Unknown => None,
+                    }
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        let result = engine.transcribe_sourced_streams(
             &streams,
+            &sources,
             language.unwrap_or(Language::En),
             prompt,
             &mut |p| {
@@ -1148,7 +1239,7 @@ fn transcribe_meeting_inner(
         let preparation_started = Instant::now();
         let prepared = prepare_import(request.meeting_dir, &import.file, cancel)?;
         preparation_wall_time += preparation_started.elapsed();
-        process(vec![prepared], 0, None, telemetry)?;
+        process(vec![prepared], 0, false, None, telemetry)?;
     } else {
         for recording in recordings {
             telemetry.stage = ProcessingStage::Preparing;
@@ -1158,7 +1249,7 @@ fn transcribe_meeting_inner(
             let preparation_started = Instant::now();
             let prepared = prepare_recording(request.meeting_dir, recording, cancel)?;
             preparation_wall_time += preparation_started.elapsed();
-            process(prepared, elapsed, cached(recording), telemetry)?;
+            process(prepared, elapsed, true, cached(recording), telemetry)?;
             elapsed += recording.duration_ms * recording.files.len() as u64;
         }
     }
@@ -1426,7 +1517,12 @@ fn transcribe_meeting_inner(
             .filter(|(name, _)| matches!(name, EngineName::Local(_)))
             .map(|(_, duration)| duration)
             .sum();
-        log_event(LogEvent::engine_usage(
+        let managed_ms = audio_totals
+            .get(&EngineName::Managed)
+            .copied()
+            .unwrap_or_default();
+        log_event(LogEvent::engine_usage_with_managed(
+            managed_ms,
             groq_ms,
             gemini_ms,
             local_ms,

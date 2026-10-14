@@ -1,7 +1,10 @@
 pub mod gemini;
 pub mod groq;
 pub mod managed;
-use crate::transcript::{Language, RawSegment};
+use crate::{
+    capture::Source,
+    transcript::{Language, RawSegment},
+};
 use flacenc::{
     bitsink::MemSink,
     component::{BitRepr, StreamInfo},
@@ -57,6 +60,7 @@ impl std::error::Error for EngineError {}
 
 pub trait CloudEngine: Send {
     fn name(&self) -> &str;
+    fn set_source(&mut self, _source: Option<Source>) {}
     fn transcribe_span(
         &mut self,
         samples_16k: &[f32],

@@ -211,7 +211,7 @@ fn cloud_language_detection_failure_logs_only_the_error_kind() {
     let mut engine = EngineChain::new(
         vec![Box::new(FailingDetection)],
         "small",
-        Box::new(|| panic!("the local model is not loaded while Groq can still transcribe")),
+        Box::new(|| Err(ProcessingError::Deferred)),
     );
     assert_eq!(
         engine.detect_language(&[0.1; 16_000], &AtomicBool::new(false)),
@@ -595,6 +595,132 @@ fn cloud_quota_mid_meeting_publishes_one_revision_with_both_engines() {
     );
 }
 
+#[test]
+fn managed_quota_mid_meeting_publishes_one_revision_with_groq() {
+    struct ManagedOnce(usize);
+    impl CloudEngine for ManagedOnce {
+        fn name(&self) -> &str {
+            "Managed transcription"
+        }
+        fn transcribe_span(
+            &mut self,
+            _: &[f32],
+            _: Language,
+            _: Option<&str>,
+            _: &AtomicBool,
+        ) -> Result<Vec<RawSegment>, EngineError> {
+            self.0 += 1;
+            if self.0 == 2 {
+                Err(EngineError::QuotaExhausted)
+            } else {
+                Ok(vec![])
+            }
+        }
+    }
+    struct GroqAlways;
+    impl CloudEngine for GroqAlways {
+        fn name(&self) -> &str {
+            "Groq"
+        }
+        fn transcribe_span(
+            &mut self,
+            _: &[f32],
+            _: Language,
+            _: Option<&str>,
+            _: &AtomicBool,
+        ) -> Result<Vec<RawSegment>, EngineError> {
+            Ok(vec![])
+        }
+    }
+    let (_temp, dir) = saved_meeting();
+    let mut engine = EngineChain::new(
+        vec![Box::new(ManagedOnce(0)), Box::new(GroqAlways)],
+        "small",
+        Box::new(|| panic!("local should not load")),
+    );
+    let transcript = transcribe_meeting(
+        &TranscribeRequest {
+            meeting_dir: &dir,
+            model: "small",
+            vocabulary: &[],
+            default_language: Some(Language::En),
+        },
+        &mut engine,
+        &mut |_| {},
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    assert_eq!(transcript.revision, 1);
+    assert_eq!(
+        transcript.model,
+        vec![EngineName::Managed, EngineName::Groq]
+    );
+    assert_eq!(
+        transcript.fallback_reason,
+        Some(FallbackReason::Quota(EngineName::Managed))
+    );
+    assert!(dir.join("transcript.r1.json").exists());
+    assert!(!dir.join("transcript.r2.json").exists());
+}
+
+#[test]
+fn managed_source_follows_recording_streams() {
+    use std::sync::Arc;
+    struct SourceCloud {
+        source: Option<Source>,
+        sent: Arc<Mutex<Vec<Option<Source>>>>,
+    }
+    impl CloudEngine for SourceCloud {
+        fn name(&self) -> &str {
+            "Managed transcription"
+        }
+        fn set_source(&mut self, source: Option<Source>) {
+            self.source = source;
+        }
+        fn transcribe_span(
+            &mut self,
+            _: &[f32],
+            _: Language,
+            _: Option<&str>,
+            _: &AtomicBool,
+        ) -> Result<Vec<RawSegment>, EngineError> {
+            self.sent.lock().unwrap().push(self.source);
+            Ok(vec![])
+        }
+    }
+    let (_temp, dir) = saved_meeting();
+    let sent = Arc::new(Mutex::new(Vec::new()));
+    let mut engine = EngineChain::new(
+        vec![Box::new(SourceCloud {
+            source: None,
+            sent: sent.clone(),
+        })],
+        "small",
+        Box::new(|| panic!("local should not load")),
+    );
+    transcribe_meeting(
+        &TranscribeRequest {
+            meeting_dir: &dir,
+            model: "small",
+            vocabulary: &[],
+            default_language: Some(Language::En),
+        },
+        &mut engine,
+        &mut |_| {},
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    assert_eq!(
+        *sent.lock().unwrap(),
+        vec![
+            Some(Source::Microphone),
+            Some(Source::SystemAudio),
+            Some(Source::Microphone),
+            Some(Source::SystemAudio),
+        ]
+    );
+}
+
 struct AudibleEngine {
     calls: Vec<(usize, f32)>,
     detected: usize,
@@ -824,7 +950,7 @@ fn language_detection_uses_system_audio_when_microphone_has_no_speech() {
 }
 
 #[test]
-fn groq_naming_an_unsupported_language_does_not_load_the_local_model() {
+fn groq_naming_an_unsupported_language_defaults_to_english_when_local_unavailable() {
     struct UnsupportedLanguage;
     impl CloudEngine for UnsupportedLanguage {
         fn name(&self) -> &str {
@@ -851,7 +977,7 @@ fn groq_naming_an_unsupported_language_does_not_load_the_local_model() {
     let mut engine = EngineChain::new(
         vec![Box::new(UnsupportedLanguage)],
         "small",
-        Box::new(|| panic!("the local model is not loaded while Groq can transcribe")),
+        Box::new(|| Err(ProcessingError::Deferred)),
     );
     let transcript = transcribe_meeting(
         &TranscribeRequest {
