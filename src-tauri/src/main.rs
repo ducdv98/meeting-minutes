@@ -706,7 +706,9 @@ fn get_settings(path: State<'_, SettingsPath>, secrets: State<'_, Secrets>) -> S
     let mut settings = Settings::load(&path.0);
     if settings.language_models.legacy_correction_pending {
         if let Ok(key) = secrets.0.get(ProviderKind::Gemini) {
-            settings.language_models.finish_legacy_correction(key.is_some(), &settings.ai);
+            settings
+                .language_models
+                .finish_legacy_correction(key.is_some(), &settings.ai);
             let _ = settings.save(&path.0);
         }
     }
