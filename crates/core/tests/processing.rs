@@ -211,18 +211,11 @@ fn cloud_language_detection_failure_logs_only_the_error_kind() {
     let mut engine = EngineChain::new(
         vec![Box::new(FailingDetection)],
         "small",
-        Box::new(|| {
-            Ok(Box::new(FakeEngine {
-                calls: 0,
-                prompts: vec![],
-                detected: 0,
-                lengths: vec![],
-            }))
-        }),
+        Box::new(|| panic!("the local model is not loaded while Groq can still transcribe")),
     );
     assert_eq!(
         engine.detect_language(&[0.1; 16_000], &AtomicBool::new(false)),
-        Ok(Language::Vi)
+        Ok(Language::En)
     );
     let current = std::thread::current().id();
     let events = EVENTS.get().unwrap().lock().unwrap();
@@ -828,6 +821,52 @@ fn language_detection_uses_system_audio_when_microphone_has_no_speech() {
     assert!(engine.detected_peak > 0.01);
     assert_eq!(transcript.segments.len(), 1);
     assert_eq!(transcript.segments[0].speaker, Speaker::Remote);
+}
+
+#[test]
+fn groq_naming_an_unsupported_language_does_not_load_the_local_model() {
+    struct UnsupportedLanguage;
+    impl CloudEngine for UnsupportedLanguage {
+        fn name(&self) -> &str {
+            "Groq"
+        }
+        fn transcribe_span(
+            &mut self,
+            _: &[f32],
+            _: Language,
+            _: Option<&str>,
+            _: &AtomicBool,
+        ) -> Result<Vec<RawSegment>, EngineError> {
+            Ok(vec![])
+        }
+        fn detect_language(
+            &mut self,
+            _: &[f32],
+            _: &AtomicBool,
+        ) -> Result<Option<Language>, EngineError> {
+            Ok(None)
+        }
+    }
+    let (_temp, dir) = meeting_with_sources(0.2, 0.2);
+    let mut engine = EngineChain::new(
+        vec![Box::new(UnsupportedLanguage)],
+        "small",
+        Box::new(|| panic!("the local model is not loaded while Groq can transcribe")),
+    );
+    let transcript = transcribe_meeting(
+        &TranscribeRequest {
+            meeting_dir: &dir,
+            model: "small",
+            vocabulary: &[],
+            default_language: None,
+        },
+        &mut engine,
+        &mut |_| {},
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    assert_eq!(transcript.language, Language::En);
+    assert_eq!(transcript.model, vec![EngineName::Groq]);
 }
 
 #[test]

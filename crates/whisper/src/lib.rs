@@ -1,7 +1,7 @@
 use meeting_minutes_core::{
     diagnostics::{log_event, LogEvent},
     processing::{
-        transcribe_sequentially, PowerState, ProcessingError, SpeechEngine, StreamTranscription,
+        PowerState, ProcessingError, SpeechEngine, StreamTranscription, LANGUAGE_SCAN_SAMPLES,
     },
     transcript::{Language, RawSegment, RawWord},
 };
@@ -34,7 +34,6 @@ static LAST_BACKEND: OnceLock<Mutex<String>> = OnceLock::new();
 const SAMPLE_RATE: usize = 16_000;
 const OVERLAP_SAMPLES: usize = SAMPLE_RATE / 10;
 const GAP_SAMPLES: usize = SAMPLE_RATE / 10;
-const LANGUAGE_SCAN_SAMPLES: usize = 5 * 60 * SAMPLE_RATE;
 
 #[cfg(any(windows, test))]
 #[derive(Debug, PartialEq, Eq)]
@@ -714,112 +713,234 @@ impl SpeechEngine for WhisperEngine {
         progress: &mut dyn FnMut(f32),
         cancel: &AtomicBool,
     ) -> Result<Vec<StreamTranscription>, ProcessingError> {
+        self.audio_after_vad_ms = None;
+        // Speech is found in every Source first, so progress can weigh each by the speech Whisper
+        // transcribes; a mostly silent Microphone then counts for little.
+        let mut speech = Vec::with_capacity(streams.len());
+        for (index, samples) in streams.iter().enumerate() {
+            if cancel.load(Ordering::SeqCst) {
+                return Err(ProcessingError::Cancelled);
+            }
+            speech.push(self.speech_only(samples));
+            progress(StreamProgress::scanned(index + 1, streams.len()));
+        }
         if cancel.load(Ordering::SeqCst) {
             return Err(ProcessingError::Cancelled);
         }
-        if streams.len() != 2 || self.backend != "Vulkan" {
-            return transcribe_sequentially(self, streams, language, initial_prompt, progress, cancel);
-        }
-        let first_state = self
-            .context
-            .create_state()
-            .map_err(|e| ProcessingError::Engine(e.to_string()))?;
-        let Ok(second_state) = self.context.create_state() else {
-            drop(first_state);
-            return transcribe_sequentially(self, streams, language, initial_prompt, progress, cancel);
-        };
-        let first_speech = self.speech_only(streams[0]);
-        let second_speech = self.speech_only(streams[1]);
-        let duration = |speech: &Option<SpeechAudio>| {
-            speech
-                .as_ref()
-                .map(|audio| audio.samples.len() as u64 * 1000 / SAMPLE_RATE as u64)
-        };
-        let first_vad = duration(&first_speech);
-        let second_vad = duration(&second_speech);
-        let total = streams
+        let speech_ms = speech
             .iter()
-            .map(|stream| stream.len())
-            .sum::<usize>()
-            .max(1);
-        let first_weight = streams[0].len() as f32 / total as f32;
-        let (sender, receiver) = mpsc::channel::<(usize, f32)>();
+            .map(|audio| {
+                audio
+                    .as_ref()
+                    .map(|audio| audio.samples.len() as u64 * 1000 / SAMPLE_RATE as u64)
+            })
+            .collect::<Vec<_>>();
+        let work = streams
+            .iter()
+            .zip(&speech)
+            .map(|(samples, audio)| {
+                audio
+                    .as_ref()
+                    .map_or(samples.len(), |audio| audio.samples.len())
+            })
+            .collect::<Vec<_>>();
+        let weights = StreamProgress::new(&work);
         let settings = TranscriptionSettings {
             language,
             prompt: initial_prompt,
             threads: self.threads,
         };
-        let (first, second) = std::thread::scope(|scope| {
-            let first_sender = sender.clone();
-            let first = scope.spawn(move || {
-                let result = transcribe_with_state(
-                    first_state,
-                    streams[0],
-                    first_speech,
-                    settings,
-                    &mut |fraction| {
-                        let _ = first_sender.send((0, fraction));
-                    },
-                    cancel,
-                );
-                let _ = first_sender.send((0, 1.0));
-                result
-            });
-            let second = scope.spawn(move || {
-                let result = transcribe_with_state(
-                    second_state,
-                    streams[1],
-                    second_speech,
-                    settings,
-                    &mut |fraction| {
-                        let _ = sender.send((1, fraction));
-                    },
-                    cancel,
-                );
-                let _ = sender.send((1, 1.0));
-                result
-            });
-            let mut fractions = [0.0_f32; 2];
-            let mut reported = 0.0_f32;
-            while !first.is_finished() || !second.is_finished() {
-                if let Ok((index, fraction)) = receiver.recv_timeout(Duration::from_millis(25)) {
+        let parallel_states = if streams.len() == 2 && self.backend == "Vulkan" {
+            let first = self
+                .context
+                .create_state()
+                .map_err(|e| ProcessingError::Engine(e.to_string()))?;
+            self.context
+                .create_state()
+                .ok()
+                .map(|second| (first, second))
+        } else {
+            None
+        };
+        let segments = if let Some((first_state, second_state)) = parallel_states {
+            let mut speech = speech.into_iter();
+            let (first_speech, second_speech) = (speech.next().flatten(), speech.next().flatten());
+            let (sender, receiver) = mpsc::channel::<(usize, f32)>();
+            let (first, second) = std::thread::scope(|scope| {
+                let first_sender = sender.clone();
+                let first = scope.spawn(move || {
+                    let result = transcribe_with_state(
+                        first_state,
+                        streams[0],
+                        first_speech,
+                        settings,
+                        &mut |fraction| {
+                            let _ = first_sender.send((0, fraction));
+                        },
+                        cancel,
+                    );
+                    let _ = first_sender.send((0, 1.0));
+                    result
+                });
+                let second = scope.spawn(move || {
+                    let result = transcribe_with_state(
+                        second_state,
+                        streams[1],
+                        second_speech,
+                        settings,
+                        &mut |fraction| {
+                            let _ = sender.send((1, fraction));
+                        },
+                        cancel,
+                    );
+                    let _ = sender.send((1, 1.0));
+                    result
+                });
+                let mut fractions = [0.0_f32; 2];
+                let mut reported = StreamProgress::scanned(2, 2);
+                let mut record = |index: usize, fraction: f32| {
                     fractions[index] = fractions[index].max(fraction.clamp(0.0, 1.0));
-                    reported = reported
-                        .max(fractions[0] * first_weight + fractions[1] * (1.0 - first_weight));
-                    progress(reported);
+                    reported = reported.max(weights.overall(&fractions));
+                    reported
+                };
+                while !first.is_finished() || !second.is_finished() {
+                    if let Ok((index, fraction)) = receiver.recv_timeout(Duration::from_millis(25))
+                    {
+                        progress(record(index, fraction));
+                    }
                 }
+                for (index, fraction) in receiver.try_iter() {
+                    record(index, fraction);
+                }
+                progress(record(0, 0.0));
+                let first = first
+                    .join()
+                    .map_err(|_| ProcessingError::Engine("Whisper worker panicked".into()))?;
+                let second = second
+                    .join()
+                    .map_err(|_| ProcessingError::Engine("Whisper worker panicked".into()))?;
+                Ok::<_, ProcessingError>((first?, second?))
+            })?;
+            vec![first, second]
+        } else {
+            let mut fractions = vec![0.0_f32; streams.len()];
+            let mut all = Vec::with_capacity(streams.len());
+            for (index, (samples, audio)) in streams.iter().zip(speech).enumerate() {
+                if cancel.load(Ordering::SeqCst) {
+                    return Err(ProcessingError::Cancelled);
+                }
+                let state = self
+                    .context
+                    .create_state()
+                    .map_err(|e| ProcessingError::Engine(e.to_string()))?;
+                all.push(transcribe_with_state(
+                    state,
+                    samples,
+                    audio,
+                    settings,
+                    &mut |fraction| {
+                        fractions[index] = fractions[index].max(fraction.clamp(0.0, 1.0));
+                        progress(weights.overall(&fractions));
+                    },
+                    cancel,
+                )?);
+                fractions[index] = 1.0;
+                progress(weights.overall(&fractions));
             }
-            for (index, fraction) in receiver.try_iter() {
-                fractions[index] = fractions[index].max(fraction.clamp(0.0, 1.0));
-            }
-            progress(
-                (fractions[0] * first_weight + fractions[1] * (1.0 - first_weight)).max(reported),
-            );
-            let first = first
-                .join()
-                .map_err(|_| ProcessingError::Engine("Whisper worker panicked".into()))?;
-            let second = second
-                .join()
-                .map_err(|_| ProcessingError::Engine("Whisper worker panicked".into()))?;
-            Ok::<_, ProcessingError>((first?, second?))
-        })?;
-        self.audio_after_vad_ms = first_vad.zip(second_vad).map(|(a, b)| a + b);
-        Ok(vec![
-            StreamTranscription {
-                segments: first,
-                audio_after_vad_ms: first_vad,
-            },
-            StreamTranscription {
-                segments: second,
-                audio_after_vad_ms: second_vad,
-            },
-        ])
+            all
+        };
+        self.audio_after_vad_ms = speech_ms.iter().copied().sum();
+        Ok(segments
+            .into_iter()
+            .zip(speech_ms)
+            .map(|(segments, audio_after_vad_ms)| StreamTranscription {
+                segments,
+                audio_after_vad_ms,
+            })
+            .collect())
+    }
+}
+
+/// Share of the progress bar spent finding speech in each Source before Whisper starts.
+const SPEECH_SCAN_SHARE: f32 = 0.25;
+
+/// Overall progress across Sources, each weighted by the audio Whisper transcribes from it.
+struct StreamProgress {
+    weights: Vec<f32>,
+}
+
+impl StreamProgress {
+    fn new(work: &[usize]) -> Self {
+        let total = work.iter().sum::<usize>();
+        Self {
+            weights: work
+                .iter()
+                .map(|&samples| {
+                    if total == 0 {
+                        0.0
+                    } else {
+                        samples as f32 / total as f32
+                    }
+                })
+                .collect(),
+        }
+    }
+
+    /// Progress after speech has been found in `done` of `total` Sources.
+    fn scanned(done: usize, total: usize) -> f32 {
+        SPEECH_SCAN_SHARE * done as f32 / total.max(1) as f32
+    }
+
+    fn overall(&self, fractions: &[f32]) -> f32 {
+        if self.weights.iter().all(|&weight| weight == 0.0) {
+            return 1.0;
+        }
+        let transcribed = self
+            .weights
+            .iter()
+            .zip(fractions)
+            .map(|(weight, fraction)| weight * fraction.clamp(0.0, 1.0))
+            .sum::<f32>();
+        (SPEECH_SCAN_SHARE + (1.0 - SPEECH_SCAN_SHARE) * transcribed).min(1.0)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_silent_source_finishing_first_does_not_jump_progress_to_half() {
+        // Equal-length Sources: the Microphone has no speech, System audio has 20 minutes of it.
+        let progress = StreamProgress::new(&[0, 20 * 60 * SAMPLE_RATE]);
+        let microphone_done = progress.overall(&[1.0, 0.0]);
+        assert!(
+            microphone_done <= SPEECH_SCAN_SHARE + 0.01,
+            "{microphone_done}"
+        );
+        assert!(
+            (progress.overall(&[1.0, 0.5]) - (SPEECH_SCAN_SHARE + (1.0 - SPEECH_SCAN_SHARE) * 0.5))
+                .abs()
+                < 1e-4
+        );
+        assert_eq!(progress.overall(&[1.0, 1.0]), 1.0);
+    }
+
+    #[test]
+    fn progress_moves_while_speech_is_found_before_whisper_starts() {
+        assert_eq!(StreamProgress::scanned(0, 2), 0.0);
+        assert!(StreamProgress::scanned(1, 2) > 0.0);
+        assert_eq!(StreamProgress::scanned(2, 2), SPEECH_SCAN_SHARE);
+        assert_eq!(
+            StreamProgress::new(&[5, 15]).overall(&[0.0, 0.0]),
+            SPEECH_SCAN_SHARE
+        );
+    }
+
+    #[test]
+    fn sources_with_no_speech_at_all_complete_the_progress() {
+        assert_eq!(StreamProgress::new(&[0, 0]).overall(&[0.0, 0.0]), 1.0);
+    }
 
     #[test]
     fn token_pieces_join_subwords_and_keep_word_timestamps() {

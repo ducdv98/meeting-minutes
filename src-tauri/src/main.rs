@@ -1272,10 +1272,7 @@ fn transcription_chain<'a>(
 ) -> Result<processing::EngineChain<'a>, processing::ProcessingError> {
     let mut cloud: Vec<Box<dyn CloudEngine>> = Vec::new();
     let settings = Settings::load(&app.state::<SettingsPath>().0);
-    // Audio goes to a cloud engine only after the one-time cloud notice (ADR 0011).
-    if !settings.cloud_notice_acknowledged {
-        return Ok(processing::EngineChain::new(cloud, model, local));
-    }
+    // A saved key is the user's choice of cloud transcription (ADR 0011).
     if let Some(key) = app.state::<Secrets>().0.get(ProviderKind::Groq).map_err(processing::ProcessingError::Engine)? {
         cloud.push(Box::new(GroqEngine::new(app.state::<Http>().0.clone(), key)));
     }
@@ -1289,8 +1286,7 @@ fn transcription_chain<'a>(
 /// Starts transcribing the new Recording's Chunks in the background when Groq is configured or
 /// local Whisper can run on a discrete GPU. The cache remains in memory until Stop.
 fn start_background(app: &AppHandle) {
-    let has_groq_key = Settings::load(&app.state::<SettingsPath>().0).cloud_notice_acknowledged
-        && matches!(app.state::<Secrets>().0.get(ProviderKind::Groq), Ok(Some(_)));
+    let has_groq_key = matches!(app.state::<Secrets>().0.get(ProviderKind::Groq), Ok(Some(_)));
     let discrete_gpu = WhisperEngine::discrete_gpu_available();
     let on_ac = processing::PowerState::current() != processing::PowerState::Battery;
     // Cloud availability is learned from Offline errors; the worker retries after its backoff.
@@ -1579,7 +1575,6 @@ fn processing_worker(app: AppHandle) {
                 app.state::<Http>().0.clone(),
             );
             let correction = match &correction {
-                _ if !settings.cloud_notice_acknowledged => processing::CorrectionProvider::Disabled,
                 Ok(Some(provider)) => processing::CorrectionProvider::Ready(provider),
                 Ok(None) => processing::CorrectionProvider::Disabled,
                 Err(error) => {

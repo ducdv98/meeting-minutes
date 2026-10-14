@@ -69,6 +69,8 @@ pub trait SpeechEngine {
 }
 
 /// Cloud spans are long so a one-hour Meeting stays within Groq's per-minute request limit.
+/// Language is detected from the first speech within this opening of a Source.
+pub const LANGUAGE_SCAN_SAMPLES: usize = 5 * 60 * 16_000;
 const CHAIN_SPAN_SAMPLES: usize = 10 * 60 * 16_000;
 /// How far before the target length a span may end, to land on a pause instead of a word.
 const CHAIN_CUT_SEARCH_SAMPLES: usize = 10 * 16_000;
@@ -444,11 +446,16 @@ impl SpeechEngine for EngineChain<'_> {
     ) -> Result<Language, String> {
         self.offline = false;
         self.deferred = false;
+        // Cloud engines detect from the opening they are sent, so skip a silent lead-in.
+        let sound = samples
+            .iter()
+            .position(|sample| sample.abs() > 0.01)
+            .unwrap_or(0);
         for (index, engine) in self.cloud.iter_mut().enumerate() {
             if self.unavailable[index] {
                 continue;
             }
-            match engine.detect_language(samples, cancel) {
+            match engine.detect_language(&samples[sound..], cancel) {
                 Ok(Some(language)) => return Ok(language),
                 Ok(None) => continue,
                 Err(EngineError::Cancelled) => return Err("Processing cancelled".into()),
@@ -479,6 +486,10 @@ impl SpeechEngine for EngineChain<'_> {
                     }
                 }
             }
+        }
+        // While a cloud engine can transcribe, the local model is never loaded just to detect.
+        if self.unavailable.iter().any(|unavailable| !unavailable) {
+            return Ok(Language::En);
         }
         self.local()
             .map_err(|error| error.to_string())?
@@ -1028,10 +1039,11 @@ fn transcribe_meeting_inner(
         telemetry.stage = ProcessingStage::Transcribing;
         let whisper_started = Instant::now();
         if language.is_none() {
-            if let Some(stream) = prepared
-                .iter()
-                .find(|stream| engine.has_speech(&stream.samples_16k))
-            {
+            if let Some(stream) = prepared.iter().find(|stream| {
+                // Only the opening is used to detect, so only the opening needs checking.
+                let opening = stream.samples_16k.len().min(LANGUAGE_SCAN_SAMPLES);
+                engine.has_speech(&stream.samples_16k[..opening])
+            }) {
                 language = Some(match engine.detect_language(&stream.samples_16k, cancel) {
                     Ok(language) => language,
                     Err(error) => {

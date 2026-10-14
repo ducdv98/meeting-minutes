@@ -153,8 +153,8 @@ export default function SettingsView() {
               </div>;
             })}
           </FormSection>
-          {cloudNoticeVisible && <div role="alert" className="mt-3 grid gap-2 rounded-md border border-line bg-raised p-3.5 text-sm"><p className="m-0">When Processing runs, Meeting audio or text will be sent to Groq or Gemini when their keys are set. Gemini's free tier may use content for training.</p><Button variant="secondary" onClick={() => void acknowledgeCloudNotice().then((next) => { setSettings(next); setCloudNoticeError(null); }, (reason) => setCloudNoticeError(String(reason)))}>Got it</Button>{cloudNoticeError && <p className="m-0">{cloudNoticeError}</p>}</div>}
-        <FormSection title="Transcription model" hint="Runs on this PC. Larger models are more accurate and slower. You can change this any time.">
+          {cloudNoticeVisible && <div role="alert" className="mt-3 grid gap-2 rounded-md border border-line bg-raised p-3.5 text-sm"><p className="m-0">With a key saved, Meeting audio and text are sent to Groq or Gemini for Processing. Gemini's free tier may use content for training.</p><Button variant="secondary" onClick={() => void acknowledgeCloudNotice().then((next) => { setSettings(next); setCloudNoticeError(null); }, (reason) => setCloudNoticeError(String(reason)))}>Got it</Button>{cloudNoticeError && <p className="m-0">{cloudNoticeError}</p>}</div>}
+        <FormSection title="Transcription model" hint="Runs on this PC when no Groq or Gemini key is saved, or their limits are reached. Larger models are more accurate and slower.">
           <RadioGroup aria-label="Transcription model" value={settings.model} onValueChange={(model) => save({ ...settings, model })}>
             {MODELS.map((model) => <RadioGroupItem key={model.name} value={model.name} description={model.description} sideNote={<span className="grid justify-items-end tabular-nums">
               <span>{modelSizeLabel(model.size_mb)}</span>
@@ -188,7 +188,7 @@ export default function SettingsView() {
           <div className="flex items-center justify-between gap-4 rounded-md border border-line bg-raised px-3.5 py-3">
             <div className="grid gap-0.5">
               <span id="auto-process" className="text-base font-medium">Process after I stop</span>
-              <span id="auto-process-note" className="text-xs text-ink-muted">Transcribe on this PC as soon as a Recording ends.</span>
+              <span id="auto-process-note" className="text-xs text-ink-muted">Transcribe as soon as a Recording ends.</span>
             </div>
             <Switch aria-labelledby="auto-process" aria-describedby="auto-process-note" checked={settings.auto_process} onCheckedChange={(auto_process) => save({ ...settings, auto_process })} />
           </div>
