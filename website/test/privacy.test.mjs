@@ -49,6 +49,31 @@ test('public copy explains when Meeting content goes to cloud providers', async 
   assert.match(policy, /Windows Credential Manager/);
 });
 
+test('privacy page explains the current Invite code Managed transcription flow', async () => {
+  const policy = await readFile(policyPath, 'utf8');
+  const current = policy.split('<h2>Planned: Accounts</h2>')[0];
+  assert.match(current, /https:\/\/transcribe\.meeting-minutes\.tech/);
+  assert.match(current, /Invite code/i);
+  assert.match(current, /Meeting Minutes service[\s\S]*?forwards? (?:the )?audio to Groq/i);
+  assert.match(current, /audio is deleted after processing/i);
+  assert.match(current, /each part.{0,100}transcribed text.{0,100}up to five minutes.{0,40}retr(?:y|ies)/i);
+  assert.match(current, /Windows Credential Manager[\s\S]*?client ID and refresh token/i);
+});
+
+test('privacy page labels Account registration and verified-email storage as planned', async () => {
+  const policy = await readFile(policyPath, 'utf8');
+  const [current, afterHeading] = policy.split('<h2>Planned: Accounts</h2>');
+  assert.ok(afterHeading, 'Future Account behavior needs a clearly Planned heading');
+  const planned = afterHeading.split('<h2>')[0];
+  const outsidePlanned = current + afterHeading.slice(planned.length);
+  assert.doesNotMatch(outsidePlanned, /Account registration|verified email address|usage counters/i);
+  assert.match(planned, /Account registration/i);
+  assert.match(planned, /verified email address/i);
+  assert.match(planned, /email address and usage counters/i);
+  assert.match(planned, /Invite codes? (?:will be|are) retired/i);
+  assert.match(planned, /signing in alone will not enable Managed transcription/i);
+});
+
 test('privacy page names every URL host in app source and runtime config', async () => {
   const policy = await readFile(policyPath, 'utf8');
   const networkTable = policy.split('<h2>What the app connects to</h2>')[1]
