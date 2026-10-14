@@ -46,6 +46,8 @@ beforeEach(() => {
   vi.mocked(meetingDetail).mockImplementation(async (id) => ({ id, title: id, started_at: "2026-10-12T09:00:00Z", duration_ms: 0, language: null, audio_path: null, markers: [], imported: false, voice_note: false, participants: {} }));
 });
 
+const sidebar = () => within(screen.getByRole("navigation", { name: "Meetings" }));
+
 it("opens a Meeting from a search result at its Segment", async () => {
   vi.mocked(rescanLibrary).mockResolvedValue({ meetings: [], malformed: [] });
   vi.mocked(searchLibrary).mockResolvedValue([{ meeting_id: "one", title: "Planning", started_at: "2026-10-12T09:00:00Z", segment_id: "s00001", revision: 1, start_ms: 1000, end_ms: 2000, snippet: "budget" }]);
@@ -61,7 +63,7 @@ it("opens a Meeting from a search result at its Segment", async () => {
 it("confirms list deletion, allows Cancel, and shows backend errors", async () => {
   vi.mocked(rescanLibrary).mockResolvedValue({ meetings: [{ id: "one", title: "Planning", started_at: "2026-10-12T09:00:00Z", duration_ms: 0 }], malformed: [] });
   render(<App />);
-  await screen.findByRole("button", { name: "Planning" });
+  await sidebar().findByRole("button", { name: "Planning" });
   openRowMenu("Planning");
   fireEvent.click(await screen.findByRole("menuitem", { name: "Delete Planning" }));
   expect(screen.getByRole("dialog", { name: "Delete Planning?" })).toBeTruthy();
@@ -81,7 +83,7 @@ it("disables Delete for the Meeting being recorded", async () => {
   vi.mocked(rescanLibrary).mockResolvedValue({ meetings: [{ id: "one", title: "Planning", started_at: "2026-10-12T09:00:00Z", duration_ms: 0 }], malformed: [] });
   vi.mocked(recordingStatus).mockResolvedValue({ phase: "recording", meeting_id: "one", elapsed_ms: 1000, notice_acknowledged: true, saves: [], continue_offers: [], device_switches: [] });
   render(<App />);
-  await screen.findByRole("button", { name: "Planning" });
+  await sidebar().findByRole("button", { name: "Planning" });
   openRowMenu("Planning");
   const item = await screen.findByRole("menuitem", { name: "Delete Planning" });
   expect(item.getAttribute("data-disabled")).toBe("");
@@ -93,7 +95,7 @@ it("renames a Meeting inline from its row menu while keeping the selected Meetin
   vi.mocked(rescanLibrary).mockResolvedValueOnce({ meetings: [planning], malformed: [] }).mockResolvedValue({ meetings: [review], malformed: [] });
   vi.mocked(renameMeeting).mockResolvedValue(review);
   render(<App />);
-  fireEvent.click(await screen.findByRole("button", { name: "Planning" }));
+  fireEvent.click(await sidebar().findByRole("button", { name: "Planning" }));
   expect(screen.getByRole("heading", { name: "Meeting one" })).toBeTruthy();
   openRowMenu("Planning");
   fireEvent.click(await screen.findByRole("menuitem", { name: "Rename Planning" }));
@@ -103,7 +105,7 @@ it("renames a Meeting inline from its row menu while keeping the selected Meetin
   fireEvent.keyDown(field, { key: "Enter" });
   await waitFor(() => expect(renameMeeting).toHaveBeenCalledWith("one", "Review"));
   expect(await screen.findByRole("heading", { name: "Meeting one" })).toBeTruthy();
-  expect(await screen.findByRole("button", { name: "Review" })).toBeTruthy();
+  expect(await sidebar().findByRole("button", { name: "Review" })).toBeTruthy();
   expect(screen.queryByRole("textbox", { name: /Title for/ })).toBeNull();
 });
 
@@ -111,7 +113,7 @@ it("keeps the inline rename open on failure and cancels with Escape", async () =
   vi.mocked(rescanLibrary).mockResolvedValue({ meetings: [{ id: "one", title: "Planning", started_at: "2026-10-12T09:00:00Z", duration_ms: 0 }], malformed: [] });
   vi.mocked(renameMeeting).mockRejectedValue("Could not save Title");
   render(<App />);
-  await screen.findByRole("button", { name: "Planning" });
+  await sidebar().findByRole("button", { name: "Planning" });
   openRowMenu("Planning");
   fireEvent.click(await screen.findByRole("menuitem", { name: "Rename Planning" }));
   const field = screen.getByRole("textbox", { name: "Title for Planning" });
@@ -121,14 +123,14 @@ it("keeps the inline rename open on failure and cancels with Escape", async () =
   expect(screen.getByRole("textbox", { name: "Title for Planning" })).toBeTruthy();
   fireEvent.keyDown(screen.getByRole("textbox", { name: "Title for Planning" }), { key: "Escape" });
   expect(screen.queryByRole("textbox", { name: "Title for Planning" })).toBeNull();
-  expect(screen.getByRole("button", { name: "Planning" })).toBeTruthy();
+  expect(sidebar().getByRole("button", { name: "Planning" })).toBeTruthy();
 });
 
 it("allows Rename for the Meeting being recorded", async () => {
   vi.mocked(rescanLibrary).mockResolvedValue({ meetings: [{ id: "one", title: "Planning", started_at: "2026-10-12T09:00:00Z", duration_ms: 0 }], malformed: [] });
   vi.mocked(recordingStatus).mockResolvedValue({ phase: "recording", meeting_id: "one", elapsed_ms: 1000, notice_acknowledged: true, saves: [], continue_offers: [], device_switches: [] });
   render(<App />);
-  await screen.findByRole("button", { name: "Planning" });
+  await sidebar().findByRole("button", { name: "Planning" });
   openRowMenu("Planning");
   const item = await screen.findByRole("menuitem", { name: "Rename Planning" });
   expect(item.getAttribute("data-disabled")).toBeNull();
@@ -157,7 +159,7 @@ it("shows a red Recording indicator and opens the Recording card from the sideba
   const live = await screen.findByRole("button", { name: "Live Meeting" });
   expect(screen.getByText("Recording").className).toContain("text-record");
   expect(screen.queryByRole("button", { name: "Record" })).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "Planning" }));
+  fireEvent.click(sidebar().getByRole("button", { name: "Planning" }));
   fireEvent.click(live);
   expect(screen.getByRole("region", { name: "Live Recording" })).toBeTruthy();
   expect(screen.getByText("Recording Planning")).toBeTruthy();
@@ -222,16 +224,16 @@ it("lists Meeting titles in the Library", async () => {
   render(<App />);
 
   expect(await within(screen.getByRole("navigation", { name: "Meetings" })).findByText("Planning")).toBeTruthy();
-  expect(screen.getByRole("button", { name: "Review" }).textContent).toContain("30 min");
-  expect(screen.getByRole("button", { name: "Planning" }).closest(".motion-meeting-enter")).toBeNull();
-  expect(screen.getByRole("button", { name: "Planning" }).querySelector("time")?.getAttribute("datetime")).toBe("2026-10-12T09:00:00Z");
+  expect(sidebar().getByRole("button", { name: "Review" }).textContent).toContain("30 min");
+  expect(sidebar().getByRole("button", { name: "Planning" }).closest(".motion-meeting-enter")).toBeNull();
+  expect(sidebar().getByRole("button", { name: "Planning" }).querySelector("time")?.getAttribute("datetime")).toBe("2026-10-12T09:00:00Z");
 });
 
 it("shows the Meeting language with its duration", async () => {
   vi.mocked(rescanLibrary).mockResolvedValue({ meetings: [{ id: "one", title: "Planning", started_at: "2026-10-12T09:00:00Z", duration_ms: 1_830_000 }], malformed: [] });
   vi.mocked(meetingDetail).mockResolvedValue({ id: "one", title: "Planning", started_at: "2026-10-12T09:00:00Z", duration_ms: 1_830_000, language: "en", audio_path: null, markers: [], imported: false, voice_note: false, participants: {} });
   render(<App />);
-  await waitFor(() => expect(screen.getByRole("button", { name: "Planning" }).textContent).toContain("30 min · English"));
+  await waitFor(() => expect(sidebar().getByRole("button", { name: "Planning" }).textContent).toContain("30 min · English"));
 });
 
 it("shows an error when the Library cannot be loaded", async () => {
@@ -267,8 +269,8 @@ it("rescans the Library when the Rescan button is clicked", async () => {
   openMoreMenu();
   fireEvent.click(await screen.findByRole("menuitem", { name: "Rescan Library" }));
   expect(await within(screen.getByRole("navigation", { name: "Meetings" })).findByText("Planning")).toBeTruthy();
-  expect(within(screen.getByRole("table", { name: "Meetings in the Library" })).getByRole("row", { name: "Planning" })).toBeTruthy();
-  expect(screen.getByRole("button", { name: "Planning" }).closest(".motion-meeting-enter")).toBeTruthy();
+  expect(within(screen.getByRole("table", { name: "Meetings in the Library" })).getByRole("button", { name: "Planning" })).toBeTruthy();
+  expect(sidebar().getByRole("button", { name: "Planning" }).closest(".motion-meeting-enter")).toBeTruthy();
   expect(rescanLibrary).toHaveBeenCalledTimes(2);
 });
 
@@ -278,13 +280,13 @@ it("opens a Meeting from its title and returns to the Library", async () => {
     malformed: [],
   });
   render(<App />);
-  fireEvent.click(await screen.findByRole("button", { name: "Planning" }));
+  fireEvent.click(await sidebar().findByRole("button", { name: "Planning" }));
   expect(screen.getByRole("heading", { name: "Meeting one" })).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Back to Library" }));
   expect(screen.getByRole("heading", { name: "Library" })).toBeTruthy();
 });
 
-it("opens a Meeting from the Library table with Enter and keeps the sidebar list", async () => {
+it("opens a Meeting from its Title button in the Library table and keeps the sidebar list", async () => {
   vi.mocked(rescanLibrary).mockResolvedValue({ meetings: [
     { id: "one", title: "Planning", started_at: "2026-10-12T09:00:00Z", duration_ms: 600_000 },
     { id: "two", title: "Review", started_at: "2026-10-13T09:00:00Z", duration_ms: 1_200_000 },
@@ -293,7 +295,7 @@ it("opens a Meeting from the Library table with Enter and keeps the sidebar list
   const table = await screen.findByRole("table", { name: "Meetings in the Library" });
   expect(within(table).getAllByRole("row")).toHaveLength(3);
   expect(within(screen.getByRole("navigation", { name: "Meetings" })).getByRole("button", { name: "Planning" })).toBeTruthy();
-  fireEvent.keyDown(within(table).getByRole("row", { name: "Planning" }), { key: "Enter" });
+  fireEvent.click(within(table).getByRole("button", { name: "Planning" }));
   expect(screen.getByRole("heading", { name: "Meeting one" })).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Back to Library" }));
   expect(await screen.findByRole("table", { name: "Meetings in the Library" })).toBeTruthy();
@@ -336,19 +338,19 @@ it("groups Meetings, marks the selected row, and opens Settings and Help in the 
     { id: "two", title: "Yesterday meeting", started_at: yesterday, duration_ms: 60000 },
   ], malformed: [] });
   render(<App />);
-  await screen.findByRole("button", { name: "Today meeting" });
+  await sidebar().findByRole("button", { name: "Today meeting" });
   expect(screen.getByRole("heading", { name: "Today" })).toBeTruthy();
   expect(screen.getByRole("heading", { name: "Yesterday" })).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "Today meeting" }));
-  expect(screen.getByRole("button", { name: "Today meeting" }).getAttribute("aria-current")).toBe("page");
+  fireEvent.click(sidebar().getByRole("button", { name: "Today meeting" }));
+  expect(sidebar().getByRole("button", { name: "Today meeting" }).getAttribute("aria-current")).toBe("page");
   fireEvent.click(screen.getByRole("button", { name: "Settings" }));
   expect(screen.getByRole("heading", { name: "Settings pane" })).toBeTruthy();
-  expect(screen.getByRole("button", { name: "Today meeting" }).getAttribute("aria-current")).toBeNull();
+  expect(sidebar().getByRole("button", { name: "Today meeting" }).getAttribute("aria-current")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Help" }));
   expect(screen.getByRole("heading", { name: "Help pane" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "Help" }).getAttribute("aria-current")).toBe("page");
   expect(screen.getByRole("button", { name: "Settings" }).getAttribute("aria-current")).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "Yesterday meeting" }));
+  fireEvent.click(sidebar().getByRole("button", { name: "Yesterday meeting" }));
   expect(screen.queryByRole("heading", { name: "Help pane" })).toBeNull();
 });
 
@@ -388,7 +390,7 @@ it("moves a list deletion error into Notifications after the dialog closes", asy
   vi.mocked(rescanLibrary).mockResolvedValue({ meetings: [{ id: "one", title: "Planning", started_at: "2026-10-12T09:00:00Z", duration_ms: 0 }], malformed: [] });
   vi.mocked(deleteMeeting).mockRejectedValue("Folder is busy");
   render(<App />);
-  await screen.findByRole("button", { name: "Planning" });
+  await sidebar().findByRole("button", { name: "Planning" });
   openRowMenu("Planning");
   fireEvent.click(await screen.findByRole("menuitem", { name: "Delete Planning" }));
   fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Delete" }));
