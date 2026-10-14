@@ -1,8 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 
 export type ProviderKind = "ollama" | "openai" | "anthropic" | "groq" | "gemini";
-export interface AiStatus { provider: ProviderKind | null; model: string | null; configured: boolean; has_openai_key: boolean; has_anthropic_key: boolean; has_groq_key: boolean; has_gemini_key: boolean }
+export interface AiStatus { provider: ProviderKind | null; model: string | null; configured: boolean; has_openai_key: boolean; has_anthropic_key: boolean; has_groq_key: boolean; has_gemini_key: boolean; summary_provider?: ProviderKind | null; summary_model?: string | null; summary_configured?: boolean; ask_provider?: ProviderKind | null; ask_model?: string | null; ask_configured?: boolean }
 export interface AiSettings { provider: ProviderKind | null; ollama_model: string | null; openai_model: string | null; anthropic_model: string | null; gemini_model: string | null }
+export interface LanguageModel { provider: Exclude<ProviderKind, "groq">; model: string }
+export interface LanguageModelSettings { models: LanguageModel[]; correction: LanguageModel | null; summary: LanguageModel | null; ask: LanguageModel | null; confirmed_correction_providers: ProviderKind[]; legacy_correction_pending: boolean }
 export interface ManagedStatus { connected: boolean; revoked: boolean }
 export interface Message { role: "user" | "assistant"; content: string }
 export interface Disclosure { provider: ProviderKind; model: string; endpoint: string; system: string; messages: Message[]; characters: number }
@@ -22,4 +24,6 @@ export const saveApiKey = (provider: ProviderKind, key: string) => invoke<AiStat
 export const deleteApiKey = (provider: ProviderKind) => invoke<AiStatus>("delete_api_key", { provider });
 export const updateAiSettings = (provider: ProviderKind | null, model: string | null) => invoke<AiStatus>("update_ai_settings", { provider, model });
 export const testAiProvider = () => invoke<string>("test_ai_provider");
+export const updateLanguageModels = (languageModels: LanguageModelSettings) => invoke<import("./processing").Settings>("update_language_models", { languageModels });
+export const testLanguageModel = (model: LanguageModel) => invoke<string>("test_language_model", { model });
 export const testCloudApiKey = (provider: "groq" | "gemini") => invoke<void>("test_cloud_api_key", { provider });

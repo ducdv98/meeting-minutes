@@ -1,4 +1,7 @@
-use crate::{ai::ProviderKind, models::TURBO_MODEL, transcript::Language};
+use crate::{
+    ai::ProviderKind, language_models::LanguageModelSettings, models::TURBO_MODEL,
+    transcript::Language,
+};
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
@@ -22,6 +25,7 @@ pub struct Settings {
     /// Default Meeting language; `None` detects it.
     pub language: Option<Language>,
     pub ai: AiSettings,
+    pub language_models: LanguageModelSettings,
 }
 
 impl Default for Settings {
@@ -35,6 +39,7 @@ impl Default for Settings {
             your_name: None,
             language: None,
             ai: AiSettings::default(),
+            language_models: LanguageModelSettings::default(),
         }
     }
 }
@@ -77,10 +82,18 @@ impl AiSettings {
 
 impl Settings {
     pub fn load(path: &Path) -> Self {
-        let mut settings: Self = fs::read(path)
+        let value = fs::read(path)
             .ok()
-            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok());
+        let legacy = value
+            .as_ref()
+            .is_some_and(|value| value.get("language_models").is_none());
+        let mut settings: Self = value
+            .and_then(|value| serde_json::from_value(value).ok())
             .unwrap_or_default();
+        if legacy {
+            settings.language_models = LanguageModelSettings::from_legacy(&settings.ai);
+        }
         if matches!(settings.model.as_str(), "medium" | "large-v3-turbo") {
             settings.model = TURBO_MODEL.into();
         }
@@ -143,5 +156,52 @@ mod tests {
         assert_eq!(settings.ai.openai_model.as_deref(), Some("gpt-4o"));
         let json = serde_json::to_string(&settings).unwrap();
         assert!(!json.contains("secret"));
+    }
+
+    #[test]
+    fn old_ai_settings_migrate_summary_ask_and_gemini_correction() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        fs::write(&path, r#"{"ai":{"provider":"anthropic","anthropic_model":"claude-test","gemini_model":"gemini-test"}}"#).unwrap();
+        let mut settings = Settings::load(&path);
+        let summary = settings.language_models.summary.as_ref().unwrap();
+        assert_eq!(summary.provider, ProviderKind::Anthropic);
+        assert_eq!(summary.model, "claude-test");
+        assert_eq!(settings.language_models.ask.as_ref(), Some(summary));
+        assert!(settings.language_models.legacy_correction_pending);
+        settings
+            .language_models
+            .finish_legacy_correction(true, &settings.ai);
+        assert_eq!(
+            settings.language_models.correction.as_ref().unwrap().model,
+            "gemini-test"
+        );
+        assert!(settings
+            .language_models
+            .confirmed_correction_providers
+            .contains(&ProviderKind::Gemini));
+        settings.save(&path).unwrap();
+        let reloaded = Settings::load(&path);
+        assert_eq!(reloaded.language_models, settings.language_models);
+    }
+
+    #[test]
+    fn old_ai_settings_without_gemini_key_leave_correction_off() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        fs::write(
+            &path,
+            r#"{"ai":{"provider":"ollama","ollama_model":"llama3.2"}}"#,
+        )
+        .unwrap();
+        let mut settings = Settings::load(&path);
+        settings
+            .language_models
+            .finish_legacy_correction(false, &settings.ai);
+        assert!(settings.language_models.correction.is_none());
+        assert_eq!(
+            settings.language_models.summary.as_ref().unwrap().model,
+            "llama3.2"
+        );
     }
 }

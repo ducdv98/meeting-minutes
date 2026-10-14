@@ -33,6 +33,7 @@ use meeting_minutes_core::{
     },
     diagnostics::{build_diagnostics, log_event, DiagnosticsInput, LogEvent},
     import::import_extension,
+    language_models::{LanguageModel, LanguageModelSettings},
     models::{self, DEFAULT_MODEL, MODELS},
     processing::{self, JobStage, ProcessingStatus, Processor, SpeechEngine, TranscribeRequest},
     recorder::{Phase, Recorder, RecorderError, RecorderStatus, SaveJob, SaveState},
@@ -700,8 +701,15 @@ fn set_meeting_language(
 }
 
 #[tauri::command]
-fn get_settings(path: State<'_, SettingsPath>) -> Settings {
-    Settings::load(&path.0)
+fn get_settings(path: State<'_, SettingsPath>, secrets: State<'_, Secrets>) -> Settings {
+    let mut settings = Settings::load(&path.0);
+    if settings.language_models.legacy_correction_pending {
+        if let Ok(key) = secrets.0.get(ProviderKind::Gemini) {
+            settings.language_models.finish_legacy_correction(key.is_some(), &settings.ai);
+            let _ = settings.save(&path.0);
+        }
+    }
+    settings
 }
 
 #[tauri::command]
@@ -744,7 +752,19 @@ fn installed_models(models_dir: State<'_, ModelsDir>) -> Vec<&'static str> {
 }
 
 fn current_ai_status(path: &SettingsPath, secrets: &Secrets) -> AiStatus {
-    ai::ai_status(&Settings::load(&path.0).ai, secrets.0.as_ref())
+    let settings = Settings::load(&path.0);
+    let mut status = ai::ai_status(&settings.ai, secrets.0.as_ref());
+    if let Some(model) = &settings.language_models.summary {
+        status.summary_provider = Some(model.provider);
+        status.summary_model = Some(model.model.clone());
+        status.summary_configured = ai::model_ready(model, secrets.0.as_ref());
+    }
+    if let Some(model) = &settings.language_models.ask {
+        status.ask_provider = Some(model.provider);
+        status.ask_model = Some(model.model.clone());
+        status.ask_configured = ai::model_ready(model, secrets.0.as_ref());
+    }
+    status
 }
 
 #[tauri::command]
@@ -904,6 +924,52 @@ fn update_ai_settings(
 }
 
 #[tauri::command]
+fn update_language_models(
+    path: State<'_, SettingsPath>,
+    language_models: LanguageModelSettings,
+) -> Result<Settings, String> {
+    if !language_models.valid() {
+        return Err("Choose a saved Language model and confirm cloud Correction first".into());
+    }
+    let mut settings = Settings::load(&path.0);
+    settings.language_models = language_models;
+    settings.save(&path.0).map_err(|error| error.to_string())?;
+    Ok(settings)
+}
+
+#[tauri::command]
+async fn test_language_model(app: AppHandle, model: LanguageModel) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let settings = Settings::load(&app.state::<SettingsPath>().0);
+        if !settings.language_models.models.contains(&model) {
+            return Err("Add this Language model before testing it".into());
+        }
+        let provider = ai::configured_language_provider(
+            &model,
+            app.state::<Secrets>().0.as_ref(),
+            app.state::<Http>().0.clone(),
+        )
+        .map_err(|error| error.to_string())?;
+        let request = GenerateRequest {
+            system: "You are a connection test.".into(),
+            messages: vec![Message {
+                role: Role::User,
+                content: "Reply with the single word: ready".into(),
+            }],
+            schema: None,
+            max_tokens: 1024,
+            inline_audio: None,
+        };
+        provider
+            .generate(&request, &mut |_| {}, &AtomicBool::new(false))
+            .map(|reply| reply.trim().to_owned())
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 async fn test_ai_provider(app: AppHandle) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let settings = Settings::load(&app.state::<SettingsPath>().0);
@@ -931,11 +997,17 @@ async fn test_ai_provider(app: AppHandle) -> Result<String, String> {
     .map_err(|error| error.to_string())?
 }
 
-fn configured_ai(app: &AppHandle) -> Result<ai::HttpProvider, String> {
+fn configured_ai(app: &AppHandle, use_for: &str) -> Result<ai::HttpProvider, String> {
     let settings = Settings::load(&app.state::<SettingsPath>().0);
     let secrets = app.state::<Secrets>();
     let http = app.state::<Http>();
-    ai::configured_provider(&settings.ai, secrets.0.as_ref(), http.0.clone())
+    let selected = match use_for {
+        "summary" => settings.language_models.summary.as_ref(),
+        "ask" => settings.language_models.ask.as_ref(),
+        _ => None,
+    }
+    .ok_or("No Language model is set up")?;
+    ai::configured_language_provider(selected, secrets.0.as_ref(), http.0.clone())
         .map_err(|error| error.to_string())
 }
 
@@ -1036,7 +1108,7 @@ fn summary_status(app: AppHandle) -> Result<SummaryStatus, String> {
 }
 #[tauri::command]
 fn summary_send_plan(app: AppHandle, meeting_id: String) -> Result<SendPlan, String> {
-    let provider = configured_ai(&app)?;
+    let provider = configured_ai(&app, "summary")?;
     let (_, transcript, participants, _) = meeting_context(&app, &meeting_id)?;
     let kind = provider.kind();
     let consented = !kind.is_cloud() || cloud_consented(&app, &meeting_id, kind)?;
@@ -1169,7 +1241,7 @@ fn generate_summary(
     if transcript.segments.is_empty() {
         return Err("The Transcript has no Segments".into());
     }
-    let provider = configured_ai(&app)?;
+    let provider = configured_ai(&app, "summary")?;
     require_cloud_consent(&app, &meeting_id, provider.kind(), consent)?;
     start_summary(&app, meeting_id, provider)?;
     summary_snapshot(&app)
@@ -1231,7 +1303,7 @@ fn meeting_asks(app: AppHandle, meeting_id: String) -> Result<AskView, String> {
 
 #[tauri::command]
 fn ask_send_plan(app: AppHandle, meeting_id: String, question: String) -> Result<SendPlan, String> {
-    let provider = configured_ai(&app)?;
+    let provider = configured_ai(&app, "ask")?;
     let (_, transcript, participants, dir) = meeting_context(&app, &meeting_id)?;
     let kind = provider.kind();
     let consented = !kind.is_cloud() || cloud_consented(&app, &meeting_id, kind)?;
@@ -1266,7 +1338,7 @@ fn begin_ask(
     ensure_update_not_active(app)?;
     meeting_busy(app, &id)?;
     let (_, transcript, participants, dir) = meeting_context(app, &id)?;
-    let provider = configured_ai(app)?;
+    let provider = configured_ai(app, "ask")?;
     let kind = provider.kind();
     // A retry uses the saved question. A new Ask uses the text supplied by the click.
     let cancel = Arc::new(AtomicBool::new(false));
@@ -1777,8 +1849,8 @@ fn processing_worker(app: AppHandle) {
                     Ok(Box::new(engine) as Box<dyn SpeechEngine>)
                 }),
             )?;
-            let correction = ai::correction_provider(
-                &settings.ai,
+            let correction = meeting_minutes_core::correction::configured_provider(
+                &settings,
                 app.state::<Secrets>().0.as_ref(),
                 app.state::<Http>().0.clone(),
             );
@@ -1838,9 +1910,13 @@ fn processing_worker(app: AppHandle) {
             let _ = app.emit("library-changed", ());
             let settings = Settings::load(&app.state::<SettingsPath>().0);
             if !app.state::<Quitting>().0.load(Ordering::SeqCst)
-                && settings.ai.provider == Some(ProviderKind::Ollama)
+                && settings
+                    .language_models
+                    .summary
+                    .as_ref()
+                    .is_some_and(|model| model.provider == ProviderKind::Ollama)
             {
-                if let Ok(provider) = configured_ai(&app) {
+                if let Ok(provider) = configured_ai(&app, "summary") {
                     if provider.kind() == ProviderKind::Ollama {
                         let _ = start_summary(&app, id.clone(), provider);
                     }
@@ -3023,6 +3099,8 @@ fn main() {
             save_api_key,
             delete_api_key,
             update_ai_settings,
+            update_language_models,
+            test_language_model,
             test_ai_provider,
             meeting_summary,
             summary_participants_changed,

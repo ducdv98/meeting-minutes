@@ -4,6 +4,7 @@ use std::{
     sync::{atomic::AtomicBool, Arc, Mutex},
 };
 
+use crate::language_models::LanguageModel;
 use crate::settings::AiSettings;
 use serde::{de::DeserializeOwned, Deserialize, Serialize, Serializer};
 use serde_json::Value;
@@ -262,6 +263,12 @@ pub struct AiStatus {
     pub has_anthropic_key: bool,
     pub has_groq_key: bool,
     pub has_gemini_key: bool,
+    pub summary_provider: Option<ProviderKind>,
+    pub summary_model: Option<String>,
+    pub summary_configured: bool,
+    pub ask_provider: Option<ProviderKind>,
+    pub ask_model: Option<String>,
+    pub ask_configured: bool,
 }
 pub fn ai_status(settings: &AiSettings, secrets: &dyn SecretStore) -> AiStatus {
     let has_openai_key = secrets.get(ProviderKind::Openai).ok().flatten().is_some();
@@ -293,7 +300,54 @@ pub fn ai_status(settings: &AiSettings, secrets: &dyn SecretStore) -> AiStatus {
         has_anthropic_key,
         has_groq_key,
         has_gemini_key,
+        summary_provider: None,
+        summary_model: None,
+        summary_configured: false,
+        ask_provider: None,
+        ask_model: None,
+        ask_configured: false,
     }
+}
+pub fn model_ready(model: &LanguageModel, secrets: &dyn SecretStore) -> bool {
+    model.provider.supports_text()
+        && !model.model.trim().is_empty()
+        && (!model.provider.is_cloud() || secrets.get(model.provider).ok().flatten().is_some())
+}
+
+pub fn configured_language_provider(
+    selected: &LanguageModel,
+    secrets: &dyn SecretStore,
+    http: Arc<dyn HttpClient>,
+) -> Result<HttpProvider, AiError> {
+    if !selected.provider.supports_text() {
+        return Err(AiError::unsupported_for_text(selected.provider));
+    }
+    if selected.model.trim().is_empty() {
+        return Err(AiError::NotConfigured);
+    }
+    let key = if selected.provider.is_cloud() {
+        Some(
+            secrets
+                .get(selected.provider)
+                .map_err(AiError::KeyStore)?
+                .ok_or(AiError::MissingKey(selected.provider))?,
+        )
+    } else {
+        None
+    };
+    Ok(match selected.provider {
+        ProviderKind::Ollama => HttpProvider::ollama(http, &selected.model),
+        ProviderKind::Openai => {
+            HttpProvider::openai(http, &selected.model, key.expect("cloud key"))
+        }
+        ProviderKind::Anthropic => {
+            HttpProvider::anthropic(http, &selected.model, key.expect("cloud key"))
+        }
+        ProviderKind::Gemini => {
+            HttpProvider::gemini(http, &selected.model, key.expect("cloud key"))
+        }
+        ProviderKind::Groq => unreachable!("text capability was checked"),
+    })
 }
 pub fn configured_provider(
     settings: &AiSettings,
@@ -367,5 +421,76 @@ pub fn disclosure(provider: &HttpProvider, request: &GenerateRequest) -> Disclos
                 .iter()
                 .map(|message| message.content.chars().count())
                 .sum::<usize>(),
+    }
+}
+
+#[cfg(test)]
+mod language_model_tests {
+    use super::*;
+    use crate::language_models::{LanguageModel, LanguageModelSettings};
+
+    #[derive(Default)]
+    struct Capture(Mutex<Vec<(String, String)>>);
+    impl HttpClient for Capture {
+        fn send(&self, request: HttpRequest) -> Result<HttpResponse, AiError> {
+            let model = request
+                .body
+                .as_ref()
+                .and_then(HttpBody::json)
+                .and_then(|body| body.get("model"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_owned();
+            self.0.lock().unwrap().push((request.url, model));
+            Err(AiError::Unreachable("captured".into()))
+        }
+    }
+
+    #[test]
+    fn summary_and_ask_send_requests_to_their_independent_defaults() {
+        let secrets = MemorySecretStore::default();
+        secrets
+            .set(ProviderKind::Anthropic, &ApiKey::new("key").unwrap())
+            .unwrap();
+        let settings = LanguageModelSettings {
+            summary: Some(LanguageModel {
+                provider: ProviderKind::Anthropic,
+                model: "claude-summary".into(),
+            }),
+            ask: Some(LanguageModel {
+                provider: ProviderKind::Ollama,
+                model: "llama-ask".into(),
+            }),
+            ..Default::default()
+        };
+        let capture = Arc::new(Capture::default());
+        let request = GenerateRequest {
+            system: "test".into(),
+            messages: vec![Message {
+                role: Role::User,
+                content: "hello".into(),
+            }],
+            schema: None,
+            max_tokens: 16,
+            inline_audio: None,
+        };
+        for selected in [
+            settings.summary.as_ref().unwrap(),
+            settings.ask.as_ref().unwrap(),
+        ] {
+            let provider =
+                configured_language_provider(selected, &secrets, capture.clone()).unwrap();
+            let _ = provider.generate(&request, &mut |_| {}, &AtomicBool::new(false));
+        }
+        assert_eq!(
+            *capture.0.lock().unwrap(),
+            [
+                (
+                    "https://api.anthropic.com/v1/messages".into(),
+                    "claude-summary".into()
+                ),
+                ("http://localhost:11434/api/chat".into(), "llama-ask".into()),
+            ]
+        );
     }
 }

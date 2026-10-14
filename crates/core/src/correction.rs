@@ -1,10 +1,15 @@
 use std::{
     collections::{HashMap, HashSet},
     sync::atomic::{AtomicBool, Ordering},
+    sync::Arc,
 };
 
 use crate::{
-    ai::{generate_json, AiError, GenerateRequest, Message, OutputSchema, Role, TextProvider},
+    ai::{
+        self, generate_json, AiError, GenerateRequest, HttpClient, HttpProvider, Message,
+        OutputSchema, ProviderKind, Role, SecretStore, TextProvider,
+    },
+    settings::Settings,
     transcript::{Language, Segment},
 };
 use serde::{Deserialize, Serialize};
@@ -13,6 +18,32 @@ use serde_json::json;
 pub const DEFAULT_CHAR_BUDGET: usize = 2_000_000;
 /// Gemini Flash returns up to 65,536 tokens; Vietnamese JSON runs about 2 characters per token.
 const MAX_OUTPUT_CHARS: usize = 120_000;
+
+pub fn configured_provider(
+    settings: &Settings,
+    secrets: &dyn SecretStore,
+    http: Arc<dyn HttpClient>,
+) -> Result<Option<HttpProvider>, AiError> {
+    if settings.language_models.legacy_correction_pending {
+        let has_key = secrets
+            .get(ProviderKind::Gemini)
+            .map_err(AiError::KeyStore)?
+            .is_some();
+        let mut migrated = settings.language_models.clone();
+        migrated.finish_legacy_correction(has_key, &settings.ai);
+        return migrated
+            .correction
+            .as_ref()
+            .map(|model| ai::configured_language_provider(model, secrets, http))
+            .transpose();
+    }
+    settings
+        .language_models
+        .correction
+        .as_ref()
+        .map(|model| ai::configured_language_provider(model, secrets, http))
+        .transpose()
+}
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct CorrectedSegment {
@@ -185,7 +216,37 @@ pub fn apply(segments: &[Segment], corrections: &[CorrectedSegment]) -> Vec<Segm
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ai::ProviderKind;
+    use crate::ai::{ApiKey, MemorySecretStore, ProviderKind, SecretStore, UreqClient};
+    use crate::language_models::LanguageModel;
+
+    #[test]
+    fn configured_correction_uses_its_selected_provider_and_off_skips_it() {
+        let secrets = MemorySecretStore::default();
+        secrets
+            .set(ProviderKind::Anthropic, &ApiKey::new("key").unwrap())
+            .unwrap();
+        let mut settings = Settings::default();
+        assert!(
+            configured_provider(&settings, &secrets, Arc::new(UreqClient))
+                .unwrap()
+                .is_none()
+        );
+        settings.language_models.correction = Some(LanguageModel {
+            provider: ProviderKind::Anthropic,
+            model: "claude-test".into(),
+        });
+        let provider = configured_provider(&settings, &secrets, Arc::new(UreqClient))
+            .unwrap()
+            .unwrap();
+        assert_eq!(provider.kind(), ProviderKind::Anthropic);
+        assert_eq!(provider.model(), "claude-test");
+        settings.language_models.correction = None;
+        assert!(
+            configured_provider(&settings, &secrets, Arc::new(UreqClient))
+                .unwrap()
+                .is_none()
+        );
+    }
     use crate::transcript::Speaker;
     use std::sync::{atomic::AtomicBool, Mutex};
 

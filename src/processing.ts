@@ -41,3 +41,5 @@ export const updateSettings = (autoProcess: boolean, model: string, vocabulary: 
 export const installedModels = () => invoke<string[]>("installed_models");
 export const onProcessingStatus = (handler: (status: ProcessingStatus) => void): Promise<UnlistenFn> => listen<ProcessingStatus>("processing-status", (event) => handler(event.payload));
 export const onTranscriptDraft = (handler: (draft: TranscriptDraftEvent) => void): Promise<UnlistenFn> => listen<TranscriptDraftEvent>("transcript-draft", (event) => handler(event.payload));
+
+export interface Settings { language_models?: import("./ai").LanguageModelSettings }
