@@ -2367,7 +2367,8 @@ fn recording_status(app: AppHandle) -> Result<RecorderStatus, String> {
     status(&app)
 }
 
-#[tauri::command]
+// Async commands run off the main thread, so the Vulkan probe in start_background cannot freeze the UI.
+#[tauri::command(async)]
 fn start_recording(app: AppHandle) -> Result<RecorderStatus, String> {
     start(&app)
 }
@@ -2398,7 +2399,7 @@ fn retry_save(app: AppHandle, meeting_id: String) -> Result<RecorderStatus, Stri
     publish(&app)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn continue_meeting(app: AppHandle, meeting_id: String) -> Result<RecorderStatus, String> {
     start_with(&app, |recorder, library, started_at| {
         recorder.continue_meeting(library, &meeting_id, started_at)
@@ -2442,7 +2443,7 @@ fn status(app: &AppHandle) -> Result<RecorderStatus, String> {
 fn publish(app: &AppHandle) -> Result<RecorderStatus, String> {
     let status = status(app)?;
     let _ = app.emit("recording-status", &status);
-    update_tray(app, &status);
+    update_tray(app);
     Ok(status)
 }
 
@@ -2597,7 +2598,11 @@ fn request_start(app: &AppHandle) {
         let _ = app.emit("recording-notice-requested", ());
         return;
     }
-    let _ = start(app);
+    // Off the main thread, like start_recording.
+    let app = app.clone();
+    thread::spawn(move || {
+        let _ = start(&app);
+    });
 }
 
 fn toggle_record(app: &AppHandle) {
@@ -2681,7 +2686,20 @@ fn format_elapsed(ms: u64) -> String {
     )
 }
 
-fn update_tray(app: &AppHandle, status: &RecorderStatus) {
+/// Updates the tray and title on the main thread without waiting for it. Tray setters called
+/// elsewhere block until the main thread runs them, so holding `shown` across them deadlocked a
+/// main-thread Record against the elapsed-time ticker. The status is read when the task runs, so
+/// a late task cannot show a stale phase.
+fn update_tray(app: &AppHandle) {
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if let Ok(status) = status(&handle) {
+            update_tray_now(&handle, &status);
+        }
+    });
+}
+
+fn update_tray_now(app: &AppHandle, status: &RecorderStatus) {
     let Some(tray) = app.try_state::<Tray>() else {
         return;
     };
