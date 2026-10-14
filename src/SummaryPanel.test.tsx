@@ -40,6 +40,17 @@ it("shows cited Summary items and plays their spans", async () => {
   fireEvent.click(screen.getAllByRole("button", { name: /Play from 00:01/ })[0]);
   expect(player.playSpan).toHaveBeenCalledWith(1000, 2500);
 });
+it("renders Markdown in every Summary section and keeps Citations after the text", async () => {
+  vi.mocked(meetingSummary).mockResolvedValue({ schema_version: 1, revision: 2, created_at: "now", provider: "ollama", model: "llama", overview: [{ text: "# Overview text", citations: [citation] }], key_points: [{ text: "- **First**\n- Second", citations: [citation] }], decisions: [{ text: "Decision with `code`", citations: [citation] }], action_items: [{ text: "1. *Draft* 2. Send", owner: null, due: null, citations: [citation] }], dropped_items: 0 });
+  render(<SummaryPanel meetingId="m1" transcript={transcript} player={null} aiStatus={aiStatus} />);
+  expect((await screen.findByText("Overview text")).tagName).toBe("STRONG");
+  expect(screen.getByText("First").tagName).toBe("STRONG");
+  expect(screen.getByText("code").tagName).toBe("CODE");
+  const actionList = screen.getByText("Draft").closest("ol");
+  expect(actionList?.querySelectorAll("li")).toHaveLength(2);
+  expect(actionList?.querySelectorAll("li")[1].querySelector("button")).toBeTruthy();
+  expect(screen.getAllByRole("button", { name: /Play from 00:01/ })).toHaveLength(4);
+});
 it("generates locally without a disclosure", async () => {
   render(<SummaryPanel meetingId="m1" transcript={transcript} player={null} aiStatus={aiStatus} />);
   fireEvent.click(await screen.findByRole("button", { name: "Generate Summary" }));

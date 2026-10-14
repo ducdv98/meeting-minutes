@@ -3,6 +3,7 @@ import { PROVIDER_NAMES, type AiStatus } from "./ai";
 import { askMeeting, askSendPlan, meetingAsks, onAskDelta, onAsksChanged, retryAsk, stopAsk, type AskEntry, type AskView } from "./ask";
 import CitationLink from "./CitationLink";
 import CloudDisclosure from "./CloudDisclosure";
+import Markdown from "./markdown";
 import type { Transcript } from "./processing";
 import type { SendPlan } from "./summary";
 import type { TimelinePlayer } from "./timeline";
@@ -72,13 +73,13 @@ export default function AskPanel({ meetingId, transcript, player, aiStatus, onCi
         <p className="m-0 max-w-[85%] justify-self-end rounded-md bg-panel px-3 py-2 text-base leading-[21px]">{entry.question}</p>
         <div className="grid gap-1.5 text-base leading-[23px]">
           {state(entry)}
-          {entry.answer && <p className={`m-0 ${entry.state === "insufficient_evidence" ? "rounded-md border border-dashed border-line-strong px-3 py-2.5 text-sm text-ink-muted" : entry.state === "off_topic" ? "text-sm text-ink-muted" : ""}`}>{entry.answer} {entry.citations.map((citation) => <CitationLink key={citation.segment_id} citation={citation} player={player} segmentText={entry.revision === transcript?.revision ? transcript?.segments.find((segment) => segment.id === citation.segment_id)?.text : "earlier Revision"} onPlay={onCitationPlay} />)}</p>}
+          {entry.answer && <div className={entry.state === "insufficient_evidence" ? "rounded-md border border-dashed border-line-strong px-3 py-2.5 text-sm text-ink-muted" : entry.state === "off_topic" ? "text-sm text-ink-muted" : ""}><Markdown text={entry.answer} trailing={entry.citations.map((citation) => <CitationLink key={citation.segment_id} citation={citation} player={player} segmentText={entry.revision === transcript?.revision ? transcript?.segments.find((segment) => segment.id === citation.segment_id)?.text : "earlier Revision"} onPlay={onCitationPlay} />)} /></div>}
           {transcript && entry.revision !== transcript.revision && <p className="m-0 text-xs text-ink-muted">Asked about transcript revision {entry.revision}</p>}
           {entry.error && <p role={view.asks.at(-1)?.id === entry.id ? "alert" : undefined} className="m-0 text-sm text-warn">{entry.error}</p>}
           {view.retryable_id === entry.id && aiStatus?.configured && <Button variant="ghost" className="justify-self-start" disabled={busy || !!view.active} onClick={() => void start(entry.question, true)}><RotateCcw size={16} strokeWidth={1.5} />Retry</Button>}
         </div>
       </li>)}</ol>
-      {view.active && <div className="mt-5 grid gap-2"><p aria-live="polite" className="m-0 text-base leading-[23px]">{view.active.partial || "Answering…"}</p><Button variant="ghost" className="justify-self-start" onClick={() => void stopAsk(meetingId).catch((reason) => setError(String(reason)))}><Square size={16} strokeWidth={1.5} />Stop</Button></div>}
+      {view.active && <div className="mt-5 grid gap-2"><div aria-live="polite" className="text-base leading-[23px]"><Markdown text={view.active.partial || "Answering…"} /></div><Button variant="ghost" className="justify-self-start" onClick={() => void stopAsk(meetingId).catch((reason) => setError(String(reason)))}><Square size={16} strokeWidth={1.5} />Stop</Button></div>}
     </div>
     {aiStatus?.configured && <form onSubmit={submit} className="border-t border-line px-4 pb-4 pt-3"><div className="flex items-end gap-2 rounded-md border border-line-strong bg-raised py-1.5 pl-3 pr-1.5 focus-within:border-accent">
       <Textarea rows={1} aria-label="Question" placeholder="Ask about this Meeting" className="min-h-8 flex-1 resize-none border-0 bg-transparent px-0 py-[5px] text-base shadow-none focus:shadow-none" value={question} onChange={(event) => setQuestion(event.target.value)} onKeyDown={keyDown} disabled={!transcriptLoaded || !transcript || !!view.active || busy} />

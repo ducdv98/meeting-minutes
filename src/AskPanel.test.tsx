@@ -38,9 +38,11 @@ it("distinguishes answered, insufficient, incomplete, and off-topic Answers", as
   render(<AskPanel meetingId="m1" transcript={transcript} player={null} aiStatus={aiStatus} />);
   expect(await screen.findByText("Answered")).toBeTruthy();
   expect(screen.getByText("The transcript of this Meeting does not cover this.")).toBeTruthy();
+  expect(screen.getByText("The transcript of this Meeting does not cover this.").closest(".border-dashed")).toBeTruthy();
   expect(screen.getByText("Incomplete")).toBeTruthy();
   expect(screen.getByText("Off-topic")).toBeTruthy();
   expect(screen.getByText("Ask something about this Meeting.")).toBeTruthy();
+  expect(screen.getByText("Ask something about this Meeting.").closest(".text-ink-muted")).toBeTruthy();
   expect(screen.getByText(/Answers come from this Meeting only, using Ollama on this PC/)).toBeTruthy();
 });
 it("shows streaming text and Stop", async () => {
@@ -52,6 +54,23 @@ it("shows streaming text and Stop", async () => {
   expect(onAskDelta).toHaveBeenCalled(); expect(onAsksChanged).toHaveBeenCalled();
   await act(async () => { vi.mocked(onAskDelta).mock.calls[0][0]({ meeting_id: "m1", ask_id: "a0001", text: "The plan is approved" }); });
   expect(screen.getByText("The plan is approved")).toBeTruthy();
+});
+it("renders numbered Answers with Citations after the final item", async () => {
+  vi.mocked(meetingAsks).mockResolvedValue({ asks: [{ id: "a1", question: "What next?", asked_at: "now", revision: 2, provider: "ollama", model: "llama", state: "answered", answer: "1. **Find information…** 2. **Clarify…**", citations: [{ segment_id: "s00001", start_ms: 1000, end_ms: 2500 }], invalid_citations: [], error: null }], active: null, retryable_id: null });
+  render(<AskPanel meetingId="m1" transcript={transcript} player={null} aiStatus={aiStatus} />);
+  const list = (await screen.findByText("Find information…")).closest("ol");
+  expect(list?.querySelectorAll("li")).toHaveLength(2);
+  expect(list?.querySelectorAll("strong")).toHaveLength(2);
+  expect(list?.querySelectorAll("li")[0].querySelector("button")).toBeNull();
+  expect(list?.querySelectorAll("li")[1].querySelector("button")).toBeTruthy();
+});
+it("renders streaming Markdown after an unclosed bold marker is completed", async () => {
+  vi.mocked(meetingAsks).mockResolvedValue({ asks: [], active: { ask_id: "a1", partial: "The **decision" }, retryable_id: null });
+  render(<AskPanel meetingId="m1" transcript={transcript} player={null} aiStatus={aiStatus} />);
+  expect(await screen.findByText("The **decision")).toBeTruthy();
+  await act(async () => { vi.mocked(onAskDelta).mock.calls[0][0]({ meeting_id: "m1", ask_id: "a1", text: "The **decision**" }); });
+  expect(screen.getByText("decision").tagName).toBe("STRONG");
+  expect(screen.queryByText(/\*\*/)).toBeNull();
 });
 it("submits a local Ask without disclosure", async () => {
   render(<AskPanel meetingId="m1" transcript={transcript} player={null} aiStatus={aiStatus} />);
