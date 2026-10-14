@@ -11,7 +11,7 @@ afterEach(() => { cleanup(); vi.resetAllMocks(); });
 const settings: Settings = { recording_notice_acknowledged: true, cloud_notice_acknowledged: true, auto_process: true, model: "small", vocabulary: [], language: null, your_name: null, ai: { provider: null, ollama_model: null, openai_model: null, anthropic_model: null, gemini_model: null } };
 
 function renderTab() {
-  return render(<SpeechToTextTab settings={settings} setSettings={vi.fn()} save={vi.fn()} installed={[]} vocabulary="" setVocabulary={vi.fn()} saveVocabulary={vi.fn()} providerStatus={null} setProviderStatus={vi.fn()} />);
+  return render(<SpeechToTextTab settings={settings} save={vi.fn()} installed={[]} vocabulary="" setVocabulary={vi.fn()} saveVocabulary={vi.fn()} providerStatus={null} onManageKeys={vi.fn()} />);
 }
 
 it("shows the privacy statement before Connect, then connects after the invite link opens", async () => {
