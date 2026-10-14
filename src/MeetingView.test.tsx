@@ -521,3 +521,11 @@ it("shows Loading, not an empty Transcript, while the Transcript is still loadin
   await act(async () => { pending.resolve(null); });
   expect(await screen.findByText("No Transcript yet")).toBeTruthy();
 });
+
+it("shows the processing label once, also after the loading delay", async () => {
+  vi.mocked(processingStatus).mockResolvedValue({ jobs: [{ meeting_id: "old", model: null, stage: "queued", progress: 0, error: null }] });
+  render(<MeetingView id="old" onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
+  await screen.findByText("Waiting to transcribe");
+  await act(() => new Promise((resolve) => setTimeout(resolve, 1100)));
+  expect(screen.getAllByText("Waiting to transcribe")).toHaveLength(1);
+});

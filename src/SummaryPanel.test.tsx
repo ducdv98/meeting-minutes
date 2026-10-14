@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import SummaryPanel from "./SummaryPanel";
 import { cancelSummary, dismissSummary, generateSummary, meetingSummary, onSummaryStatus, summaryParticipantsChanged, summarySendPlan, summaryStatus } from "./summary";
@@ -64,6 +64,13 @@ it("shows progress and Stop for a running Summary", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Stop" }));
   await waitFor(() => expect(cancelSummary).toHaveBeenCalledWith("m1"));
   expect(onSummaryStatus).toHaveBeenCalled();
+});
+it("shows the running Summary's progress label once, also after the loading delay", async () => {
+  vi.mocked(summaryStatus).mockResolvedValue({ jobs: [{ meeting_id: "m1", state: "running", done: 1, total: 3, error: null }] });
+  render(<SummaryPanel meetingId="m1" transcript={transcript} player={null} aiStatus={aiStatus} />);
+  await screen.findByText("Summarising… (1/3)");
+  await act(() => new Promise((resolve) => setTimeout(resolve, 1100)));
+  expect(screen.getAllByText("Summarising… (1/3)")).toHaveLength(1);
 });
 it("shows a failed Summary and lets the user dismiss it", async () => {
   vi.mocked(summaryStatus).mockResolvedValue({ jobs: [{ meeting_id: "m1", state: "failed", done: 0, total: 1, error: "Ollama is unavailable" }] });

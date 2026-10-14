@@ -9,7 +9,7 @@ import { cancelSummary, dismissSummary, generateSummary, meetingSummary, onSumma
 import type { TimelinePlayer } from "./timeline";
 import { LockKeyhole, RefreshCw } from "lucide-react";
 import { Button } from "./components/ui/Button";
-import { Loading } from "./components/states/Loading";
+import { Loading, LoadingRows } from "./components/states/Loading";
 import { EmptyState } from "./components/states/EmptyState";
 import { ErrorState } from "./components/states/ErrorState";
 import type { Citation } from "./summary";
@@ -58,7 +58,7 @@ export default function SummaryPanel({ meetingId, transcript, player, aiStatus, 
     {!loaded && <Loading message="Loading Summary…" rows={3} />}
     {error && <ErrorState title="Couldn't load the Summary" guidance={error} />}
     {loaded && !error && transcriptLoaded && !transcript && !summary && <EmptyState title="No Summary yet" description="Transcribe the Meeting to get a Summary." />}
-    {job?.state === "running" && <div><Loading message={`Summarising… (${job.done}/${job.total})`} rows={2} /><p className="text-sm text-ink-muted">Summarising… ({job.done}/{job.total})</p><Button variant="ghost" onClick={() => void stop()}>Stop</Button></div>}
+    {job?.state === "running" && <div><LoadingRows rows={2} /><p className="text-sm text-ink-muted">Summarising… ({job.done}/{job.total})</p><Button variant="ghost" onClick={() => void stop()}>Stop</Button></div>}
     {job?.state === "failed" && <><ErrorState title="Couldn't make the Summary" guidance={job.error ?? "Try again."} onRetry={() => void begin()} /><Button variant="ghost" onClick={() => void dismiss()}>Dismiss</Button></>}
     {summary && <>{section("Overview", summary.overview, true)}{section("Key points", summary.key_points)}{section("Decisions", summary.decisions)}
       <section className="mb-5 grid gap-2"><h3 className="m-0 text-xs font-medium text-ink-faint">Action items</h3>{summary.action_items.length ? <ul className="m-0 grid list-none gap-2 p-0">{summary.action_items.map((item, index) => <li key={index} className="grid grid-cols-[18px_1fr] items-start gap-2 text-base leading-[23px]"><span aria-hidden="true" className="mt-1 size-4 rounded-[4px] border-[1.5px] border-line-strong" /><div>{item.text} {item.citations.map(cite)}{(item.owner || item.due) && <div className="text-xs text-ink-muted">{[item.owner, item.due].filter(Boolean).join(" · ")}</div>}</div></li>)}</ul> : <p className="m-0 text-sm text-ink-muted">None</p>}</section>
