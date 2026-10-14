@@ -387,18 +387,10 @@ it("guides setup when no Language model is configured", async () => {
 });
 it("opens the Language models tab from setup guidance", async () => {
   vi.mocked(meetingTranscript).mockResolvedValue({ schema_version: 1, revision: 1, created_at: "now", model: ["small"], language: "en", language_detected: false, duration_ms: 1000, segments: [] });
-  const selected = vi.fn();
-  const tab = document.createElement("button");
-  const onOpenSettings = vi.fn(() => {
-    tab.setAttribute("role", "tab");
-    tab.textContent = "Language models";
-    tab.onmousedown = selected;
-    window.setTimeout(() => document.body.append(tab), 10);
-  });
+  const onOpenSettings = vi.fn();
   render(<MeetingView id="old" onBack={() => {}} onRenamed={() => {}} onOpenSettings={onOpenSettings} />);
   fireEvent.click(await screen.findByRole("button", { name: "Set one up →" }));
-  await waitFor(() => expect(selected).toHaveBeenCalledOnce());
-  tab.remove();
+  expect(onOpenSettings).toHaveBeenCalledWith("language-models");
 });
 it("keeps saved Summary and Ask history visible without a configured provider", async () => {
   vi.mocked(meetingSummary).mockResolvedValue({ schema_version: 1, revision: 1, created_at: "now", provider: "ollama", model: "llama", overview: [{ text: "Budget approved", citations: [{ segment_id: "s00001", start_ms: 1000, end_ms: 2000 }] }], key_points: [], decisions: [], action_items: [], dropped_items: 0 });

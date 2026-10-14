@@ -19,7 +19,7 @@ import LibraryTable from "./LibraryTable";
 import ConfirmDelete from "./ConfirmDelete";
 import RecordingBar from "./RecordingBar";
 import RecordingScreen from "./RecordingScreen";
-import SettingsView from "./SettingsView";
+import SettingsView, { type SettingsTabId } from "./SettingsView";
 import HelpView from "./HelpView";
 import { onLibraryChanged, onRecordingStatus, recordHotkey, recordingStatus, type RecorderStatus } from "./recording";
 import { cancelProcessing, onProcessingStatus, processingStageLabel, processingStatus, type ProcessingJob } from "./processing";
@@ -90,6 +90,7 @@ export default function App() {
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<{ id: string; title: string; saving: boolean; error: string | null } | null>(null);
   const [panel, setPanel] = useState<"settings" | "help" | null>(null);
+  const [settingsTab, setSettingsTab] = useState<SettingsTabId | undefined>();
   const [showSearch, setShowSearch] = useState(false);
   const [query, setQuery] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
@@ -237,7 +238,7 @@ export default function App() {
     : panel === "help" ? <PageHeader title="Help" context="App information, shortcuts and diagnostics." />
     : showSearch ? <PageHeader title="Search" context="Find a Segment across Transcripts in your Library." />
     : <PageHeader title="Library" context="Your Meetings, kept on this PC." actions={<Button variant="secondary" onClick={() => void pickFiles()}><Import size={16} strokeWidth={1.5} />Import a file</Button>} />;
-  const view = panel === "settings" ? <><SettingsView /></> : panel === "help" ? <HelpView /> : showSearch ? <LibrarySearch query={query} onQueryChange={setQuery} onOpen={openHit} /> : selectedId ? <MeetingView key={selectedId} id={selectedId} recordingMeetingId={busyRecording ? recorder?.meeting_id : null} openAt={openAt} onOpened={() => setOpenAt(null)} onDeleted={() => { setSelectedId(null); setOpenAt(null); setScan((value) => value + 1); }} onRenamed={() => setScan((value) => value + 1)} onOpenSettings={() => setPanel("settings")} onBack={() => { setSelectedId(null); setOpenAt(null); setScan((value) => value + 1); }} notifications={notifications} /> : showRecording && busyRecording && recorder ? <RecordingScreen status={recorder} title={meetings?.find((meeting) => meeting.id === recorder.meeting_id)?.title} onRenamed={() => setScan((value) => value + 1)} /> : <section className="flex min-h-0 flex-1 flex-col" aria-label="Library home">
+  const view = panel === "settings" ? <SettingsView initialTab={settingsTab} /> : panel === "help" ? <HelpView /> : showSearch ? <LibrarySearch query={query} onQueryChange={setQuery} onOpen={openHit} /> : selectedId ? <MeetingView key={selectedId} id={selectedId} recordingMeetingId={busyRecording ? recorder?.meeting_id : null} openAt={openAt} onOpened={() => setOpenAt(null)} onDeleted={() => { setSelectedId(null); setOpenAt(null); setScan((value) => value + 1); }} onRenamed={() => setScan((value) => value + 1)} onOpenSettings={(tab) => { setSettingsTab(tab); setPanel("settings"); }} onBack={() => { setSelectedId(null); setOpenAt(null); setScan((value) => value + 1); }} notifications={notifications} /> : showRecording && busyRecording && recorder ? <RecordingScreen status={recorder} title={meetings?.find((meeting) => meeting.id === recorder.meeting_id)?.title} onRenamed={() => setScan((value) => value + 1)} /> : <section className="flex min-h-0 flex-1 flex-col" aria-label="Library home">
     {failed ? <div className="grid flex-1 place-items-center p-10"><ErrorState title="Couldn't load the Library" guidance="Try rescanning the Library." onRetry={() => setScan((value) => value + 1)} /></div> : meetings === null ? <div className="grid flex-1 place-items-center p-10"><Loading message="Loading the Library…" /></div> : meetings.length === 0 ? <div className="grid flex-1 place-items-center p-10"><div className="grid justify-items-center gap-3"><EmptyState title="Your Library is empty" description={<>Record a call from any app, or import an audio file. Meetings are saved to <span className="text-ink">Documents\Meeting Minutes</span>.</>} action={<><Button variant="recordSoft" disabled={!recorder || busyRecording} onClick={requestRecording}><span aria-hidden="true" className="size-2 rounded-full bg-current shadow-[0_0_0_3px_color-mix(in_srgb,currentColor_25%,transparent)]" />Record</Button><Button variant="secondary" onClick={() => void pickFiles()}><Import size={16} strokeWidth={1.5} />Import a file</Button></>} /><p className="m-0 text-center text-xs text-ink-muted">Or press <KeyCombo keys={recordHotkey} className="mx-0.5 align-middle" /> from any app.</p></div></div> : <LibraryTable meetings={meetings} details={details} jobs={jobs} recordingMeetingId={busyRecording ? recorder?.meeting_id ?? null : null} onOpen={openMeeting} onRename={(meeting) => setRenaming({ id: meeting.id, title: meeting.title, saving: false, error: null })} onDelete={(meeting) => { setDeleteError(null); setDeleting(meeting); }} onCancelProcessing={(id) => void cancelJob(id)} />}
   </section>;
 
@@ -294,7 +295,7 @@ export default function App() {
         })}
       </nav>
       <div className="grid gap-0.5 border-t border-line p-2">
-        <Button variant="ghost" className="w-full justify-start gap-2.5 px-2" aria-current={panel === "settings" ? "page" : undefined} onClick={() => { setSelectedId(null); setShowSearch(false); setPanel("settings"); }}><Settings size={16} strokeWidth={1.5} />Settings</Button>
+        <Button variant="ghost" className="w-full justify-start gap-2.5 px-2" aria-current={panel === "settings" ? "page" : undefined} onClick={() => { setSelectedId(null); setShowSearch(false); setSettingsTab(undefined); setPanel("settings"); }}><Settings size={16} strokeWidth={1.5} />Settings</Button>
         <Button variant="ghost" className="w-full justify-start gap-2.5 px-2" aria-current={panel === "help" ? "page" : undefined} onClick={() => { setSelectedId(null); setShowSearch(false); setPanel("help"); }}><CircleHelp size={16} strokeWidth={1.5} />Help</Button>
         <DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" className="w-full justify-start gap-2.5 px-2"><Ellipsis size={16} strokeWidth={1.5} />More</Button></DropdownMenuTrigger><DropdownMenuContent align="start"><DropdownMenuItem onSelect={() => setScan((value) => value + 1)}><RefreshCw size={16} strokeWidth={1.5} />Rescan Library</DropdownMenuItem></DropdownMenuContent></DropdownMenu>
       </div>

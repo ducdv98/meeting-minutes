@@ -23,13 +23,14 @@ import { EmptyState } from "./components/states/EmptyState";
 import { ErrorState } from "./components/states/ErrorState";
 import { Loading, LoadingRows } from "./components/states/Loading";
 import { PageHeader } from "./components/PageHeader";
+import type { SettingsTabId } from "./SettingsView";
 import type { Citation } from "./summary";
 
 interface Props {
   id: string;
   onBack(): void;
   onRenamed(): void;
-  onOpenSettings(): void;
+  onOpenSettings(tab?: SettingsTabId): void;
   openAt?: Pick<SearchHit, "segment_id" | "revision" | "start_ms" | "end_ms"> | null;
   onOpened?(): void;
   onDeleted?(): void;
@@ -56,7 +57,6 @@ function meetingDateTime(value: string): string {
 }
 
 const draftKey = (segment: DraftSegment) => `${segment.start_ms}:${segment.end_ms}:${segment.speaker}:${segment.text}`;
-let pendingLanguageTabObserver: MutationObserver | null = null;
 
 /** Adds Draft Segments in time order, skipping ones already shown (the stored Draft and live events overlap). */
 function mergeDraft(current: DraftSegment[], incoming: DraftSegment[]): DraftSegment[] {
@@ -299,21 +299,7 @@ export default function MeetingView({ id, onBack, onRenamed, onOpenSettings, ope
   // Every Segment of a Voice note belongs to the user, so only Me is named.
   const speakerLabels: Speaker[] = !transcript ? [] : isVoiceNote ? ["me"] : ["me", "remote", "unknown"].filter((label): label is Speaker => transcript.segments.some((segment) => segment.speaker === label));
   const meetingParticipants = transcript && detail ? participantList(transcript, detail.participants, detail.segment_participants, yourName, isVoiceNote) : [];
-  function openLanguageModels() {
-    pendingLanguageTabObserver?.disconnect();
-    pendingLanguageTabObserver = null;
-    onOpenSettings();
-    const select = () => {
-      const tab = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="tab"]')).find((item) => item.textContent === "Language models");
-      if (tab) tab.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0, ctrlKey: false }));
-      return !!tab;
-    };
-    if (select()) return;
-    const observer = new MutationObserver(() => { if (select()) { observer.disconnect(); if (pendingLanguageTabObserver === observer) pendingLanguageTabObserver = null; } });
-    observer.observe(document.body, { childList: true, subtree: true });
-    pendingLanguageTabObserver = observer;
-    window.setTimeout(() => { observer.disconnect(); if (pendingLanguageTabObserver === observer) pendingLanguageTabObserver = null; }, 10_000);
-  }
+  function openLanguageModels() { onOpenSettings("language-models"); }
   return <PlayerContext.Provider value={player}><section className="flex min-h-0 min-w-0 flex-1 flex-col" aria-label="Meeting">
     <span className="sr-only" aria-live="polite" aria-atomic="true">{stageAnnouncement}</span>
     <PageHeader leading={<Button variant="ghost" size="icon" aria-label="Back to Library" title="Back to Library" disabled={saving} onClick={onBack}><ChevronLeft size={16} strokeWidth={1.5} /></Button>}

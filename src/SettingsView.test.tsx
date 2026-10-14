@@ -5,6 +5,7 @@ import type { AiSettings } from "./ai";
 import { acknowledgeCloudNotice, getSettings, installedModels, updateSettings, type Settings } from "./processing";
 import { aiStatus, deleteApiKey, listAiModels, managedConnect, managedDisconnect, managedStatus, saveApiKey, testAiProvider, testCloudApiKey, updateAiSettings, type AiStatus } from "./ai";
 import { openLink } from "./app-info";
+import { PRIVACY_INTRO } from "./privacy-text";
 
 vi.mock("./processing", async (importOriginal) => ({ ...(await importOriginal<typeof import("./processing")>()), getSettings: vi.fn(), updateSettings: vi.fn(), installedModels: vi.fn(), acknowledgeCloudNotice: vi.fn() }));
 vi.mock("./ai", async (importOriginal) => ({ ...(await importOriginal<typeof import("./ai")>()), aiStatus: vi.fn(), listAiModels: vi.fn(), managedStatus: vi.fn(), managedConnect: vi.fn(), managedDisconnect: vi.fn(), saveApiKey: vi.fn(), deleteApiKey: vi.fn(), updateAiSettings: vi.fn(), testAiProvider: vi.fn(), testCloudApiKey: vi.fn() }));
@@ -26,7 +27,7 @@ it("shows five tabs, remembers the last one, and lets an opening link choose ano
   expect((await screen.findByRole("tab", { name: "General" })).getAttribute("aria-selected")).toBe("true");
   expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["General", "Speech-to-text", "Language models", "Keys", "Privacy"]);
   await openTab("Privacy");
-  expect(screen.getByText("Privacy settings will appear here.")).toBeTruthy();
+  expect(screen.getByText(PRIVACY_INTRO)).toBeTruthy();
   first.unmount();
   const second = render(<SettingsView />);
   expect((await screen.findByRole("tab", { name: "Privacy" })).getAttribute("aria-selected")).toBe("true");
