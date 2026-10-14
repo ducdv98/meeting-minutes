@@ -377,18 +377,33 @@ it("labels an imported Meeting below its date", async () => {
   expect(await screen.findByText("Imported audio")).toBeTruthy();
 });
 
-it("guides setup when no AI provider is configured", async () => {
+it("guides setup when no Language model is configured", async () => {
+  vi.mocked(meetingTranscript).mockResolvedValue({ schema_version: 1, revision: 1, created_at: "now", model: ["small"], language: "en", language_detected: false, duration_ms: 1000, segments: [] });
   const onOpenSettings = vi.fn();
   render(<MeetingView id="old" onBack={() => {}} onRenamed={() => {}} onOpenSettings={onOpenSettings} />);
-  expect(await screen.findByRole("heading", { name: "Summary and Ask" })).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "Open AI settings" }));
+  expect(await screen.findByText(/No Language model is set up for Summary/)).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Set one up →" }));
   expect(onOpenSettings).toHaveBeenCalledOnce();
+});
+it("opens the Language models tab from setup guidance", async () => {
+  vi.mocked(meetingTranscript).mockResolvedValue({ schema_version: 1, revision: 1, created_at: "now", model: ["small"], language: "en", language_detected: false, duration_ms: 1000, segments: [] });
+  const selected = vi.fn();
+  const tab = document.createElement("button");
+  const onOpenSettings = vi.fn(() => {
+    tab.setAttribute("role", "tab");
+    tab.textContent = "Language models";
+    tab.onmousedown = selected;
+    window.setTimeout(() => document.body.append(tab), 10);
+  });
+  render(<MeetingView id="old" onBack={() => {}} onRenamed={() => {}} onOpenSettings={onOpenSettings} />);
+  fireEvent.click(await screen.findByRole("button", { name: "Set one up →" }));
+  await waitFor(() => expect(selected).toHaveBeenCalledOnce());
+  tab.remove();
 });
 it("keeps saved Summary and Ask history visible without a configured provider", async () => {
   vi.mocked(meetingSummary).mockResolvedValue({ schema_version: 1, revision: 1, created_at: "now", provider: "ollama", model: "llama", overview: [{ text: "Budget approved", citations: [{ segment_id: "s00001", start_ms: 1000, end_ms: 2000 }] }], key_points: [], decisions: [], action_items: [], dropped_items: 0 });
   vi.mocked(meetingAsks).mockResolvedValue({ asks: [{ id: "a0001", question: "What happened?", asked_at: "now", revision: 1, provider: "ollama", model: "llama", state: "answered", answer: "Budget approved", citations: [], invalid_citations: [], error: null }], active: null, retryable_id: null });
   render(<MeetingView id="old" onBack={() => {}} onRenamed={() => {}} onOpenSettings={() => {}} />);
-  expect(await screen.findByRole("heading", { name: "Summary and Ask" })).toBeTruthy();
   expect(await screen.findByText("Budget approved")).toBeTruthy();
   fireEvent.click(screen.getByRole("tab", { name: "Ask" }));
   expect(await screen.findByText("Budget approved")).toBeTruthy();

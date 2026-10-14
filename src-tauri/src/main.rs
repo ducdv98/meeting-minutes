@@ -1061,6 +1061,24 @@ fn configured_ai(app: &AppHandle, use_for: &str) -> Result<ai::HttpProvider, Str
         .map_err(|error| error.to_string())
 }
 
+fn selected_ai(
+    app: &AppHandle,
+    use_for: &str,
+    override_model: Option<&LanguageModel>,
+) -> Result<ai::HttpProvider, String> {
+    let Some(model) = override_model else {
+        return configured_ai(app, use_for);
+    };
+    let settings = Settings::load(&app.state::<SettingsPath>().0);
+    if !settings.language_models.models.contains(model) {
+        return Err("This Language model is not in Settings".into());
+    }
+    let secrets = app.state::<Secrets>();
+    let http = app.state::<Http>();
+    ai::configured_language_provider(model, secrets.0.as_ref(), http.0.clone())
+        .map_err(|error| error.to_string())
+}
+
 fn meeting_context(
     app: &AppHandle,
     id: &str,
@@ -1157,8 +1175,12 @@ fn summary_status(app: AppHandle) -> Result<SummaryStatus, String> {
     summary_snapshot(&app)
 }
 #[tauri::command]
-fn summary_send_plan(app: AppHandle, meeting_id: String) -> Result<SendPlan, String> {
-    let provider = configured_ai(&app, "summary")?;
+fn summary_send_plan(
+    app: AppHandle,
+    meeting_id: String,
+    model: Option<LanguageModel>,
+) -> Result<SendPlan, String> {
+    let provider = selected_ai(&app, "summary", model.as_ref())?;
     let (_, transcript, participants, _) = meeting_context(&app, &meeting_id)?;
     let kind = provider.kind();
     let consented = !kind.is_cloud() || cloud_consented(&app, &meeting_id, kind)?;
@@ -1285,13 +1307,14 @@ fn generate_summary(
     app: AppHandle,
     meeting_id: String,
     consent: bool,
+    model: Option<LanguageModel>,
 ) -> Result<SummaryStatus, String> {
     meeting_busy(&app, &meeting_id)?;
     let (_, transcript, _, _) = meeting_context(&app, &meeting_id)?;
     if transcript.segments.is_empty() {
         return Err("The Transcript has no Segments".into());
     }
-    let provider = configured_ai(&app, "summary")?;
+    let provider = selected_ai(&app, "summary", model.as_ref())?;
     require_cloud_consent(&app, &meeting_id, provider.kind(), consent)?;
     start_summary(&app, meeting_id, provider)?;
     summary_snapshot(&app)
@@ -1352,8 +1375,13 @@ fn meeting_asks(app: AppHandle, meeting_id: String) -> Result<AskView, String> {
 }
 
 #[tauri::command]
-fn ask_send_plan(app: AppHandle, meeting_id: String, question: String) -> Result<SendPlan, String> {
-    let provider = configured_ai(&app, "ask")?;
+fn ask_send_plan(
+    app: AppHandle,
+    meeting_id: String,
+    question: String,
+    model: Option<LanguageModel>,
+) -> Result<SendPlan, String> {
+    let provider = selected_ai(&app, "ask", model.as_ref())?;
     let (_, transcript, participants, dir) = meeting_context(&app, &meeting_id)?;
     let kind = provider.kind();
     let consented = !kind.is_cloud() || cloud_consented(&app, &meeting_id, kind)?;
@@ -1383,12 +1411,13 @@ fn begin_ask(
     id: String,
     question: Option<String>,
     consent: bool,
+    model: Option<LanguageModel>,
 ) -> Result<AskView, String> {
     let _update_gate = lock_update_start_gate(app)?;
     ensure_update_not_active(app)?;
     meeting_busy(app, &id)?;
     let (_, transcript, participants, dir) = meeting_context(app, &id)?;
-    let provider = configured_ai(app, "ask")?;
+    let provider = selected_ai(app, "ask", model.as_ref())?;
     let kind = provider.kind();
     // A retry uses the saved question. A new Ask uses the text supplied by the click.
     let cancel = Arc::new(AtomicBool::new(false));
@@ -1504,12 +1533,18 @@ fn ask_meeting(
     meeting_id: String,
     question: String,
     consent: bool,
+    model: Option<LanguageModel>,
 ) -> Result<AskView, String> {
-    begin_ask(&app, meeting_id, Some(question), consent)
+    begin_ask(&app, meeting_id, Some(question), consent, model)
 }
 #[tauri::command]
-fn retry_ask(app: AppHandle, meeting_id: String, consent: bool) -> Result<AskView, String> {
-    begin_ask(&app, meeting_id, None, consent)
+fn retry_ask(
+    app: AppHandle,
+    meeting_id: String,
+    consent: bool,
+    model: Option<LanguageModel>,
+) -> Result<AskView, String> {
+    begin_ask(&app, meeting_id, None, consent, model)
 }
 #[tauri::command]
 fn stop_ask(app: AppHandle, meeting_id: String) -> Result<(), String> {

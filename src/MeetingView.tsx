@@ -9,8 +9,7 @@ import { cancelProcessing, dismissProcessing, enqueueTranscription, getSettings,
 import TranscriptView from "./TranscriptView";
 import DraftView from "./DraftView";
 import { editSegment, labelParticipantName, participantList, speakerName } from "./transcript";
-import { aiStatus, type AiStatus } from "./ai";
-import AiSetupGuidance from "./AiSetupGuidance";
+import { aiStatus, type AiStatus, type LanguageModelSettings } from "./ai";
 import ConfirmDelete from "./ConfirmDelete";
 import SummaryPanel from "./SummaryPanel";
 import AskPanel from "./AskPanel";
@@ -57,6 +56,7 @@ function meetingDateTime(value: string): string {
 }
 
 const draftKey = (segment: DraftSegment) => `${segment.start_ms}:${segment.end_ms}:${segment.speaker}:${segment.text}`;
+let pendingLanguageTabObserver: MutationObserver | null = null;
 
 /** Adds Draft Segments in time order, skipping ones already shown (the stored Draft and live events overlap). */
 function mergeDraft(current: DraftSegment[], incoming: DraftSegment[]): DraftSegment[] {
@@ -67,6 +67,7 @@ function mergeDraft(current: DraftSegment[], incoming: DraftSegment[]): DraftSeg
 
 export default function MeetingView({ id, onBack, onRenamed, onOpenSettings, openAt, onOpened, onDeleted, recordingMeetingId, notifications }: Props) {
   const [providerStatus, setProviderStatus] = useState<AiStatus | null>(null);
+  const [languageModels, setLanguageModels] = useState<LanguageModelSettings | undefined>();
   const [detail, setDetail] = useState<MeetingDetail | null>(null);
   const [yourName, setYourName] = useState<string | null>(null);
   const [suggestions, setSuggestions] = useState<string[]>([]);
@@ -120,7 +121,7 @@ export default function MeetingView({ id, onBack, onRenamed, onOpenSettings, ope
     draftScrollAnchor.current = null;
     opened.current = null;
     setError(null);
-    setDetail(null); setTranscript(null); setDraft([]); setTranscriptLoaded(false); setProviderStatus(null); setJob(null); setPlayer(null);
+    setDetail(null); setTranscript(null); setDraft([]); setTranscriptLoaded(false); setProviderStatus(null); setLanguageModels(undefined); setJob(null); setPlayer(null);
     setStaleSearchResult(false);
     setPositionMs(0);
     setHighlight(null);
@@ -138,7 +139,7 @@ export default function MeetingView({ id, onBack, onRenamed, onOpenSettings, ope
       if (jobRef.current?.stage === "transcribing") void transcriptDraft(id).then((stored) => { if (active && jobRef.current?.stage === "transcribing") setDraft((current) => mergeDraft(current, stored)); }, () => {});
     }, (reason) => { if (active) setError(String(reason)); });
     aiStatus().then((next) => { if (active) setProviderStatus(next); }, (reason) => { if (active) setError(String(reason)); });
-    getSettings().then((next) => { if (active) setYourName(next.your_name); }, (reason) => { if (active) setError(String(reason)); });
+    getSettings().then((next) => { if (active) { setYourName(next.your_name); setLanguageModels(next.language_models); } }, (reason) => { if (active) setError(String(reason)); });
     participantNames().then((next) => { if (active) setSuggestions(next); }, () => {});
     return () => { active = false; };
   }, [id]);
@@ -298,6 +299,21 @@ export default function MeetingView({ id, onBack, onRenamed, onOpenSettings, ope
   // Every Segment of a Voice note belongs to the user, so only Me is named.
   const speakerLabels: Speaker[] = !transcript ? [] : isVoiceNote ? ["me"] : ["me", "remote", "unknown"].filter((label): label is Speaker => transcript.segments.some((segment) => segment.speaker === label));
   const meetingParticipants = transcript && detail ? participantList(transcript, detail.participants, detail.segment_participants, yourName, isVoiceNote) : [];
+  function openLanguageModels() {
+    pendingLanguageTabObserver?.disconnect();
+    pendingLanguageTabObserver = null;
+    onOpenSettings();
+    const select = () => {
+      const tab = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="tab"]')).find((item) => item.textContent === "Language models");
+      if (tab) tab.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0, ctrlKey: false }));
+      return !!tab;
+    };
+    if (select()) return;
+    const observer = new MutationObserver(() => { if (select()) { observer.disconnect(); if (pendingLanguageTabObserver === observer) pendingLanguageTabObserver = null; } });
+    observer.observe(document.body, { childList: true, subtree: true });
+    pendingLanguageTabObserver = observer;
+    window.setTimeout(() => { observer.disconnect(); if (pendingLanguageTabObserver === observer) pendingLanguageTabObserver = null; }, 10_000);
+  }
   return <PlayerContext.Provider value={player}><section className="flex min-h-0 min-w-0 flex-1 flex-col" aria-label="Meeting">
     <span className="sr-only" aria-live="polite" aria-atomic="true">{stageAnnouncement}</span>
     <PageHeader leading={<Button variant="ghost" size="icon" aria-label="Back to Library" title="Back to Library" disabled={saving} onClick={onBack}><ChevronLeft size={16} strokeWidth={1.5} /></Button>}
@@ -345,8 +361,8 @@ export default function MeetingView({ id, onBack, onRenamed, onOpenSettings, ope
         <aside className="flex min-h-0 min-w-0 flex-col border-l border-line max-[680px]:border-l-0 max-[680px]:border-t" aria-label="Summary and Ask">
           {showingDraft ? <p className="p-5 text-sm text-ink-muted">Summary, Ask and Citations are available when the Transcript is ready.</p> : !providerStatus && <div className="px-5 py-4"><Loading message="Loading Summary and Ask…" /></div>}
           {!showingDraft && providerStatus && <Tabs defaultValue="summary" className="flex min-h-0 flex-1 flex-col"><TabsList className="shrink-0"><TabsTrigger value="summary">Summary</TabsTrigger><TabsTrigger value="ask">Ask</TabsTrigger></TabsList>
-            <TabsContent value="summary" className="min-h-0 flex-1 overflow-y-auto px-5 py-4">{!(providerStatus.summary_configured ?? providerStatus.configured) && <AiSetupGuidance onOpenSettings={onOpenSettings} />}<SummaryPanel meetingId={id} transcript={transcriptLoaded ? transcript : null} transcriptLoaded={transcriptLoaded} player={player} aiStatus={providerStatus} onCitationPlay={setHighlight} /></TabsContent>
-            <TabsContent value="ask" className="flex min-h-0 flex-1 flex-col"><AskPanel meetingId={id} transcript={transcriptLoaded ? transcript : null} transcriptLoaded={transcriptLoaded} player={player} aiStatus={providerStatus} onCitationPlay={setHighlight} />{!(providerStatus.ask_configured ?? providerStatus.configured) && <div className="px-5"><AiSetupGuidance onOpenSettings={onOpenSettings} /></div>}</TabsContent>
+            <TabsContent value="summary" className="min-h-0 flex-1 overflow-y-auto px-5 py-4"><SummaryPanel meetingId={id} transcript={transcriptLoaded ? transcript : null} transcriptLoaded={transcriptLoaded} player={player} aiStatus={providerStatus} languageModels={languageModels} onOpenSettings={openLanguageModels} onCitationPlay={setHighlight} /></TabsContent>
+            <TabsContent value="ask" className="flex min-h-0 flex-1 flex-col"><AskPanel meetingId={id} transcript={transcriptLoaded ? transcript : null} transcriptLoaded={transcriptLoaded} player={player} aiStatus={providerStatus} languageModels={languageModels} onOpenSettings={openLanguageModels} onCitationPlay={setHighlight} /></TabsContent>
           </Tabs>}
         </aside>
       </div>
