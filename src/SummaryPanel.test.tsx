@@ -3,12 +3,14 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import SummaryPanel from "./SummaryPanel";
 import { cancelSummary, dismissSummary, generateSummary, meetingSummary, onSummaryStatus, summaryParticipantsChanged, summarySendPlan, summaryStatus } from "./summary";
 import type { Transcript } from "./processing";
+import type { LanguageModelSettings } from "./ai";
 
 vi.mock("./summary", () => ({ meetingSummary: vi.fn(), summaryStatus: vi.fn(), summaryParticipantsChanged: vi.fn(), summarySendPlan: vi.fn(), generateSummary: vi.fn(), cancelSummary: vi.fn(), dismissSummary: vi.fn(), onSummaryStatus: vi.fn(() => Promise.resolve(() => {})) }));
 vi.mock("./recording", async (original) => ({ ...(await original<typeof import("./recording")>()), onLibraryChanged: vi.fn(() => Promise.resolve(() => {})) }));
 const transcript: Transcript = { schema_version: 1, revision: 2, created_at: "now", model: ["small"], language: "en", language_detected: false, duration_ms: 30000, segments: [{ id: "s00001", start_ms: 1000, end_ms: 2500, text: "Budget", speaker: "me" }] };
 const aiStatus = { provider: "ollama" as const, model: "llama", configured: true, has_openai_key: false, has_anthropic_key: false, has_groq_key: false, has_gemini_key: false };
 const citation = { segment_id: "s00001", start_ms: 1000, end_ms: 2500 };
+const languageModels: LanguageModelSettings = { models: [{ provider: "ollama", model: "llama" }, { provider: "openai", model: "gpt-4o" }], correction: null, summary: { provider: "ollama", model: "llama" }, ask: null, confirmed_correction_providers: [], legacy_correction_pending: false };
 beforeEach(() => { vi.mocked(meetingSummary).mockResolvedValue(null); vi.mocked(summaryParticipantsChanged).mockResolvedValue(false); vi.mocked(summaryStatus).mockResolvedValue({ jobs: [] }); vi.mocked(summarySendPlan).mockResolvedValue({ provider: "ollama", cloud: false, consented: true, disclosure: null }); vi.mocked(generateSummary).mockResolvedValue({ jobs: [] }); });
 
 it("offers regeneration after Participants change without starting automatically", async () => {
@@ -18,13 +20,13 @@ it("offers regeneration after Participants change without starting automatically
   expect(await screen.findByText("Participants changed: regenerate Summary?")).toBeTruthy();
   expect(generateSummary).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole("button", { name: "Regenerate" }));
-  await waitFor(() => expect(generateSummary).toHaveBeenCalledWith("m1", false));
+  await waitFor(() => expect(generateSummary).toHaveBeenCalledWith("m1", false, { provider: "ollama", model: "llama" }));
 });
 it("shows the cloud disclosure before regenerating for changed Participants", async () => {
   vi.mocked(meetingSummary).mockResolvedValue({ schema_version: 1, revision: 2, created_at: "now", provider: "ollama", model: "llama", overview: [], key_points: [], decisions: [], action_items: [], dropped_items: 0 });
   vi.mocked(summaryParticipantsChanged).mockResolvedValue(true);
   vi.mocked(summarySendPlan).mockResolvedValue({ provider: "openai", cloud: true, consented: false, disclosure: { provider: "openai", model: "gpt", endpoint: "https://example.com", system: "Summary instructions", messages: [{ role: "user", content: "Transcript" }], characters: 30 } });
-  render(<SummaryPanel meetingId="m1" transcript={transcript} player={null} aiStatus={{ ...aiStatus, provider: "openai" }} />);
+  render(<SummaryPanel meetingId="m1" transcript={transcript} player={null} aiStatus={{ ...aiStatus, provider: "openai", has_openai_key: true }} />);
   fireEvent.click(await screen.findByRole("button", { name: "Regenerate" }));
   expect(await screen.findByRole("dialog", { name: "Send to OpenAI?" })).toBeTruthy();
   expect(generateSummary).not.toHaveBeenCalled();
@@ -53,20 +55,20 @@ it("renders Markdown in every Summary section and keeps Citations after the text
 });
 it("generates locally without a disclosure", async () => {
   render(<SummaryPanel meetingId="m1" transcript={transcript} player={null} aiStatus={aiStatus} />);
-  fireEvent.click(await screen.findByRole("button", { name: "Generate Summary" }));
-  await waitFor(() => expect(generateSummary).toHaveBeenCalledWith("m1", false));
+  fireEvent.click(await screen.findByRole("button", { name: "Generate with llama" }));
+  await waitFor(() => expect(generateSummary).toHaveBeenCalledWith("m1", false, { provider: "ollama", model: "llama" }));
 });
 it("requires Send after showing cloud disclosure", async () => {
   vi.mocked(summarySendPlan).mockResolvedValue({ provider: "openai", cloud: true, consented: false, disclosure: { provider: "openai", model: "gpt", endpoint: "https://example.com", system: "Summary instructions", messages: [{ role: "user", content: "Transcript" }], characters: 30 } });
-  render(<SummaryPanel meetingId="m1" transcript={transcript} player={null} aiStatus={{ ...aiStatus, provider: "openai" }} />);
-  fireEvent.click(await screen.findByRole("button", { name: "Generate Summary with OpenAI" }));
+  render(<SummaryPanel meetingId="m1" transcript={transcript} player={null} aiStatus={{ ...aiStatus, provider: "openai", has_openai_key: true }} />);
+  fireEvent.click(await screen.findByRole("button", { name: "Generate with llama" }));
   expect(await screen.findByRole("dialog", { name: "Send to OpenAI?" })).toBeTruthy();
   expect(generateSummary).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
   expect(generateSummary).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole("button", { name: "Generate Summary with OpenAI" }));
+  fireEvent.click(screen.getByRole("button", { name: "Generate with llama" }));
   fireEvent.click(await screen.findByRole("button", { name: "Send" }));
-  await waitFor(() => expect(generateSummary).toHaveBeenCalledWith("m1", true));
+  await waitFor(() => expect(generateSummary).toHaveBeenCalledWith("m1", true, { provider: "openai", model: "llama" }));
 });
 it("shows progress and Stop for a running Summary", async () => {
   vi.mocked(summaryStatus).mockResolvedValue({ jobs: [{ meeting_id: "m1", state: "running", done: 1, total: 3, error: null }] });
@@ -91,4 +93,23 @@ it("shows a failed Summary and lets the user dismiss it", async () => {
   expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
   await waitFor(() => expect(dismissSummary).toHaveBeenCalledWith("m1"));
+});
+it("generates with a chosen model for one run and then restores the Summary default", async () => {
+  const settings = structuredClone(languageModels);
+  render(<SummaryPanel meetingId="m1" transcript={transcript} player={null} aiStatus={{ ...aiStatus, has_openai_key: true }} languageModels={settings} />);
+  fireEvent.pointerDown(await screen.findByRole("button", { name: "Choose Language model" }), { button: 0, ctrlKey: false });
+  fireEvent.click(await screen.findByRole("menuitem", { name: "OpenAI · gpt-4o" }));
+  fireEvent.click(screen.getByRole("button", { name: "Generate with gpt-4o" }));
+  await waitFor(() => expect(summarySendPlan).toHaveBeenCalledWith("m1", { provider: "openai", model: "gpt-4o" }));
+  await waitFor(() => expect(generateSummary).toHaveBeenCalledWith("m1", false, { provider: "openai", model: "gpt-4o" }));
+  expect(await screen.findByRole("button", { name: "Generate with llama" })).toBeTruthy();
+  expect(settings.summary).toEqual({ provider: "ollama", model: "llama" });
+});
+it("shows setup guidance when no Language model is ready", async () => {
+  const onOpenSettings = vi.fn();
+  render(<SummaryPanel meetingId="m1" transcript={transcript} player={null} aiStatus={aiStatus} languageModels={{ ...languageModels, models: [], summary: null }} onOpenSettings={onOpenSettings} />);
+  expect(await screen.findByText(/No Language model is set up for Summary/)).toBeTruthy();
+  expect(screen.queryByRole("button", { name: /Generate with/ })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Set one up →" }));
+  expect(onOpenSettings).toHaveBeenCalledOnce();
 });

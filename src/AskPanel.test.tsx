@@ -3,10 +3,12 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import AskPanel from "./AskPanel";
 import { askMeeting, askSendPlan, meetingAsks, onAskDelta, onAsksChanged, retryAsk, stopAsk } from "./ask";
 import type { Transcript } from "./processing";
+import type { LanguageModelSettings } from "./ai";
 vi.mock("./ask", () => ({ askMeeting: vi.fn(), askSendPlan: vi.fn(), meetingAsks: vi.fn(), onAskDelta: vi.fn(() => Promise.resolve(() => {})), onAsksChanged: vi.fn(() => Promise.resolve(() => {})), retryAsk: vi.fn(), stopAsk: vi.fn(), answerLabel: (state: string) => ({ incomplete: "Incomplete", unverified: "Unverified", failed: "Failed", insufficient_evidence: "Insufficient evidence" })[state] ?? "" }));
 const transcript: Transcript = { schema_version: 1, revision: 2, created_at: "now", model: ["small"], language: "en", language_detected: false, duration_ms: 30000, segments: [] };
 const aiStatus = { provider: "ollama" as const, model: "llama", configured: true, has_openai_key: false, has_anthropic_key: false, has_groq_key: false, has_gemini_key: false };
 const empty = { asks: [], active: null, retryable_id: null };
+const languageModels: LanguageModelSettings = { models: [{ provider: "ollama", model: "llama" }, { provider: "openai", model: "gpt-4o" }], correction: null, summary: { provider: "ollama", model: "llama" }, ask: { provider: "ollama", model: "llama" }, confirmed_correction_providers: [], legacy_correction_pending: false };
 beforeEach(() => { vi.mocked(meetingAsks).mockResolvedValue(empty); vi.mocked(askSendPlan).mockResolvedValue({ provider: "ollama", cloud: false, consented: true, disclosure: null }); vi.mocked(askMeeting).mockResolvedValue(empty); vi.mocked(retryAsk).mockResolvedValue(empty); vi.mocked(stopAsk).mockResolvedValue(); });
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
 it("shows cited history and offers retry only for the latest failed Ask", async () => {
@@ -25,7 +27,7 @@ it("shows cited history and offers retry only for the latest failed Ask", async 
   expect(player.playSpan).toHaveBeenCalledWith(1000, 2500);
   expect(screen.getAllByRole("button", { name: "Retry" })).toHaveLength(1);
   fireEvent.click(screen.getByRole("button", { name: "Retry" }));
-  await waitFor(() => expect(retryAsk).toHaveBeenCalledWith("m1", false));
+  await waitFor(() => expect(retryAsk).toHaveBeenCalledWith("m1", false, { provider: "ollama", model: "llama" }));
 });
 it("distinguishes answered, insufficient, incomplete, and off-topic Answers", async () => {
   const base = { asked_at: "now", revision: 2, provider: "ollama" as const, model: "llama", citations: [], invalid_citations: [], error: null };
@@ -76,15 +78,53 @@ it("submits a local Ask without disclosure", async () => {
   render(<AskPanel meetingId="m1" transcript={transcript} player={null} aiStatus={aiStatus} />);
   fireEvent.change(screen.getByRole("textbox", { name: "Question" }), { target: { value: "What was decided?" } });
   fireEvent.click(screen.getByRole("button", { name: "Ask" }));
-  await waitFor(() => expect(askMeeting).toHaveBeenCalledWith("m1", "What was decided?", false));
+  await waitFor(() => expect(askMeeting).toHaveBeenCalledWith("m1", "What was decided?", false, { provider: "ollama", model: "llama" }));
 });
 it("shows the exact cloud disclosure before sending an Ask", async () => {
   vi.mocked(askSendPlan).mockResolvedValue({ provider: "anthropic", cloud: true, consented: false, disclosure: { provider: "anthropic", model: "claude", endpoint: "https://example.com", system: "Ask instructions", messages: [{ role: "user", content: "Meeting evidence" }], characters: 31 } });
-  render(<AskPanel meetingId="m1" transcript={transcript} player={null} aiStatus={{ ...aiStatus, provider: "anthropic" }} />);
+  render(<AskPanel meetingId="m1" transcript={transcript} player={null} aiStatus={{ ...aiStatus, provider: "anthropic", has_anthropic_key: true }} />);
   fireEvent.change(screen.getByRole("textbox", { name: "Question" }), { target: { value: "When?" } });
   fireEvent.click(screen.getByRole("button", { name: "Ask Anthropic" }));
   expect(await screen.findByRole("dialog", { name: "Send to Anthropic?" })).toBeTruthy();
   expect(askMeeting).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole("button", { name: "Send" }));
-  await waitFor(() => expect(askMeeting).toHaveBeenCalledWith("m1", "When?", true));
+  await waitFor(() => expect(askMeeting).toHaveBeenCalledWith("m1", "When?", true, { provider: "anthropic", model: "llama" }));
+});
+it("uses a chosen Language model for follow-up Asks without changing Settings", async () => {
+  const settings = structuredClone(languageModels);
+  const status = { ...aiStatus, has_openai_key: true };
+  render(<AskPanel meetingId="m1" transcript={transcript} player={null} aiStatus={status} languageModels={settings} />);
+  fireEvent.pointerDown(await screen.findByRole("button", { name: "Choose Language model" }), { button: 0, ctrlKey: false });
+  fireEvent.click(await screen.findByRole("menuitem", { name: "OpenAI · gpt-4o" }));
+  expect(screen.getByRole("button", { name: "Choose Language model" }).textContent).toContain("OpenAI · gpt-4o");
+  fireEvent.change(screen.getByRole("textbox", { name: "Question" }), { target: { value: "First?" } });
+  fireEvent.click(screen.getByRole("button", { name: "Ask OpenAI" }));
+  await waitFor(() => expect(askSendPlan).toHaveBeenCalledWith("m1", "First?", { provider: "openai", model: "gpt-4o" }));
+  await waitFor(() => expect(askMeeting).toHaveBeenCalledWith("m1", "First?", false, { provider: "openai", model: "gpt-4o" }));
+  fireEvent.change(screen.getByRole("textbox", { name: "Question" }), { target: { value: "Follow-up?" } });
+  fireEvent.click(screen.getByRole("button", { name: "Ask OpenAI" }));
+  await waitFor(() => expect(askMeeting).toHaveBeenCalledWith("m1", "Follow-up?", false, { provider: "openai", model: "gpt-4o" }));
+  expect(settings.ask).toEqual({ provider: "ollama", model: "llama" });
+});
+it("shows the chosen Provider and model in the cloud disclosure and saved Answer", async () => {
+  vi.mocked(askSendPlan).mockResolvedValue({ provider: "openai", cloud: true, consented: false, disclosure: { provider: "openai", model: "gpt-4o", endpoint: "https://example.com", system: "Ask instructions", messages: [], characters: 16 } });
+  vi.mocked(meetingAsks).mockResolvedValue({ asks: [{ id: "a1", question: "What?", asked_at: "now", revision: 2, provider: "openai", model: "gpt-4o", state: "answered", answer: "Yes", citations: [], invalid_citations: [], error: null }], active: null, retryable_id: null });
+  render(<AskPanel meetingId="m1" transcript={transcript} player={null} aiStatus={{ ...aiStatus, has_openai_key: true }} languageModels={languageModels} />);
+  expect(await screen.findByText("OpenAI · gpt-4o")).toBeTruthy();
+  fireEvent.pointerDown(screen.getByRole("button", { name: "Choose Language model" }), { button: 0, ctrlKey: false });
+  fireEvent.click(await screen.findByRole("menuitem", { name: "OpenAI · gpt-4o" }));
+  fireEvent.change(screen.getByRole("textbox", { name: "Question" }), { target: { value: "When?" } });
+  fireEvent.click(screen.getByRole("button", { name: "Ask OpenAI" }));
+  expect(await screen.findByRole("dialog", { name: "Send to OpenAI?" })).toBeTruthy();
+  expect(screen.getByText("gpt-4o")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  await waitFor(() => expect(askMeeting).toHaveBeenCalledWith("m1", "When?", true, { provider: "openai", model: "gpt-4o" }));
+});
+it("shows setup guidance instead of the Ask input when no Language model is ready", async () => {
+  const onOpenSettings = vi.fn();
+  render(<AskPanel meetingId="m1" transcript={transcript} player={null} aiStatus={aiStatus} languageModels={{ ...languageModels, models: [], ask: null }} onOpenSettings={onOpenSettings} />);
+  expect(await screen.findByText(/No Language model is set up for Ask/)).toBeTruthy();
+  expect(screen.queryByRole("textbox", { name: "Question" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Set one up →" }));
+  expect(onOpenSettings).toHaveBeenCalledOnce();
 });

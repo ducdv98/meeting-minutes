@@ -36,8 +36,10 @@ pub struct AskEntry {
     pub question: String,
     pub asked_at: String,
     pub revision: u32,
-    pub provider: ProviderKind,
-    pub model: String,
+    #[serde(default)]
+    pub provider: Option<ProviderKind>,
+    #[serde(default)]
+    pub model: Option<String>,
     pub state: AnswerState,
     pub answer: String,
     pub citations: Vec<Citation>,
@@ -75,6 +77,37 @@ pub fn write_asks(meeting_dir: &Path, history: &AskHistory) -> io::Result<()> {
     file.write_all(&bytes)?;
     file.sync_all()?;
     fs::rename(tmp, meeting_dir.join("asks.json"))
+}
+
+#[cfg(test)]
+mod compatibility_tests {
+    use super::*;
+
+    #[test]
+    fn reads_asks_without_provider_or_model() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("asks.json"),
+            r#"{"schema_version":1,"asks":[{"id":"a0001","question":"What?","asked_at":"now","revision":1,"state":"answered","answer":"Yes","citations":[]}]}"#,
+        )
+        .unwrap();
+        let history = read_asks(dir.path()).unwrap();
+        assert_eq!(history.asks[0].provider, None);
+        assert_eq!(history.asks[0].model, None);
+    }
+
+    #[test]
+    fn records_selected_provider_and_model_for_an_answer() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut history = AskHistory::default();
+        history
+            .begin("What changed?", 2, ProviderKind::Openai, "gpt-4o", "now")
+            .unwrap();
+        write_asks(dir.path(), &history).unwrap();
+        let answer = &read_asks(dir.path()).unwrap().asks[0];
+        assert_eq!(answer.provider, Some(ProviderKind::Openai));
+        assert_eq!(answer.model.as_deref(), Some("gpt-4o"));
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -144,8 +177,8 @@ impl AskHistory {
             question: question.into(),
             asked_at: at.into(),
             revision,
-            provider,
-            model: model.into(),
+            provider: Some(provider),
+            model: Some(model.into()),
             state: AnswerState::Pending,
             answer: String::new(),
             citations: Vec::new(),
@@ -184,8 +217,8 @@ impl AskHistory {
             .ok_or(AskError::NothingToRetry)?;
         entry.asked_at = at.into();
         entry.revision = revision;
-        entry.provider = provider;
-        entry.model = model.into();
+        entry.provider = Some(provider);
+        entry.model = Some(model.into());
         entry.state = AnswerState::Pending;
         entry.answer.clear();
         entry.citations.clear();
