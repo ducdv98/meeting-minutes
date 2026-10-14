@@ -16,7 +16,7 @@ Avoid: gradient blobs, glassmorphism, AI sparkle imagery, floating abstract dash
 - Reading width for paragraphs: 36rem.
 - 12-column grid on desktop, 4 on mobile. Text-and-image sections split 5/7, alternating sides; everything else left-aligned in the reading width. Centre only the hero and the closing call to action.
 - Section spacing: 128px desktop, 96px tablet, 64px mobile. Alternate sections may sit on `--panel`.
-- Header: 64px, `--canvas` background, 1px `--line` bottom edge once scrolled. Wordmark left; Privacy, Support, Changelog and the download button right. Collapses to wordmark + menu under 768px.
+- Header: 64px, `--canvas` background, 1px `--line` bottom edge once scrolled. Wordmark left; Pricing, Privacy, Support, Changelog and the download button right. Collapses to wordmark + menu under 768px.
 
 ## Pages
 
@@ -36,9 +36,13 @@ In this order:
 6. **Roadmap.** A dated list, one row per milestone, month and year, future items marked "target": Mac App Store, December 2026 (target); Windows app, December 2026 (target); later items only when dated. Each row shows its status (Shipped, In progress, Target) as text, not colour alone.
 7. **FAQ.** Full-width accordion rows with 1px `--line` dividers and a `+` that rotates to `×`. Questions: Is it free? Where are my meetings stored? Does anything get uploaded? Why does Windows warn me when I install it? Which languages does it understand? Do I need a powerful PC? How do I uninstall it, and do I keep my meetings?
 8. **Closing call to action.** Centred: one line in `--heading-lg` and the same primary action as the hero (or the target date when nothing is published).
-9. **Footer.** Wordmark, one sentence, links (Privacy, Support, Changelog, GitHub), "Made by Duc Dao", `admin@meeting-minutes.tech`, and the year.
+9. **Footer.** Wordmark, one sentence, links (Pricing, Privacy, Support, Changelog, GitHub), "Made by Duc Dao", `admin@meeting-minutes.tech`, and the year.
 
-Do not add customer logos, metrics, testimonials, use-case pages or pricing until there is something real to show.
+Do not add customer logos, metrics, testimonials or use-case pages.
+
+### Pricing
+
+Two plan cards: Free plan and Pro plan. Free shows $0 forever and “Available now” for local Processing and the user's own provider keys. An optional Account and its limited Managed transcription allowance are marked “Planned” within Free; Pro is marked “Coming soon” and has no price. A reading-width section explains Processed audio minutes, the monthly reset and transcription fallback. Cards use the site's surface, border and spacing tokens, stack at mobile widths, and use text for every availability state. No purchase or registration action appears until those flows exist.
 
 ### Privacy
 

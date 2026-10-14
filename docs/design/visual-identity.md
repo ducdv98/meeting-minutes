@@ -105,7 +105,7 @@ Lucide icons at 16px (app) or 20px (website), 1.5px stroke, `currentColor`. Icon
 
 - **Citation:** an inline chip with the Segment's start time, `--accent` text on `--accent-soft`, `--radius-sm`, tabular numbers (`12:34`). Hover shows the Segment text; click plays the span. It looks the same in Summary, Action items and Answers.
 - **Recording indicator:** a red dot plus elapsed time, always visible while a Recording runs, in the window and the tray. The recording bar uses `--record-soft`.
-- **Beta badge:** `--text-xs`, `--ink-muted` text, `--line-strong` 1px border, pill radius. Next to the wordmark in About and on the website header.
+- **Beta badge:** `--text-xs`, `--ink-muted` text, `--line-strong` 1px border, pill radius. Next to the wordmark in the app's About view.
 - **States:** loading uses `--page-shadow` skeletons (no spinners longer than 1s without text); empty states use the theme's mark at low opacity, one sentence and one action; errors say what happened and what to do, with Retry where possible.
 
 ## Voice

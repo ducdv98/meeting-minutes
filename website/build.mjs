@@ -1,5 +1,5 @@
 import { readFile, writeFile, mkdir, rm, copyFile, access } from 'node:fs/promises';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { escapeHtml, releasePageState, renderNotes } from './lib/release.mjs';
 
@@ -10,6 +10,14 @@ const args = process.argv.slice(2);
 const outputIndex = args.indexOf('--output');
 if (outputIndex !== -1 && !args[outputIndex + 1]) { console.error('--output needs a directory path'); process.exit(1); }
 const dist = outputIndex === -1 ? join(root, 'dist') : resolve(args[outputIndex + 1]);
+const isWithin = (path, directory) => {
+  const difference = relative(directory, path);
+  return difference === '' || (difference !== '..' && !difference.startsWith(`..${sep}`) && !isAbsolute(difference));
+};
+if (isWithin(root, dist) || isWithin(dist, src)) {
+  console.error(`Refusing --output path that could delete website files: ${dist}`);
+  process.exit(1);
+}
 const draft = args.includes('--draft');
 const offline = args.includes('--offline');
 const checkReady = args.includes('--check-ready');
@@ -118,6 +126,7 @@ const substitutions = {
   '{{SCREEN_FIRSTRUN_MODEL}}': screen('firstrun-model', 'First-run guide recommending a transcription model'),
   '{{WINDOWS_DATE}}': published.length ? new Intl.DateTimeFormat('en', { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(new Date(published.at(-1).published_at)) : 'December 2026 (target)',
   '{{WINDOWS_STATUS}}': published.length ? '<span class="road-status available"><span aria-hidden="true">✓</span> Available</span>' : '<span class="road-status progress"><span aria-hidden="true">◌</span> In progress</span>',
+  '{{FREE_STATUS}}': published.length ? 'Available now' : 'Windows release: December 2026 (target)',
 };
 function replace(text) {
   for (const [key, value] of Object.entries(substitutions)) text = text.replaceAll(key, value);
@@ -129,7 +138,7 @@ function brand(label = 'Meeting Minutes') {
 }
 
 function shell(title, description, body, current = '') {
-  const links = [['Privacy', '/privacy/'], ['Support', '/support/'], ['Changelog', '/changelog/']];
+  const links = [['Pricing', '/pricing/'], ['Privacy', '/privacy/'], ['Support', '/support/'], ['Changelog', '/changelog/']];
   const nav = links.map(([label, url]) => `<a href="${url}"${current === url ? ' aria-current="page"' : ''}>${label}</a>`).join('');
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -150,17 +159,19 @@ async function write(path, value) { await mkdir(dirname(path), { recursive: true
 await rm(dist, { recursive: true, force: true });
 await mkdir(dist, { recursive: true });
 const home = replace(await readFile(join(src, 'home.html'), 'utf8'));
+const pricing = replace(await readFile(join(src, 'pricing.html'), 'utf8'));
 const support = replace(await readFile(join(src, 'support.html'), 'utf8'));
 const privacy = await readFile(join(src, 'privacy.html'), 'utf8').catch(() => '<article class="doc"><h1>Privacy policy</h1><p>Draft pending ticket 14.</p></article>');
 const entries = published.map(release => `<article class="release"><h2>${escapeHtml(release.tag_name)}</h2><time datetime="${escapeHtml(release.published_at.slice(0, 10))}">${escapeHtml(new Intl.DateTimeFormat('en', { dateStyle: 'long', timeZone: 'UTC' }).format(new Date(release.published_at)))}</time><div class="notes">${renderNotes(release.body) || '<p>No release notes provided.</p>'}</div></article>`).join('');
 const cloudEntry = '<article class="release"><h2>Cloud transcription · In development</h2><time datetime="2026-10-13">October 13, 2026</time><div class="notes"><p>Adding transcription with your own Groq key, Gemini fallback and Correction. Local Whisper remains available.</p></div></article>';
 const changelog = `<article class="doc"><h1>Changelog</h1><p class="updated">Work in progress and published releases, newest first.</p>${cloudEntry}${entries || '<p>No public releases yet. Windows: December 2026 (target).</p>'}</article>`;
 await write(join(dist, 'index.html'), shell('Home', 'Record any call on Windows. Keep a Transcript on your PC and get Answers with Citations.', home));
+await write(join(dist, 'pricing', 'index.html'), shell('Pricing', 'The Free plan is $0 forever for local Processing and your own keys. Managed access and Pro are planned.', pricing, '/pricing/'));
 await write(join(dist, 'support', 'index.html'), shell('Support', 'Get help with Meeting Minutes, diagnostics, installation and uninstalling.', support, '/support/'));
 await write(join(dist, 'privacy', 'index.html'), shell('Privacy', 'How Meeting Minutes handles your meetings and data.', privacy, '/privacy/'));
 await write(join(dist, 'changelog', 'index.html'), shell('Changelog', 'Meeting Minutes updates and published releases.', changelog, '/changelog/'));
 await write(join(dist, '404.html'), shell('Page not found', 'This page could not be found.', '<article class="doc"><h1>Page not found</h1><p>The page you requested does not exist. <a href="/">Go to the home page</a>.</p></article>'));
-await write(join(dist, 'llms.txt'), `# Meeting Minutes\n\nMeeting Minutes is a local-first Windows 11 app by Duc Dao. It records Microphone and System audio from meetings, transcribes English or Vietnamese locally by default, and provides cited Summaries and Answers. With the user's own keys, audio can go to Groq or Gemini for transcription; Gemini can receive Transcript text for Correction. No account or telemetry.\n\nFree for Windows: ${latest ? `${latest.version}, published ${latest.date}; download: ${latest.url}` : 'December 2026 (target); no public download yet'}.\nMac App Store: December 2026 (target).\n\nHome: https://meeting-minutes.tech/\nPrivacy: https://meeting-minutes.tech/privacy/\nSupport: https://meeting-minutes.tech/support/\nChangelog: https://meeting-minutes.tech/changelog/\nRepository: https://github.com/ducdv98/meeting-minutes\nContact: admin@meeting-minutes.tech\n`);
+await write(join(dist, 'llms.txt'), `# Meeting Minutes\n\nMeeting Minutes is a local-first Windows 11 app by Duc Dao. It records Microphone and System audio from meetings, transcribes English or Vietnamese locally by default, and provides cited Summaries and Answers. With the user's own keys, audio can go to Groq or Gemini for transcription; Gemini can receive Transcript text for Correction. No account or telemetry.\n\nFree for Windows: ${latest ? `${latest.version}, published ${latest.date}; download: ${latest.url}` : 'December 2026 (target); no public download yet'}.\nMac App Store: December 2026 (target).\n\nHome: https://meeting-minutes.tech/\nPricing: https://meeting-minutes.tech/pricing/\nPrivacy: https://meeting-minutes.tech/privacy/\nSupport: https://meeting-minutes.tech/support/\nChangelog: https://meeting-minutes.tech/changelog/\nRepository: https://github.com/ducdv98/meeting-minutes\nContact: admin@meeting-minutes.tech\n`);
 
 const ranges = { latin: 'U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD',
   'latin-ext': 'U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20CF,U+2113,U+2C60-2C7F,U+A720-A7FF',

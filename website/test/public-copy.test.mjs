@@ -31,7 +31,12 @@ async function buildAndCheck(releases, check) {
     } else args.push('--offline');
     await run(process.execPath, args, { cwd: repo });
     for await (const path of publicFiles(output)) {
-      assert.doesNotMatch(await readFile(path, 'utf8'), /beta/i, `${path} contains Beta`);
+      const content = await readFile(path, 'utf8');
+      const siteCopy = path === join(output, 'changelog', 'index.html')
+        ? content.replace(/(<article class="release">[\s\S]*?<div class="notes">)([\s\S]*?)(<\/div><\/article>)/g,
+          (article, before, _notes, after) => before.includes('Cloud transcription · In development') ? article : before + after)
+        : content;
+      assert.doesNotMatch(siteCopy, /beta/i, `${path} contains Beta in site-authored copy`);
     }
     await check(output);
   } finally {
@@ -50,12 +55,28 @@ test('public copy has no Beta when Windows has no published Release', async () =
 test('public copy has no Beta with a published Windows Release', async () => {
   await buildAndCheck([{
     tag_name: 'v0.1.0', published_at: '2026-12-01T12:00:00Z', draft: false,
-    prerelease: false, body: 'Initial release', assets: [{ name: 'Meeting-Minutes.exe', size: 14680064,
+    prerelease: false, body: 'First beta', assets: [{ name: 'Meeting-Minutes.exe', size: 14680064,
       browser_download_url: installer }],
   }], async output => {
     const home = await readFile(join(output, 'index.html'), 'utf8');
     assert.ok(home.includes(`href="${installer}"`), 'download links to the published installer');
     assert.match(home, /Version v0\.1\.0 · 14 MB · Windows 11 · Free · unsigned/);
     assert.match(home, /href="\/support\/#smartscreen">see why/);
+    const changelog = await readFile(join(output, 'changelog', 'index.html'), 'utf8');
+    assert.match(changelog, /<div class="notes"><p>First beta<\/p><\/div>/);
   });
+});
+
+test('build refuses output paths that could delete website sources', async () => {
+  const website = join(repo, 'website');
+  for (const output of [dirname(repo), repo, website, join(website, 'src'), join(website, 'src', 'nested')]) {
+    await assert.rejects(
+      run(process.execPath, ['website/build.mjs', '--draft', '--offline', '--check-ready', '--output', output], { cwd: repo }),
+      error => {
+        assert.equal(error.code, 1, `expected exit 1 for ${output}`);
+        assert.match(error.stderr, /Refusing --output path/);
+        return true;
+      },
+    );
+  }
 });

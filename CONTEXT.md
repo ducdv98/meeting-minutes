@@ -1,6 +1,6 @@
 # Meeting Minutes
 
-A single-user, local-first Windows app (no accounts, sharing or sync) that records calls from any meeting app, turns them into timed transcripts, and answers cited questions about one meeting at a time.
+A single-user, local-first Windows app that records calls from any meeting app, turns them into timed transcripts, and answers cited questions about one meeting at a time. An optional Account is planned for Managed transcription; Meetings remain local, without sharing or sync.
 
 ## Language
 
@@ -44,6 +44,30 @@ _Avoid_: Database, vault, workspace
 **Recording notice**:
 The reminder that other participants may need to consent to being recorded, plus the always-visible indicator while a Recording runs.
 
+### Access
+
+**Free plan**:
+The permanent app offering, with no app-imposed usage limit on local Processing or cloud Processing through the user's own provider keys. An Account is optional and may add a limited Managed transcription allowance after admission.
+_Avoid_: Free tier, Registered tier
+
+**Account**:
+A planned identity for one user, tied to a verified email address and shared across their installations, required to use free or paid Managed transcription. During the experiment, an Invite code connects one installation instead.
+_Avoid_: Install, Invite code
+
+**Managed access**:
+Permission for an Account to use Managed transcription after admission to the service. Registration alone does not grant access or consent to upload audio.
+
+**Managed transcription allowance**:
+The monthly amount of Managed transcription an Account with Managed access may use at no charge, measured in Processed audio minutes and reset on the first day of each month in UTC without rollover. It covers transcription of audio, not Correction, Summary or Ask.
+_Avoid_: Gateway quota, cloud credits
+
+**Processed audio minute**:
+One minute of audio successfully transcribed by Managed transcription; each Source counts separately, and an Import counts as one stream. Re-transcribing the same audio counts again.
+
+**Pro plan**:
+A planned paid offering with a larger Managed transcription allowance, shown as coming soon and not yet available for purchase.
+_Avoid_: Pro tier
+
 ### Understanding
 
 **Meeting language**:
@@ -53,7 +77,7 @@ The spoken language of a Meeting (English or Vietnamese), chosen by the user or 
 Turning a Meeting's audio into a Transcript, then a Summary and Action items. Processing starts automatically after Stop, in the cloud when the user has connected Managed transcription or set up a provider key, and locally otherwise. One Meeting's Transcript may come partly from each.
 
 **Managed transcription**:
-Cloud transcription run by the Meeting Minutes service for a user who has connected it with an Invite code. It is tried before the user's own provider key, which is tried before local transcription. Connecting it is the user's consent to sending audio to the cloud.
+Cloud transcription run by the Meeting Minutes service, connected by Invite code during the experiment and enabled by a user with an Account and Managed access afterward. Enabling it is the user's consent to sending audio to the cloud; signing in alone is not.
 _Avoid_: Gateway, relay, hosted Groq
 
 **Provider**:
@@ -69,11 +93,11 @@ A model the user has added for working with text: Correction, Summary and Ask. E
 _Avoid_: General model, AI model, LLM
 
 **Transcription order**:
-The fixed order of Providers that Processing tries for transcription, each with its automatic Speech-to-text model: Managed transcription, then the user's own cloud keys, then local Whisper. A Provider that isn't set up is skipped, and one that fails or hits its limit passes the work to the next. The user can't reorder it. Transcribing with one chosen Speech-to-text model skips the order for that run only, with no fallback.
+The fixed order of Providers that Processing tries for transcription, each with its automatic Speech-to-text model: Managed transcription, then the user's own cloud keys, then local Whisper. A Provider that isn't enabled or available is skipped, and one that fails or hits its limit passes the work to the next. The user can't reorder it. Transcribing with one chosen Speech-to-text model skips the order for that run only, with no fallback.
 _Avoid_: Engine chain, fallback chain
 
 **Invite code**:
-A one-time code from the operator that connects one install of the app to Managed transcription. Disconnecting, or the operator revoking access, returns the app to its own keys or local transcription.
+A one-time code from the operator that connects one install of the app to experimental Managed transcription. Disconnecting, or the operator revoking access, returns the app to its own keys or local transcription.
 _Avoid_: License key, account, token
 
 **Transcript**:
