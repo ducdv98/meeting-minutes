@@ -9,7 +9,7 @@ import { onRecordingStatus, recordingStatus } from "./recording";
 vi.mock("./importing", () => ({ pickAudioFiles: vi.fn(), importStatus: vi.fn(), dismissImportErrors: vi.fn(), onImportStatus: vi.fn(), onImportHover: vi.fn() }));
 vi.mock("./library", async (original) => ({ ...(await original<typeof import("./library")>()), rescanLibrary: vi.fn(), searchLibrary: vi.fn(), deleteMeeting: vi.fn(), renameMeeting: vi.fn(), meetingDetail: vi.fn() }));
 vi.mock("./RecordingBar", () => ({ default: () => null }));
-vi.mock("./SettingsView", () => ({ default: () => <section><h1>Settings pane</h1></section> }));
+vi.mock("./SettingsView", async () => { const { PageHeader } = await import("./components/PageHeader"); return { default: () => <section><PageHeader title="Settings" context="Choose how Meetings are recorded and processed." /><h2>Settings pane</h2></section> }; });
 vi.mock("./HelpView", () => ({ default: () => <section><h1>Help pane</h1></section> }));
 vi.mock("./processing", async (importOriginal) => ({ ...(await importOriginal<typeof import("./processing")>()), processingStatus: vi.fn(), onProcessingStatus: vi.fn(), cancelProcessing: vi.fn() }));
 vi.mock("./summary", () => ({ meetingSummary: vi.fn(() => Promise.resolve(null)), onSummaryStatus: vi.fn(() => Promise.resolve(() => {})) }));
@@ -372,7 +372,7 @@ it("cross-fades main views with the panel token and skips motion when requested"
   vi.mocked(rescanLibrary).mockResolvedValue({ meetings: [], malformed: [] });
   render(<App />);
   fireEvent.click(screen.getByRole("button", { name: "Settings" }));
-  const entering = screen.getByRole("heading", { name: "Settings", level: 1 }).closest("header")?.parentElement;
+  const entering = screen.getByRole("heading", { name: "Settings", level: 1 }).closest("[style]");
   expect(entering?.getAttribute("style")).toContain("var(--duration-panel) var(--ease-functional)");
   expect(entering?.previousElementSibling?.getAttribute("aria-hidden")).toBe("true");
   expect(entering?.previousElementSibling?.hasAttribute("inert")).toBe(true);

@@ -30,14 +30,26 @@ it("updates key and Correction states from live Settings props", async () => {
   vi.mocked(managedStatus).mockResolvedValue({ connected: true, revoked: false });
   const cloud = { ...status, has_groq_key: true, has_anthropic_key: true };
   const correction = { provider: "anthropic" as const, model: "claude-test" };
-  const nextSettings = { ...settings, language_models: { ...settings.language_models!, models: [correction], correction } };
+  const nextSettings = { ...settings, speech: { models: [{ provider: "groq" as const, model: "whisper-large-v3" }], automatic_groq: "whisper-large-v3", automatic_gemini: null, automatic_whisper: "small" }, language_models: { ...settings.language_models!, models: [correction], correction } };
   const view = render(<PrivacyTab settings={nextSettings} providerStatus={cloud} />);
   expect(await within(screen.getByRole("region", { name: "Managed transcription" })).findByText("On · Connected")).toBeTruthy();
   expect(within(screen.getByRole("region", { name: "Groq" })).getByText("On · Key saved")).toBeTruthy();
   expect(within(screen.getByRole("region", { name: "Correction model" })).getByText("On · Anthropic · claude-test")).toBeTruthy();
+  expect(within(screen.getByRole("region", { name: "Anthropic" })).getByText("On · Key saved")).toBeTruthy();
   view.rerender(<PrivacyTab settings={settings} providerStatus={status} />);
   expect(within(screen.getByRole("region", { name: "Groq" })).getByText("Off · No key")).toBeTruthy();
   expect(within(screen.getByRole("region", { name: "Correction model" })).getByText("Off")).toBeTruthy();
+});
+
+it("shows saved keys as off until an automatic Speech-to-text model or Use for default is valid", async () => {
+  vi.mocked(managedStatus).mockResolvedValue({ connected: false, revoked: false });
+  const keys = { ...status, has_groq_key: true, has_gemini_key: true, has_openai_key: true };
+  const speech = { models: [{ provider: "groq" as const, model: "whisper-large-v3" }, { provider: "gemini" as const, model: "gemini-test" }], automatic_groq: "missing", automatic_gemini: null, automatic_whisper: "small" };
+  const openai = { provider: "openai" as const, model: "gpt-test" };
+  const view = render(<PrivacyTab settings={{ ...settings, speech, language_models: { ...settings.language_models!, summary: openai } }} providerStatus={keys} />);
+  for (const name of ["Groq", "Gemini", "OpenAI"]) expect(within(screen.getByRole("region", { name })).getByText("Off · Key saved, not used")).toBeTruthy();
+  view.rerender(<PrivacyTab settings={{ ...settings, speech: { ...speech, automatic_groq: "whisper-large-v3", automatic_gemini: "gemini-test" }, language_models: { ...settings.language_models!, models: [openai], summary: openai } }} providerStatus={keys} />);
+  for (const name of ["Groq", "Gemini", "OpenAI"]) expect(within(screen.getByRole("region", { name })).getByText("On · Key saved")).toBeTruthy();
 });
 
 it("refreshes Managed status on each visit and uses the shared disclosure text", async () => {

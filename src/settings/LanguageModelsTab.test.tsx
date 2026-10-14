@@ -17,7 +17,7 @@ function Harness() {
   const [settings, setSettings] = useState<Settings | null>(initial);
   const [providerStatus, setProviderStatus] = useState<AiStatus | null>(status);
   const [aiError, setAiError] = useState<string | null>(null);
-  return <LanguageModelsTab settings={settings ?? undefined} setSettings={setSettings} providerStatus={providerStatus} setProviderStatus={setProviderStatus} aiError={aiError} setAiError={setAiError} onManageKeys={() => {}} />;
+  return <LanguageModelsTab settings={settings!} setSettings={setSettings} providerStatus={providerStatus} setProviderStatus={setProviderStatus} aiError={aiError} setAiError={setAiError} onManageKeys={() => {}} />;
 }
 
 beforeEach(() => {
@@ -39,31 +39,44 @@ it("keeps separate Summary and Ask defaults and tests a saved model", async () =
 
 it("asks once before cloud Correction and lets Cancel keep Off", async () => {
   render(<Harness />);
-  fireEvent.change(screen.getByLabelText("Correction"), { target: { value: JSON.stringify(anthropic) } });
-  expect(screen.getByRole("alertdialog").textContent).toContain("Transcripts will be sent to Anthropic after every transcription.");
+  const correctionSelect = screen.getByLabelText("Correction");
+  correctionSelect.focus();
+  fireEvent.change(correctionSelect, { target: { value: JSON.stringify(anthropic) } });
+  const confirmation = screen.getByRole("dialog", { name: "Confirm Correction Provider" });
+  expect(confirmation.textContent).toContain("Transcripts will be sent to Anthropic after every transcription.");
+  expect(confirmation.contains(document.activeElement)).toBe(true);
   fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(document.activeElement).toBe(correctionSelect));
+  expect((correctionSelect as HTMLSelectElement).value).toBe("");
   expect(updateLanguageModels).not.toHaveBeenCalled();
-  fireEvent.change(screen.getByLabelText("Correction"), { target: { value: JSON.stringify(anthropic) } });
+  fireEvent.change(correctionSelect, { target: { value: JSON.stringify(anthropic) } });
   fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
   await waitFor(() => expect(updateLanguageModels).toHaveBeenCalledWith(expect.objectContaining({ correction: anthropic, confirmed_correction_providers: ["anthropic"] })));
   fireEvent.change(screen.getByLabelText("Correction"), { target: { value: JSON.stringify(gemini) } });
-  expect(screen.getByRole("alertdialog").textContent).toContain("Gemini");
+  expect(screen.getByRole("dialog").textContent).toContain("Gemini");
 });
 
 it("selects Ollama and Off without confirmation", async () => {
   render(<Harness />);
   fireEvent.change(screen.getByLabelText("Correction"), { target: { value: JSON.stringify(ollama) } });
   await waitFor(() => expect(updateLanguageModels).toHaveBeenCalledWith(expect.objectContaining({ correction: ollama })));
-  expect(screen.queryByRole("alertdialog")).toBeNull();
+  expect(screen.queryByRole("dialog")).toBeNull();
   fireEvent.change(screen.getByLabelText("Correction"), { target: { value: "" } });
   await waitFor(() => expect(updateLanguageModels).toHaveBeenCalledWith(expect.objectContaining({ correction: null })));
-  expect(screen.queryByRole("alertdialog")).toBeNull();
+  expect(screen.queryByRole("dialog")).toBeNull();
 });
 
 it("asks for a replacement when removing a default model", async () => {
   render(<Harness />);
-  fireEvent.click(screen.getAllByRole("button", { name: "Remove" })[0]);
-  expect(screen.getByRole("alertdialog").textContent).toContain("Choose a replacement");
+  const removeButton = screen.getAllByRole("button", { name: "Remove" })[0];
+  removeButton.focus();
+  fireEvent.click(removeButton);
+  const dialog = screen.getByRole("dialog", { name: "Remove Language model" });
+  expect(dialog.textContent).toContain("Choose a replacement");
+  expect(dialog.contains(document.activeElement)).toBe(true);
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(document.activeElement).toBe(removeButton));
+  fireEvent.click(removeButton);
   fireEvent.change(screen.getByLabelText("Replacement"), { target: { value: JSON.stringify(gemini) } });
   fireEvent.click(screen.getByRole("button", { name: "Remove model" }));
   await waitFor(() => expect(updateLanguageModels).toHaveBeenCalledWith(expect.objectContaining({ ask: gemini, models: [anthropic, gemini] })));

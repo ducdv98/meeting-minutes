@@ -24,6 +24,8 @@ it("shows the privacy statement before Connect, then connects after the invite l
   await waitFor(() => expect(managedStatus).toHaveBeenCalledOnce());
   expect(within(section).queryByLabelText("Invite code")).toBeNull();
   expect(within(section).getByText(MANAGED_PRIVACY_SUMMARY)).toBeTruthy();
+  expect(MANAGED_PRIVACY_SUMMARY).toContain("text is kept up to 5 minutes");
+  expect(MANAGED_PRIVACY_SUMMARY).not.toContain("nothing is stored");
   const details = within(section).getByRole("button", { name: "Details" });
   fireEvent.click(details);
   expect(details.getAttribute("aria-expanded")).toBe("true");

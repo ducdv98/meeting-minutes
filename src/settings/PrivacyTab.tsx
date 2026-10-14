@@ -19,11 +19,20 @@ export function PrivacyTab({ settings, providerStatus, aiError = null }: { setti
   }, [refresh]);
   const correction = settings.language_models?.correction ?? null;
   const hasKey = (kind: typeof cloudProviders[number]) => providerStatus?.[`has_${kind}_key`];
+  const automaticSpeech = (kind: "groq" | "gemini") => {
+    const selected = settings.speech?.[kind === "groq" ? "automatic_groq" : "automatic_gemini"];
+    return !!selected && !!settings.speech?.models.some((item) => item.provider === kind && item.model === selected);
+  };
+  const usedLanguageModel = (kind: typeof cloudProviders[number]) => {
+    const language = settings.language_models;
+    return !!language && ([language.correction, language.summary, language.ask]).some((item) => item?.provider === kind && language.models.some((model) => model.provider === item.provider && model.model === item.model));
+  };
+  const providerUsed = (kind: typeof cloudProviders[number]) => ((kind === "groq" || kind === "gemini") && automaticSpeech(kind)) || usedLanguageModel(kind);
   const unknownStatus = aiError ? "Status unavailable" : "Checking…";
-  const correctionStatus = !correction ? "Off" : correction.provider === "ollama" ? "Off · On this PC" : !providerStatus ? unknownStatus : providerStatus[`has_${correction.provider}_key`] ? `On · ${PROVIDER_NAMES[correction.provider]} · ${correction.model}` : `Off · No ${PROVIDER_NAMES[correction.provider]} key`;
+  const correctionStatus = !correction ? "Off" : correction.provider === "ollama" ? "Off · On this PC" : !providerStatus ? unknownStatus : !settings.language_models?.models.some((item) => item.provider === correction.provider && item.model === correction.model) ? "Off · Model not added" : providerStatus[`has_${correction.provider}_key`] ? `On · ${PROVIDER_NAMES[correction.provider]} · ${correction.model}` : `Off · No ${PROVIDER_NAMES[correction.provider]} key`;
   const rows: { id: Destination; name: string; status: string }[] = [
     { id: "managed", name: "Managed transcription", status: managedError ? "Status unavailable" : !managed ? "Checking…" : managed.connected ? "On · Connected" : "Off · Not connected" },
-    ...cloudProviders.map((kind) => ({ id: kind, name: PROVIDER_NAMES[kind], status: !providerStatus ? unknownStatus : hasKey(kind) ? "On · Key saved" : "Off · No key" })),
+    ...cloudProviders.map((kind) => ({ id: kind, name: PROVIDER_NAMES[kind], status: !providerStatus ? unknownStatus : !hasKey(kind) ? "Off · No key" : providerUsed(kind) ? "On · Key saved" : "Off · Key saved, not used" })),
     { id: "correction", name: "Correction model", status: correctionStatus },
   ];
   return <div className="grid gap-6">

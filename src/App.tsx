@@ -234,7 +234,7 @@ export default function App() {
   const notifications = <NotificationArea importing={imports.current} queued={imports.queued} importErrors={imports.errors} deleteError={deleting ? null : deleteError} malformed={malformed}
     onDismissImportErrors={() => void dismissErrors()} onDismissDeleteError={() => setDeleteError(null)} onDismissMalformed={() => setMalformed([])} />;
   const viewKey = panel ?? (showSearch ? "search" : selectedId ? `meeting:${selectedId}` : showRecording && busyRecording ? "recording" : "library");
-  const pageHeader = panel === "settings" ? <PageHeader title="Settings" context="Choose how Meetings are recorded and processed." />
+  const pageHeader = panel === "settings" ? null
     : panel === "help" ? <PageHeader title="Help" context="App information, shortcuts and diagnostics." />
     : showSearch ? <PageHeader title="Search" context="Find a Segment across Transcripts in your Library." />
     : <PageHeader title="Library" context="Your Meetings, kept on this PC." actions={<Button variant="secondary" onClick={() => void pickFiles()}><Import size={16} strokeWidth={1.5} />Import a file</Button>} />;

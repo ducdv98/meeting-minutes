@@ -3,12 +3,12 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import SettingsView, { type SettingsTabId } from "./SettingsView";
 import type { AiSettings } from "./ai";
 import { acknowledgeCloudNotice, getSettings, installedModels, updateSettings, type Settings } from "./processing";
-import { aiStatus, deleteApiKey, listAiModels, managedConnect, managedDisconnect, managedStatus, saveApiKey, testAiProvider, testCloudApiKey, updateAiSettings, type AiStatus } from "./ai";
+import { aiStatus, deleteApiKey, listAiModels, managedConnect, managedDisconnect, managedStatus, saveApiKey, testCloudApiKey, testLanguageModel, updateLanguageModels, type AiStatus } from "./ai";
 import { openLink } from "./app-info";
-import { PRIVACY_INTRO } from "./privacy-text";
+import { CLOUD_NOTICE_SUMMARY, CLOUD_NOTICE_TEXT, PRIVACY_INTRO } from "./privacy-text";
 
 vi.mock("./processing", async (importOriginal) => ({ ...(await importOriginal<typeof import("./processing")>()), getSettings: vi.fn(), updateSettings: vi.fn(), installedModels: vi.fn(), acknowledgeCloudNotice: vi.fn() }));
-vi.mock("./ai", async (importOriginal) => ({ ...(await importOriginal<typeof import("./ai")>()), aiStatus: vi.fn(), listAiModels: vi.fn(), managedStatus: vi.fn(), managedConnect: vi.fn(), managedDisconnect: vi.fn(), saveApiKey: vi.fn(), deleteApiKey: vi.fn(), updateAiSettings: vi.fn(), testAiProvider: vi.fn(), testCloudApiKey: vi.fn() }));
+vi.mock("./ai", async (importOriginal) => ({ ...(await importOriginal<typeof import("./ai")>()), aiStatus: vi.fn(), listAiModels: vi.fn(), managedStatus: vi.fn(), managedConnect: vi.fn(), managedDisconnect: vi.fn(), saveApiKey: vi.fn(), deleteApiKey: vi.fn(), updateLanguageModels: vi.fn(), testLanguageModel: vi.fn(), testCloudApiKey: vi.fn() }));
 vi.mock("./app-info", () => ({ openLink: vi.fn() }));
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.resetAllMocks(); });
 beforeEach(() => { vi.mocked(installedModels).mockResolvedValue([]); vi.mocked(managedStatus).mockResolvedValue({ connected: false, revoked: false }); });
@@ -16,7 +16,7 @@ beforeEach(() => { vi.mocked(installedModels).mockResolvedValue([]); vi.mocked(m
 const noAi: AiSettings = { provider: null, ollama_model: null, openai_model: null, anthropic_model: null, gemini_model: null };
 const empty: AiStatus = { provider: null, model: null, configured: false, has_openai_key: false, has_anthropic_key: false, has_groq_key: false, has_gemini_key: false };
 
-const base: Settings = { recording_notice_acknowledged: true, cloud_notice_acknowledged: false, auto_process: true, model: "small", vocabulary: ["Nguyễn"], language: null, your_name: null, ai: noAi };
+const base: Settings = { recording_notice_acknowledged: true, cloud_notice_acknowledged: false, auto_process: true, model: "small", vocabulary: ["Nguyễn"], language: null, your_name: null, ai: noAi, language_models: { models: [], correction: null, summary: null, ask: null, confirmed_correction_providers: [], legacy_correction_pending: false } };
 
 async function openTab(name: string) { fireEvent.mouseDown(await screen.findByRole("tab", { name }), { button: 0, ctrlKey: false }); }
 
@@ -72,6 +72,8 @@ it("keeps Saved in the header across tabs and fades it out after two seconds", a
   const saved = screen.getByText("Saved");
   expect(saved.getAttribute("role")).toBe("status");
   expect(saved.getAttribute("data-state")).toBe("visible");
+  expect(saved.closest("header")).toBe(screen.getByRole("heading", { name: "Settings" }).closest("header"));
+  expect(screen.getByRole("tabpanel", { name: "General" }).parentElement?.className).toContain("motion-content-enter");
   fireEvent.mouseDown(screen.getByRole("tab", { name: "Keys" }), { button: 0, ctrlKey: false });
   expect(screen.getByText("Saved")).toBe(saved);
   act(() => { vi.advanceTimersByTime(2000); });
@@ -152,7 +154,12 @@ it("saves, tests and removes Groq and OpenAI keys on Keys, and shows the cloud n
   fireEvent.change(within(keys).getByLabelText("Groq API key"), { target: { value: "secret" } });
   fireEvent.click(within(keys).getByRole("button", { name: "Save Groq key" }));
   await waitFor(() => expect(saveApiKey).toHaveBeenCalledWith("groq", "secret"));
-  expect(await within(keys).findByText(/Gemini's free tier may use content for training/)).toBeTruthy();
+  expect(await within(keys).findByText(CLOUD_NOTICE_SUMMARY)).toBeTruthy();
+  const disclosure = within(keys).getByRole("button", { name: "Details" });
+  expect(disclosure.getAttribute("aria-expanded")).toBe("false");
+  fireEvent.click(disclosure);
+  expect(disclosure.getAttribute("aria-expanded")).toBe("true");
+  expect(within(keys).getByText(CLOUD_NOTICE_TEXT)).toBeTruthy();
   fireEvent.click(within(keys).getByRole("button", { name: "Got it" }));
   await waitFor(() => expect(acknowledgeCloudNotice).toHaveBeenCalledTimes(1));
   fireEvent.click(within(keys).getByRole("button", { name: "Test Groq key" }));
@@ -289,51 +296,44 @@ it("explains a failed save and a failed load", async () => {
   expect((await screen.findByRole("alert")).textContent).toContain("disk full");
 });
 
-it("selects Ollama, lists models, and tests the selected model", async () => {
-  vi.mocked(getSettings).mockResolvedValue({ ...base, vocabulary: [] });
+it("adds and tests an Ollama Language model", async () => {
+  vi.mocked(getSettings).mockResolvedValue(base);
   vi.mocked(aiStatus).mockResolvedValue(empty);
-  const ollama = { ...empty, provider: "ollama" as const };
-  vi.mocked(updateAiSettings).mockResolvedValueOnce(ollama).mockResolvedValueOnce({ ...ollama, model: "llama3.2", configured: true });
-  vi.mocked(listAiModels).mockResolvedValue(["llama3.2"]);
-  vi.mocked(testAiProvider).mockResolvedValue("ready");
-  render(<SettingsView initialTab="general" />);
-  await openTab("Language models");
-  fireEvent.click(await screen.findByRole("radio", { name: /^Ollama/ }));
-  await waitFor(() => expect(updateAiSettings).toHaveBeenCalledWith("ollama", null));
-  fireEvent.click(await screen.findByRole("button", { name: "Find Ollama models" }));
-  fireEvent.change(await screen.findByRole("combobox", { name: "Model" }), { target: { value: "llama3.2" } });
-  await waitFor(() => expect(updateAiSettings).toHaveBeenCalledWith("ollama", "llama3.2"));
-  fireEvent.click(await screen.findByRole("button", { name: "Test" }));
-  expect((await screen.findByRole("status")).textContent).toContain("Test reply: ready");
+  vi.mocked(updateLanguageModels).mockImplementation(async (models) => ({ ...base, language_models: models }));
+  vi.mocked(testLanguageModel).mockResolvedValue("ready");
+  render(<SettingsView initialTab="language-models" />);
+  await screen.findByRole("combobox", { name: "Provider" });
+  fireEvent.change(screen.getByRole("textbox", { name: "Model ID" }), { target: { value: "llama3.2" } });
+  fireEvent.click(screen.getByRole("button", { name: "Add model" }));
+  await waitFor(() => expect(updateLanguageModels).toHaveBeenCalledWith(expect.objectContaining({ models: [{ provider: "ollama", model: "llama3.2" }] })));
+  fireEvent.click(screen.getByRole("button", { name: "Test" }));
+  await waitFor(() => expect(testLanguageModel).toHaveBeenCalledWith({ provider: "ollama", model: "llama3.2" }));
 });
 
-it("offers Gemini for Summary and Ask with its saved key and model", async () => {
+it("offers Gemini Language models with its saved key and links to Keys", async () => {
   vi.mocked(getSettings).mockResolvedValue(base);
   vi.mocked(aiStatus).mockResolvedValue({ ...empty, has_gemini_key: true });
-  vi.mocked(updateAiSettings).mockResolvedValue({ ...empty, provider: "gemini", model: "gemini-2.5-flash", configured: true, has_gemini_key: true });
-  vi.mocked(listAiModels).mockResolvedValue(["gemini-2.5-flash", "gemini-2.5-pro"]);
-  render(<SettingsView initialTab="general" />);
-  await openTab("Language models");
-  fireEvent.click(await screen.findByRole("radio", { name: /^Gemini/ }));
-  await waitFor(() => expect(updateAiSettings).toHaveBeenCalledWith("gemini", null));
-  expect(await screen.findByText(/Key saved in Windows Credential Manager/)).toBeTruthy();
+  vi.mocked(listAiModels).mockResolvedValue(["gemini-2.5-flash"]);
+  render(<SettingsView initialTab="language-models" />);
+  const provider = await screen.findByRole("combobox", { name: "Provider" });
+  fireEvent.change(provider, { target: { value: "gemini" } });
+  fireEvent.click(screen.getByRole("button", { name: "Load models" }));
+  await waitFor(() => expect(listAiModels).toHaveBeenCalledWith("gemini"));
+  expect(screen.getByRole("combobox", { name: "Provider models" })).toBeTruthy();
+  fireEvent.change(provider, { target: { value: "openai" } });
   fireEvent.click(screen.getByRole("button", { name: "Manage keys" }));
   expect(screen.getByRole("tab", { name: "Keys" }).getAttribute("aria-selected")).toBe("true");
   expect(screen.getAllByLabelText("Gemini API key")).toHaveLength(1);
-  await openTab("Language models");
-  expect((screen.getByRole("combobox", { name: "Model" }) as HTMLSelectElement).value).toBe("gemini-2.5-flash");
-  fireEvent.click(screen.getByRole("button", { name: "Load models" }));
-  await waitFor(() => expect(listAiModels).toHaveBeenCalledWith("gemini"));
 });
 
 it("routes a Language model with no key to the Keys tab", async () => {
-  vi.mocked(getSettings).mockResolvedValue({ ...base, vocabulary: [] });
-  vi.mocked(aiStatus).mockResolvedValue({ ...empty, provider: "openai" });
-  render(<SettingsView initialTab="general" />);
-  await openTab("Language models");
+  vi.mocked(getSettings).mockResolvedValue(base);
+  vi.mocked(aiStatus).mockResolvedValue(empty);
+  render(<SettingsView initialTab="language-models" />);
+  const provider = await screen.findByRole("combobox", { name: "Provider" });
+  fireEvent.change(provider, { target: { value: "openai" } });
   const manage = screen.getByRole("button", { name: "Manage keys" });
   expect(manage.parentElement?.textContent).toContain("No key");
-  expect(within(screen.getByRole("tabpanel", { name: "Language models" })).queryByLabelText("OpenAI API key")).toBeNull();
   fireEvent.click(manage);
   expect(screen.getByRole("tab", { name: "Keys" }).getAttribute("aria-selected")).toBe("true");
   expect(screen.getByLabelText("OpenAI API key")).toBeTruthy();
@@ -354,12 +354,11 @@ it("shows cloud transcription key status and opens Keys without a second Gemini 
   expect(screen.getByText("http://localhost:11434")).toBeTruthy();
 });
 
-it("explains how to start Ollama when model discovery fails", async () => {
-  vi.mocked(getSettings).mockResolvedValue({ ...base, vocabulary: [] });
-  vi.mocked(aiStatus).mockResolvedValue({ ...empty, provider: "ollama" });
+it("shows model discovery errors", async () => {
+  vi.mocked(getSettings).mockResolvedValue(base);
+  vi.mocked(aiStatus).mockResolvedValue(empty);
   vi.mocked(listAiModels).mockRejectedValue("Ollama is not running at localhost:11434");
-  render(<SettingsView initialTab="general" />);
-  await openTab("Language models");
-  fireEvent.click(await screen.findByRole("button", { name: "Find Ollama models" }));
-  expect((await screen.findByRole("alert")).textContent).toContain("ollama pull llama3.2");
+  render(<SettingsView initialTab="language-models" />);
+  fireEvent.click(await screen.findByRole("button", { name: "Load models" }));
+  expect((await screen.findByRole("alert")).textContent).toContain("Ollama is not running");
 });
