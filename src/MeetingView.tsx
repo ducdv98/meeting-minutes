@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 import { assignSegments, deleteMeeting, meetingDetail, openMeetingFolder, renameMeeting, renameParticipant, removeParticipant, participantNames, type MeetingDetail, type SearchHit } from "./library";
 import Player, { PlayerContext, type PlayerHandle } from "./Player";
@@ -23,6 +23,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { EmptyState } from "./components/states/EmptyState";
 import { ErrorState } from "./components/states/ErrorState";
 import { Loading, LoadingRows } from "./components/states/Loading";
+import { PageHeader } from "./components/PageHeader";
 import type { Citation } from "./summary";
 
 interface Props {
@@ -34,6 +35,7 @@ interface Props {
   onOpened?(): void;
   onDeleted?(): void;
   recordingMeetingId?: string | null;
+  notifications?: ReactNode;
 }
 
 function languageName(code: string | null): string {
@@ -63,7 +65,7 @@ function mergeDraft(current: DraftSegment[], incoming: DraftSegment[]): DraftSeg
   return added.length ? [...current, ...added].sort((a, b) => a.start_ms - b.start_ms || a.end_ms - b.end_ms) : current;
 }
 
-export default function MeetingView({ id, onBack, onRenamed, onOpenSettings, openAt, onOpened, onDeleted, recordingMeetingId }: Props) {
+export default function MeetingView({ id, onBack, onRenamed, onOpenSettings, openAt, onOpened, onDeleted, recordingMeetingId, notifications }: Props) {
   const [providerStatus, setProviderStatus] = useState<AiStatus | null>(null);
   const [detail, setDetail] = useState<MeetingDetail | null>(null);
   const [yourName, setYourName] = useState<string | null>(null);
@@ -298,32 +300,29 @@ export default function MeetingView({ id, onBack, onRenamed, onOpenSettings, ope
   const meetingParticipants = transcript && detail ? participantList(transcript, detail.participants, detail.segment_participants, yourName, isVoiceNote) : [];
   return <PlayerContext.Provider value={player}><section className="flex min-h-0 min-w-0 flex-1 flex-col" aria-label="Meeting">
     <span className="sr-only" aria-live="polite" aria-atomic="true">{stageAnnouncement}</span>
-    {error && <div className="mx-7 mt-4"><ErrorState title="Couldn't update the Meeting" guidance={error} /></div>}
-    {staleSearchResult && <p className="mx-7 mt-3 text-sm text-warn">This search result is from an older transcript revision.</p>}
-    {!detail && !error && <div className="px-7"><Loading message="Opening Meeting…" /></div>}
-    {detail && <>
-      <header className="flex items-start gap-4 px-7 pt-5">
-        <Button variant="ghost" size="icon" aria-label="Back to Library" title="Back to Library" disabled={saving} onClick={onBack}><ChevronLeft size={16} strokeWidth={1.5} /></Button>
-        <div className="grid min-w-0 flex-1 gap-1.5">
-          {renaming ? <div className="flex items-center gap-2"><label htmlFor="meeting-title" className="sr-only">Title</label><Input id="meeting-title" autoFocus className="max-w-[420px] font-display text-heading-md" value={title} onChange={(event) => setTitle(event.target.value)} onKeyDown={(event) => {
+    <PageHeader leading={<Button variant="ghost" size="icon" aria-label="Back to Library" title="Back to Library" disabled={saving} onClick={onBack}><ChevronLeft size={16} strokeWidth={1.5} /></Button>}
+      title={detail ? renaming ? <div className="flex items-center gap-2"><label htmlFor="meeting-title" className="sr-only">Title</label><Input id="meeting-title" autoFocus className="max-w-[420px] font-display text-heading-md" value={title} onChange={(event) => setTitle(event.target.value)} onKeyDown={(event) => {
             if (event.key === "Enter") { event.preventDefault(); void saveRename(); }
             if (event.key === "Escape") cancelRename();
           }} /><Button disabled={!title.trim() || saving} onClick={() => void saveRename()}>Save</Button><Button variant="ghost" onClick={cancelRename}>Cancel</Button></div>
-            : <button type="button" className="group flex min-w-0 items-center gap-2 justify-self-start text-left" aria-label={`Rename ${detail.title}`} onClick={() => { setTitle(detail.title); setError(null); setRenaming(true); }}><h1 className="m-0 truncate font-display text-heading-md">{detail.title}</h1><Pencil size={16} strokeWidth={1.5} className="shrink-0 text-ink-faint opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100" aria-hidden="true" /></button>}
-          <div className="flex flex-wrap items-center gap-x-3.5 gap-y-1.5 text-xs text-ink-muted">
+            : <button type="button" className="group flex min-w-0 items-center gap-2 justify-self-start text-left" aria-label={`Rename ${detail.title}`} onClick={() => { setTitle(detail.title); setError(null); setRenaming(true); }}><h1 className="m-0 truncate font-display text-heading-md">{detail.title}</h1><Pencil size={16} strokeWidth={1.5} className="shrink-0 text-ink-faint opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100" aria-hidden="true" /></button> : "Meeting"}
+      context={detail ? <div className="flex flex-wrap items-center gap-x-3.5 gap-y-1.5">
             <span className="inline-flex items-center gap-1.5"><Clock3 size={14} strokeWidth={1.5} aria-hidden="true" /><time dateTime={detail.started_at}>{meetingDateTime(detail.started_at)}</time> · {durationMinutes} min</span>
             <label className="inline-flex items-center gap-1.5"><Globe2 size={14} strokeWidth={1.5} aria-hidden="true" /><span className="sr-only">Language</span><select aria-label="Language" className="max-w-[130px] cursor-pointer border-0 bg-transparent text-xs text-ink-muted hover:text-ink" value={detail.language ?? ""} disabled={!!job && job.stage !== "failed"} onChange={(event) => void changeLanguage(event.target.value)}><option value="">Auto-detect</option><option value="en">English</option><option value="vi">Vietnamese</option></select></label>
             <span className="inline-flex items-center gap-1.5"><Mic size={14} strokeWidth={1.5} aria-hidden="true" />{sources}</span>
             <button type="button" className="inline-flex items-center gap-1.5 hover:text-accent" onClick={() => void openMeetingFolder(id).catch((reason) => setError(String(reason)))}><FolderOpen size={14} strokeWidth={1.5} aria-hidden="true" />Open folder</button>
-          </div>
-        </div>
-        <DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" aria-label="More actions"><Ellipsis size={16} strokeWidth={1.5} /></Button></DropdownMenuTrigger><DropdownMenuContent align="end">
+          </div> : "Opening Meeting…"}
+      actions={detail && <DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" aria-label="More actions"><Ellipsis size={16} strokeWidth={1.5} /></Button></DropdownMenuTrigger><DropdownMenuContent align="end">
           <DropdownMenuItem onSelect={() => { setTitle(detail.title); setRenaming(true); }}><Pencil size={16} strokeWidth={1.5} />Rename</DropdownMenuItem>
           <DropdownMenuItem disabled={!transcript || !!job} onSelect={() => void runTranscription(model || undefined)}><RefreshCw size={16} strokeWidth={1.5} />Re-transcribe</DropdownMenuItem>
           <DropdownMenuSeparator className="my-1 h-px bg-line" />
           <DropdownMenuItem className="text-record" disabled={recordingMeetingId === id || (!!job && job.stage !== "failed")} onSelect={() => { setError(null); setConfirmingDelete(true); }}><Trash2 size={16} strokeWidth={1.5} />Delete</DropdownMenuItem>
-        </DropdownMenuContent></DropdownMenu>
-      </header>
+        </DropdownMenuContent></DropdownMenu>} />
+    {notifications}
+    {error && <div className="mx-7 mt-4"><ErrorState title="Couldn't update the Meeting" guidance={error} /></div>}
+    {staleSearchResult && <p className="mx-7 mt-3 text-sm text-warn">This search result is from an older transcript revision.</p>}
+    {!detail && !error && <div className="px-7"><Loading message="Opening Meeting…" /></div>}
+    {detail && <>
       {confirmingDelete && <ConfirmDelete title={detail.title} busy={deleteBusy} onConfirm={() => void confirmDelete()} onCancel={() => setConfirmingDelete(false)} />}
       {detail.audio_path && audioOpen ? <Player ref={playerHandle} audio_path={detail.audio_path} duration_ms={detail.duration_ms} markers={detail.markers} highlight={highlight} onPlayerChange={onPlayerChange} onPosition={onPosition} /> : !detail.audio_path ? <p className="mx-7 mt-4 text-sm text-ink-muted">No audio yet</p> : null}
       <div className="mt-4 grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_380px] border-t border-line max-[900px]:grid-cols-[minmax(0,1fr)_minmax(300px,42%)] max-[680px]:grid-cols-1">

@@ -85,9 +85,8 @@ export default function SettingsView({ initialTab }: { initialTab?: SettingsTabI
     if (next) saveQueue.current = saveQueue.current.then(() => updateSettings(next.auto_process, next.model, next.vocabulary, next.language, next.your_name)).then(() => {}, () => {});
   }, []);
   return <section aria-label="Settings" className="min-h-0 flex-1 overflow-y-auto">
-    <div className="grid max-w-[680px] gap-8 px-7 pb-12 pt-7">
-      <div className="flex items-center gap-3">
-        <h2 className="m-0 font-display text-heading-md">Settings</h2>
+    <div className="grid max-w-[680px] gap-4 px-7 pb-12">
+      <div className="flex h-5 items-center justify-end">
         {saved && <span role="status" data-state={savedLeaving ? "leaving" : "visible"} className="settings-saved inline-flex items-center gap-1 text-xs text-ink-muted"><Check size={14} strokeWidth={1.5} aria-hidden="true" />Saved</span>}
       </div>
       {error && <ErrorState title="Couldn't save Settings" guidance={`${error.reason}. The change shown below isn't saved yet.`} onRetry={() => save(error.settings)} />}
