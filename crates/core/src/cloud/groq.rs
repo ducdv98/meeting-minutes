@@ -15,7 +15,6 @@ use std::{
 };
 
 const URL: &str = "https://api.groq.com/openai/v1/audio/transcriptions";
-const MODEL: &str = "whisper-large-v3";
 const MAX_FILE_BYTES: usize = 25 * 1024 * 1024;
 /// Matches the engine chain's longest span, so spans it cut at a pause are not cut again.
 const MAX_SPAN_SAMPLES: usize = 10 * 60 * 16_000;
@@ -27,14 +26,24 @@ pub struct GroqEngine {
     http: Arc<dyn HttpClient>,
     key: ApiKey,
     boundary: String,
+    model: String,
 }
 impl GroqEngine {
     pub fn new(http: Arc<dyn HttpClient>, key: ApiKey) -> Self {
+        Self::new_with_model(http, key, crate::speech_models::DEFAULT_GROQ_MODEL)
+    }
+
+    pub fn new_with_model(
+        http: Arc<dyn HttpClient>,
+        key: ApiKey,
+        model: impl Into<String>,
+    ) -> Self {
         let id = BOUNDARY_ID.fetch_add(1, Ordering::Relaxed);
-        Self::with_boundary(
+        Self::with_boundary_and_model(
             http,
             key,
             format!("meeting-minutes-{}-{id}", std::process::id()),
+            model,
         )
     }
 
@@ -43,10 +52,25 @@ impl GroqEngine {
         key: ApiKey,
         boundary: impl Into<String>,
     ) -> Self {
+        Self::with_boundary_and_model(
+            http,
+            key,
+            boundary,
+            crate::speech_models::DEFAULT_GROQ_MODEL,
+        )
+    }
+
+    pub fn with_boundary_and_model(
+        http: Arc<dyn HttpClient>,
+        key: ApiKey,
+        boundary: impl Into<String>,
+        model: impl Into<String>,
+    ) -> Self {
         Self {
             http,
             key,
             boundary: boundary.into(),
+            model: model.into(),
         }
     }
 
@@ -119,7 +143,7 @@ impl GroqEngine {
             first.extend(second);
             return Ok((first, first_lang.or(second_lang)));
         }
-        let body = multipart(&self.boundary, &audio, language, vocabulary);
+        let body = multipart(&self.boundary, &self.model, &audio, language, vocabulary);
         let response = send_cancellable(
             self.http.clone(),
             HttpRequest {
@@ -313,6 +337,7 @@ fn parse_word(word: &Value) -> Result<RawWord, EngineError> {
 
 fn multipart(
     boundary: &str,
+    model: &str,
     audio: &[u8],
     language: Option<Language>,
     vocabulary: Option<&str>,
@@ -321,7 +346,7 @@ fn multipart(
     let mut field = |name: &str, value: &str| {
         body.extend_from_slice(format!("--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n").as_bytes());
     };
-    field("model", MODEL);
+    field("model", model);
     field("response_format", "verbose_json");
     field("timestamp_granularities[]", "word");
     field("timestamp_granularities[]", "segment");
@@ -368,6 +393,53 @@ fn trim_prompt(prompt: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ai::{HttpRequest, HttpResponse};
+    use std::{io::Cursor, sync::Mutex};
+
+    struct CaptureHttp(Mutex<Option<HttpRequest>>);
+    impl HttpClient for CaptureHttp {
+        fn send(&self, request: HttpRequest) -> Result<HttpResponse, AiError> {
+            *self.0.lock().unwrap() = Some(request);
+            Ok(HttpResponse {
+                status: 200,
+                headers: vec![],
+                body: Box::new(Cursor::new(
+                    br#"{"language":"english","segments":[]}"#.to_vec(),
+                )),
+            })
+        }
+    }
+
+    #[test]
+    fn automatic_groq_model_is_sent_in_transcription_request() {
+        let mut speech = crate::speech_models::SpeechSettings::default();
+        speech.models.push(crate::speech_models::SpeechModel {
+            provider: crate::speech_models::SpeechProvider::Groq,
+            model: "whisper-large-v3-turbo".into(),
+        });
+        speech.automatic_groq = Some("whisper-large-v3-turbo".into());
+        let http = Arc::new(CaptureHttp(Mutex::new(None)));
+        let engine = GroqEngine::with_boundary_and_model(
+            http.clone(),
+            ApiKey::new("secret").unwrap(),
+            "test",
+            speech
+                .automatic(crate::speech_models::SpeechProvider::Groq)
+                .unwrap(),
+        );
+        engine
+            .transcribe_typed(
+                &[0.1; 1600],
+                Some(Language::En),
+                None,
+                &AtomicBool::new(false),
+            )
+            .unwrap();
+        let request = http.0.lock().unwrap().take().unwrap();
+        let body = request.body.unwrap();
+        let text = String::from_utf8_lossy(body.multipart_bytes().unwrap());
+        assert!(text.contains("name=\"model\"\r\n\r\nwhisper-large-v3-turbo\r\n"));
+    }
 
     #[test]
     fn flac_round_trips_a_span_with_a_partial_last_block() {

@@ -37,6 +37,7 @@ use meeting_minutes_core::{
     processing::{self, JobStage, ProcessingStatus, Processor, SpeechEngine, TranscribeRequest},
     recorder::{Phase, Recorder, RecorderError, RecorderStatus, SaveJob, SaveState},
     settings::Settings,
+    speech_models::{SpeechProvider, SpeechSettings},
     summary::{self, Summary, SummaryOptions},
     transcript::{Language, Speaker, Transcript},
     window_fit::{fit_window, Rect},
@@ -713,10 +714,18 @@ fn update_settings(
     vocabulary: Vec<String>,
     language: Option<Language>,
     your_name: Option<String>,
+    speech: Option<SpeechSettings>,
 ) -> Result<Settings, String> {
     let mut settings = Settings::load(&path.0);
     settings.auto_process = auto_process;
     settings.model = model;
+    if let Some(speech) = speech {
+        speech.validate()?;
+        settings.model = speech.automatic_whisper.clone();
+        settings.speech = speech;
+    } else {
+        settings.speech.automatic_whisper = settings.model.clone();
+    }
     settings.vocabulary = vocabulary;
     settings.language = language;
     settings.your_name = your_name
@@ -846,6 +855,43 @@ async fn test_cloud_api_key(app: AppHandle, provider: ProviderKind) -> Result<()
             .ok_or_else(|| format!("Add your {} API key in Settings", provider.label()))?;
         let http = app.state::<Http>();
         ai::test_cloud_key(http.0.as_ref(), provider, &key).map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn test_speech_model(
+    app: AppHandle,
+    provider: SpeechProvider,
+    model: String,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let kind = match provider {
+            SpeechProvider::Groq => ProviderKind::Groq,
+            SpeechProvider::Gemini => ProviderKind::Gemini,
+        };
+        let key = app
+            .state::<Secrets>()
+            .0
+            .get(kind)?
+            .ok_or_else(|| format!("Add your {} key in Keys", kind.label()))?;
+        let http = app.state::<Http>();
+        ai::test_cloud_key(http.0.as_ref(), kind, &key).map_err(|error| error.to_string())?;
+        if provider == SpeechProvider::Groq {
+            if !meeting_minutes_core::speech_models::GROQ_MODELS.contains(&model.as_str()) {
+                return Err("Choose a supported Groq Speech-to-text model".into());
+            }
+        } else {
+            let models = ai::list_models(http.0.as_ref(), kind, Some(&key))
+                .map_err(|error| error.to_string())?;
+            if !models.iter().any(|listed| {
+                listed == &model || listed.strip_prefix("models/") == Some(model.as_str())
+            }) {
+                return Err("Gemini did not list that model".into());
+            }
+        }
+        Ok(())
     })
     .await
     .map_err(|error| error.to_string())?
@@ -1445,10 +1491,13 @@ fn transcription_chain<'a>(
         .get(ProviderKind::Groq)
         .map_err(processing::ProcessingError::Engine)?
     {
-        cloud.push(Box::new(GroqEngine::new(
-            app.state::<Http>().0.clone(),
-            key,
-        )));
+        if let Some(model) = settings.speech.automatic(SpeechProvider::Groq) {
+            cloud.push(Box::new(GroqEngine::new_with_model(
+                app.state::<Http>().0.clone(),
+                key,
+                model,
+            )));
+        }
     }
     if let Some(key) = app
         .state::<Secrets>()
@@ -1456,15 +1505,13 @@ fn transcription_chain<'a>(
         .get(ProviderKind::Gemini)
         .map_err(processing::ProcessingError::Engine)?
     {
-        let gemini_model = settings
-            .ai
-            .model_for(ProviderKind::Gemini)
-            .expect("Gemini always has a default model");
-        cloud.push(Box::new(GeminiEngine::new(
-            app.state::<Http>().0.clone(),
-            key,
-            gemini_model,
-        )));
+        if let Some(model) = settings.speech.automatic(SpeechProvider::Gemini) {
+            cloud.push(Box::new(GeminiEngine::new(
+                app.state::<Http>().0.clone(),
+                key,
+                model,
+            )));
+        }
     }
     Ok(processing::EngineChain::new(cloud, model, local))
 }
@@ -3019,6 +3066,7 @@ fn main() {
             managed_disconnect,
             list_ai_models,
             test_cloud_api_key,
+            test_speech_model,
             acknowledge_cloud_notice,
             save_api_key,
             delete_api_key,

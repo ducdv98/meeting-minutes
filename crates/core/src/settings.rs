@@ -1,4 +1,6 @@
-use crate::{ai::ProviderKind, models::TURBO_MODEL, transcript::Language};
+use crate::{
+    ai::ProviderKind, models::TURBO_MODEL, speech_models::SpeechSettings, transcript::Language,
+};
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
@@ -22,6 +24,7 @@ pub struct Settings {
     /// Default Meeting language; `None` detects it.
     pub language: Option<Language>,
     pub ai: AiSettings,
+    pub speech: SpeechSettings,
 }
 
 impl Default for Settings {
@@ -35,6 +38,7 @@ impl Default for Settings {
             your_name: None,
             language: None,
             ai: AiSettings::default(),
+            speech: SpeechSettings::default(),
         }
     }
 }
@@ -77,12 +81,22 @@ impl AiSettings {
 
 impl Settings {
     pub fn load(path: &Path) -> Self {
+        let legacy = fs::read(path)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok());
         let mut settings: Self = fs::read(path)
             .ok()
             .and_then(|bytes| serde_json::from_slice(&bytes).ok())
             .unwrap_or_default();
         if matches!(settings.model.as_str(), "medium" | "large-v3-turbo") {
             settings.model = TURBO_MODEL.into();
+        }
+        if legacy
+            .as_ref()
+            .is_some_and(|value| value.get("speech").is_none())
+        {
+            settings.speech =
+                SpeechSettings::migrate(&settings.model, settings.ai.gemini_model.as_deref());
         }
         settings
     }
@@ -143,5 +157,29 @@ mod tests {
         assert_eq!(settings.ai.openai_model.as_deref(), Some("gpt-4o"));
         let json = serde_json::to_string(&settings).unwrap();
         assert!(!json.contains("secret"));
+    }
+
+    #[test]
+    fn old_format_settings_file_migrates_speech_models_and_keeps_behavior() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        fs::write(&path, r#"{"model":"base","ai":{"gemini_model":"gemini-2.5-flash-lite"},"auto_process":false}"#).unwrap();
+        let settings = Settings::load(&path);
+        assert_eq!(settings.speech.automatic_whisper, "base");
+        assert_eq!(
+            settings
+                .speech
+                .automatic(crate::speech_models::SpeechProvider::Groq),
+            Some("whisper-large-v3")
+        );
+        assert_eq!(
+            settings
+                .speech
+                .automatic(crate::speech_models::SpeechProvider::Gemini),
+            Some("gemini-2.5-flash-lite")
+        );
+        assert!(!settings.auto_process);
+        settings.save(&path).unwrap();
+        assert_eq!(Settings::load(&path), settings);
     }
 }

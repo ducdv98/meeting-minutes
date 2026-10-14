@@ -26,7 +26,11 @@ export const MODELS = [
 export function modelSizeLabel(sizeMb: number) {
   return sizeMb < 1000 ? `${sizeMb} MB` : `${(sizeMb / 1000).toFixed(1)} GB`;
 }
-export interface Settings { recording_notice_acknowledged: boolean; cloud_notice_acknowledged: boolean; auto_process: boolean; model: string; vocabulary: string[]; language: Language | null; your_name: string | null; ai: AiSettings }
+export type SpeechProvider = "groq" | "gemini";
+export interface SpeechModel { provider: SpeechProvider; model: string }
+export interface SpeechSettings { models: SpeechModel[]; automatic_groq: string | null; automatic_gemini: string | null; automatic_whisper: string }
+export const GROQ_SPEECH_MODELS = ["whisper-large-v3", "whisper-large-v3-turbo"] as const;
+export interface Settings { recording_notice_acknowledged: boolean; cloud_notice_acknowledged: boolean; auto_process: boolean; model: string; vocabulary: string[]; language: Language | null; your_name: string | null; ai: AiSettings; speech?: SpeechSettings }
 
 export const processingStatus = () => invoke<ProcessingStatus>("processing_status");
 export const enqueueTranscription = (meetingId: string, model?: string) => invoke<ProcessingStatus>("transcribe_meeting", { meetingId, model: model ?? null });
@@ -37,7 +41,8 @@ export const transcriptDraft = (meetingId: string) => invoke<DraftSegment[]>("tr
 export const setMeetingLanguage = (meetingId: string, language: Language | null) => invoke<void>("set_meeting_language", { meetingId, language });
 export const getSettings = () => invoke<Settings>("get_settings");
 export const acknowledgeCloudNotice = () => invoke<Settings>("acknowledge_cloud_notice");
-export const updateSettings = (autoProcess: boolean, model: string, vocabulary: string[], language: Language | null, yourName: string | null) => invoke<Settings>("update_settings", { autoProcess, model, vocabulary, language, yourName });
+export const updateSettings = (autoProcess: boolean, model: string, vocabulary: string[], language: Language | null, yourName: string | null, speech?: SpeechSettings) => invoke<Settings>("update_settings", { autoProcess, model, vocabulary, language, yourName, speech: speech ?? null });
+export const testSpeechModel = (provider: SpeechProvider, model: string) => invoke<void>("test_speech_model", { provider, model });
 export const installedModels = () => invoke<string[]>("installed_models");
 export const onProcessingStatus = (handler: (status: ProcessingStatus) => void): Promise<UnlistenFn> => listen<ProcessingStatus>("processing-status", (event) => handler(event.payload));
 export const onTranscriptDraft = (handler: (draft: TranscriptDraftEvent) => void): Promise<UnlistenFn> => listen<TranscriptDraftEvent>("transcript-draft", (event) => handler(event.payload));

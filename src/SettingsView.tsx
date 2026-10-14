@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Check } from "lucide-react";
-import { getSettings, installedModels, updateSettings, type Settings } from "./processing";
+import { getSettings, installedModels, onProcessingStatus, updateSettings, type Settings } from "./processing";
 import { aiStatus, type AiStatus } from "./ai";
 import { ErrorState } from "./components/states/ErrorState";
 import { Loading } from "./components/states/Loading";
@@ -46,6 +46,12 @@ export default function SettingsView({ initialTab }: { initialTab?: SettingsTabI
   }, [load]);
   useEffect(() => {
     let active = true;
+    let unlisten: (() => void) | undefined;
+    void onProcessingStatus(() => { void installedModels().then((names) => { if (active) setInstalled(names); }, () => {}); }).then((stop) => { if (active) unlisten = stop; else stop(); }, () => {});
+    return () => { active = false; unlisten?.(); };
+  }, []);
+  useEffect(() => {
+    let active = true;
     aiStatus().then((next) => { if (active) setProviderStatus(next); }, (reason) => { if (active) setAiError(String(reason)); });
     return () => { active = false; };
   }, []);
@@ -64,12 +70,15 @@ export default function SettingsView({ initialTab }: { initialTab?: SettingsTabI
     const version = ++saveVersion.current;
     saveQueue.current = saveQueue.current.then(async () => {
       try {
-        await updateSettings(next.auto_process, next.model, next.vocabulary, next.language, next.your_name);
+        await persist(next);
         if (version === saveVersion.current) { setSavedLeaving(false); setSaved(true); }
       } catch (reason) {
         if (version === saveVersion.current) setError({ reason: String(reason), settings: next });
       }
     });
+  }
+  function persist(next: Settings) {
+    return next.speech ? updateSettings(next.auto_process, next.model, next.vocabulary, next.language, next.your_name, next.speech) : updateSettings(next.auto_process, next.model, next.vocabulary, next.language, next.your_name);
   }
   function saveVocabulary() {
     const next = withVocabulary(settings, vocabulary);
@@ -82,7 +91,7 @@ export default function SettingsView({ initialTab }: { initialTab?: SettingsTabI
   unsaved.current = { settings, vocabulary };
   useEffect(() => () => {
     const next = withVocabulary(unsaved.current.settings, unsaved.current.vocabulary);
-    if (next) saveQueue.current = saveQueue.current.then(() => updateSettings(next.auto_process, next.model, next.vocabulary, next.language, next.your_name)).then(() => {}, () => {});
+    if (next) saveQueue.current = saveQueue.current.then(() => next.speech ? updateSettings(next.auto_process, next.model, next.vocabulary, next.language, next.your_name, next.speech) : updateSettings(next.auto_process, next.model, next.vocabulary, next.language, next.your_name)).then(() => {}, () => {});
   }, []);
   return <section aria-label="Settings" className="min-h-0 flex-1 overflow-y-auto">
     <div className="grid max-w-[680px] gap-4 px-7 pb-12">
