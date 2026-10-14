@@ -2410,6 +2410,7 @@ dependencies = [
  "symphonia",
  "tempfile",
  "ureq",
+ "uuid",
  "wasapi",
  "windows 0.62.2",
 ]

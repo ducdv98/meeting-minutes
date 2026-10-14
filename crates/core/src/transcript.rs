@@ -4,6 +4,7 @@ use std::fmt;
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum EngineName {
+    Managed,
     Groq,
     Gemini,
     Local(String),
@@ -12,6 +13,7 @@ pub enum EngineName {
 impl EngineName {
     pub fn label(&self) -> &str {
         match self {
+            Self::Managed => "Managed transcription",
             Self::Groq => "Groq",
             Self::Gemini => "Gemini",
             Self::Local(model) => model,
@@ -21,6 +23,7 @@ impl EngineName {
 impl From<&str> for EngineName {
     fn from(name: &str) -> Self {
         match name {
+            "managed" | "Managed transcription" => Self::Managed,
             "Groq" => Self::Groq,
             "Gemini" => Self::Gemini,
             model => Self::Local(model.to_owned()),
@@ -59,6 +62,24 @@ pub enum FallbackReason {
 }
 impl FallbackReason {
     fn from_saved(value: String) -> Self {
+        if let Some(reason) = value.strip_prefix("managed ") {
+            return match reason {
+                "quota" => Self::Quota(EngineName::Managed),
+                "unauthorized" => Self::Unauthorized(EngineName::Managed),
+                "offline" => Self::Offline(EngineName::Managed),
+                "rate_limit" => Self::RateLimit(EngineName::Managed),
+                "other" => Self::Other(EngineName::Managed),
+                _ => Self::Legacy(value),
+            };
+        }
+        if let Some(reason) = value.strip_prefix("Managed transcription ") {
+            return match reason {
+                "is busy" => Self::Quota(EngineName::Managed),
+                "was disconnected" => Self::Unauthorized(EngineName::Managed),
+                "is unavailable" => Self::Offline(EngineName::Managed),
+                _ => Self::Legacy(value),
+            };
+        }
         let Some((engine, reason)) = value.split_once(' ') else {
             return Self::Legacy(value);
         };
@@ -76,6 +97,15 @@ impl FallbackReason {
 impl fmt::Display for FallbackReason {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Quota(EngineName::Managed) | Self::RateLimit(EngineName::Managed) => {
+                f.write_str("Managed transcription is busy")
+            }
+            Self::Unauthorized(EngineName::Managed) => {
+                f.write_str("Managed transcription was disconnected")
+            }
+            Self::Offline(EngineName::Managed) | Self::Other(EngineName::Managed) => {
+                f.write_str("Managed transcription is unavailable")
+            }
             Self::Quota(engine) => write!(f, "{engine} daily limit reached"),
             Self::Unauthorized(engine) => write!(f, "{engine} API key rejected"),
             Self::Offline(engine) => write!(f, "{engine} unavailable"),
