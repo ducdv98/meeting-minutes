@@ -113,3 +113,25 @@ it("shows setup guidance when no Language model is ready", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Set one up →" }));
   expect(onOpenSettings).toHaveBeenCalledOnce();
 });
+it("keeps Generate disabled with no Summary default until a model is chosen", async () => {
+  const onOpenSettings = vi.fn();
+  const settings = { ...languageModels, summary: null };
+  render(<SummaryPanel meetingId="m1" transcript={transcript} player={null} aiStatus={aiStatus} languageModels={settings} onOpenSettings={onOpenSettings} />);
+  const generate = await screen.findByRole("button", { name: "Generate with a model" });
+  expect(generate.hasAttribute("disabled")).toBe(true);
+  expect(screen.getByRole("button", { name: "Choose Language model" }).textContent).toContain("Choose a model");
+  expect(screen.getByText(/No default Language model is set for Summary/)).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Language models in Settings →" }));
+  expect(onOpenSettings).toHaveBeenCalledOnce();
+  expect(generateSummary).not.toHaveBeenCalled();
+  fireEvent.pointerDown(screen.getByRole("button", { name: "Choose Language model" }), { button: 0, ctrlKey: false });
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Ollama · llama" }));
+  fireEvent.click(screen.getByRole("button", { name: "Generate with llama" }));
+  await waitFor(() => expect(generateSummary).toHaveBeenCalledWith("m1", false, { provider: "ollama", model: "llama" }));
+  expect(settings.summary).toBeNull();
+});
+it("keeps Redo disabled with no Summary default", async () => {
+  vi.mocked(meetingSummary).mockResolvedValue({ schema_version: 1, revision: 2, created_at: "now", provider: "ollama", model: "llama", overview: [], key_points: [], decisions: [], action_items: [], dropped_items: 0 });
+  render(<SummaryPanel meetingId="m1" transcript={transcript} player={null} aiStatus={aiStatus} languageModels={{ ...languageModels, summary: null }} />);
+  expect((await screen.findByRole("button", { name: "Redo with a model" })).hasAttribute("disabled")).toBe(true);
+});

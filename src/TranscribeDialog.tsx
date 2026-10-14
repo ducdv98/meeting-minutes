@@ -3,7 +3,7 @@ import { aiStatus, managedStatus, type AiStatus, type ManagedStatus } from "./ai
 import ModelPicker, { type ModelOption } from "./components/ModelPicker";
 import { Button } from "./components/ui/Button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "./components/ui/Dialog";
-import { getSettings, installedModels, MODELS, type Settings } from "./processing";
+import { getSettings, installedModels, MODELS, modelSizeLabel, type Settings } from "./processing";
 
 export default function TranscribeDialog({ again, onClose, onTranscribe, onOpenSettings }: { again: boolean; onClose(): void; onTranscribe(model?: string): void; onOpenSettings(): void }) {
   const [choice, setChoice] = useState<string | null>(null);
@@ -28,9 +28,9 @@ export default function TranscribeDialog({ again, onClose, onTranscribe, onOpenS
     return () => { active = false; };
   }, []);
   const options: ModelOption[] = [
-    ...MODELS.map((model) => ({ id: `local:${model.name}`, provider: "Local Whisper", model: model.name, label: `Local Whisper · ${model.label}`, group: "local" as const, ready: true })),
-    ...(managed?.connected && !managed.revoked ? [{ id: "managed", provider: "Managed transcription", model: "Fixed model", label: "Managed transcription · Fixed model", group: "cloud" as const, ready: true, sendsTo: "Managed transcription" }] : []),
-    ...(settings?.speech?.models ?? []).map((model) => ({ id: `${model.provider}:${model.model}`, provider: model.provider === "groq" ? "Groq" : "Gemini", model: model.model, label: `${model.provider === "groq" ? "Groq" : "Gemini"} · ${model.model}`, group: "cloud" as const, ready: !!status?.[`has_${model.provider}_key`], sendsTo: model.provider === "groq" ? "Groq" : "Gemini" })),
+    ...MODELS.map((model) => ({ id: `local:${model.name}`, provider: "Local Whisper", model: model.name, label: `Local Whisper · ${model.label}`, group: "local" as const, ready: true, description: installed?.includes(model.name) ? "Downloaded" : `Downloads when first used (${modelSizeLabel(model.size_mb)})` })),
+    { id: "managed", provider: "Managed transcription", model: "Fixed model", label: "Managed transcription · Fixed model", group: "cloud", ready: !!managed?.connected && !managed.revoked, sendsTo: "Managed transcription", description: managed?.connected && !managed.revoked ? "Ready · sends audio to Managed transcription" : "Not connected" },
+    ...(settings?.speech?.models ?? []).map((model) => { const provider = model.provider === "groq" ? "Groq" : "Gemini"; const ready = !!status?.[`has_${model.provider}_key`]; return { id: `${model.provider}:${model.model}`, provider, model: model.model, label: `${provider} · ${model.model}`, group: "cloud" as const, ready, sendsTo: provider, description: ready ? `Ready · sends audio to ${provider}` : "No key" }; }),
   ];
   const selected = options.find((option) => option.id === choice);
   function begin() {
@@ -43,7 +43,7 @@ export default function TranscribeDialog({ again, onClose, onTranscribe, onOpenS
     {!confirmingCloud && <>
     <div className="mt-5 grid gap-3 text-sm">
       <button type="button" aria-pressed={!choice} className={`rounded-md border px-3 py-2 text-left ${!choice ? "border-accent bg-accent-soft" : "border-line bg-raised hover:bg-hover"}`} onClick={() => setChoice(null)}>Automatic (Transcription order)</button>
-      <div className="flex items-center gap-3"><ModelPicker options={options} value={choice} onChange={setChoice} onSetup={() => { onClose(); onOpenSettings(); }} label="Choose Speech-to-text model" disabled={!loaded}>{selected?.label ?? "Choose a model"}</ModelPicker>{selected && <span className="text-xs text-ink-muted">{selected.group === "local" ? installed?.includes(selected.model) ? "On this PC" : "Downloads when first used" : `Sends to ${selected.sendsTo}`}</span>}</div>
+      <div className="flex items-center gap-3"><ModelPicker options={options} value={choice} onChange={setChoice} onSetup={() => { onClose(); onOpenSettings(); }} label="Choose Speech-to-text model" disabled={!loaded}>{selected?.label ?? "Choose a model"}</ModelPicker>{selected && <span className="text-xs text-ink-muted">{selected.description}</span>}</div>
       {choice && <p className="m-0 text-xs text-ink-muted">This choice applies to this run only. A failure will not try another Provider.</p>}
       {error && <p role="status" className="m-0 text-sm text-ink-muted">{error}</p>}
     </div>

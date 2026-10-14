@@ -74,8 +74,8 @@ export default function LibraryTable({ meetings, details, jobs, recordingMeeting
         const job = jobs.find((item) => item.meeting_id === meeting.id);
         const language = details[meeting.id]?.language === "en" ? "English" : details[meeting.id]?.language === "vi" ? "Tiếng Việt" : "";
         const status = job?.stage === "failed" ? "Failed" : job ? processingStageLabel(job).replace(/ (\d+%)/, " · $1") : summaries[meeting.id] ? "Summary made" : "";
-        return <tr key={meeting.id} tabIndex={0} aria-label={meeting.title} onClick={(event) => { if (!(event.target instanceof Element && event.target.closest("button"))) onOpen(meeting.id); }} onKeyDown={(event) => { if (event.key === "Enter" && event.target === event.currentTarget) { event.preventDefault(); onOpen(meeting.id); } }} className="group border-b border-line outline-offset-[-2px] transition-colors duration-fast ease-functional hover:bg-hover focus-visible:bg-hover">
-          <th scope="row" className="max-w-0 truncate px-4 py-3 text-left font-medium">{meeting.title}</th>
+        return <tr key={meeting.id} onClick={(event) => { if (!(event.target instanceof Element && event.target.closest("button"))) onOpen(meeting.id); }} className="group border-b border-line transition-colors duration-fast ease-functional hover:bg-hover">
+          <th scope="row" className="max-w-0 px-4 py-3 text-left font-medium"><button type="button" onClick={() => onOpen(meeting.id)} className="block max-w-full truncate rounded-sm text-left hover:text-accent">{meeting.title}</button></th>
           <td className="whitespace-nowrap px-4 py-3 text-ink-muted"><time dateTime={meeting.started_at}>{new Intl.DateTimeFormat(undefined, { year: "numeric", month: "short", day: "numeric" }).format(new Date(meeting.started_at))}</time></td>
           <td className="whitespace-nowrap px-4 py-3 tabular-nums text-ink-muted">{durationLabel(meeting.duration_ms)}</td>
           <td className="whitespace-nowrap px-4 py-3 text-ink-muted">{language}</td>

@@ -21,6 +21,7 @@ function renderTable(overrides: Partial<Parameters<typeof LibraryTable>[0]> = {}
 function titles() {
   return within(screen.getByRole("table", { name: "Meetings in the Library" })).getAllByRole("row").slice(1).map((row) => within(row).getByRole("rowheader").textContent);
 }
+function row(title: string) { return screen.getByRole("button", { name: title }).closest("tr")!; }
 
 beforeEach(() => {
   vi.mocked(meetingSummary).mockResolvedValue(null);
@@ -52,11 +53,12 @@ it("sorts Title, Date and Duration with keyboard operable headers and aria-sort"
   expect(date.getAttribute("aria-sort")).toBe("ascending");
 });
 
-it("opens a Meeting by clicking or pressing Enter on a row", () => {
+it("opens a Meeting through its Title button and retains mouse row clicks", () => {
   renderTable();
-  const row = screen.getByRole("row", { name: "Planning" });
-  fireEvent.click(row);
-  fireEvent.keyDown(row, { key: "Enter" });
+  const planning = row("Planning");
+  expect(planning.hasAttribute("tabindex")).toBe(false);
+  fireEvent.click(planning);
+  fireEvent.click(screen.getByRole("button", { name: "Planning" }));
   expect(callbacks.onOpen).toHaveBeenNthCalledWith(1, "one");
   expect(callbacks.onOpen).toHaveBeenNthCalledWith(2, "one");
 });
@@ -64,12 +66,12 @@ it("opens a Meeting by clicking or pressing Enter on a row", () => {
 it("updates row data and shows processing, failure and completed Summary states", async () => {
   vi.mocked(meetingSummary).mockImplementation(async (id) => id === "three" ? { schema_version: 1, revision: 1, created_at: "2026-10-12T00:00:00Z", provider: "ollama", model: "test", overview: [], key_points: [], decisions: [], action_items: [], dropped_items: 0 } : null);
   const view = renderTable({ jobs: [{ meeting_id: "one", model: null, stage: "transcribing", progress: 0.42, error: null }] });
-  expect(within(screen.getByRole("row", { name: "Planning" })).getByText("Transcribing · 42%")).toBeTruthy();
-  await waitFor(() => expect(within(screen.getByRole("row", { name: "Budget" })).getByText("Summary made")).toBeTruthy());
+  expect(within(row("Planning")).getByText("Transcribing · 42%")).toBeTruthy();
+  await waitFor(() => expect(within(row("Budget")).getByText("Summary made")).toBeTruthy());
   view.rerender(<LibraryTable meetings={meetings.slice(1)} details={{ two: { language: "vi", imported: false } }} jobs={[{ meeting_id: "two", model: null, stage: "failed", progress: 0, error: "network" }]} recordingMeetingId={null} {...callbacks} />);
-  expect(screen.queryByRole("row", { name: "Planning" })).toBeNull();
-  expect(within(screen.getByRole("row", { name: "Review" })).getByText("Tiếng Việt")).toBeTruthy();
-  expect(within(screen.getByRole("row", { name: "Review" })).getByText("Failed")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Planning" })).toBeNull();
+  expect(within(row("Review")).getByText("Tiếng Việt")).toBeTruthy();
+  expect(within(row("Review")).getByText("Failed")).toBeTruthy();
 });
 
 it("refreshes Summary made when a Summary status event arrives", async () => {
