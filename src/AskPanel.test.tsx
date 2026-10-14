@@ -128,3 +128,22 @@ it("shows setup guidance instead of the Ask input when no Language model is read
   fireEvent.click(screen.getByRole("button", { name: "Set one up →" }));
   expect(onOpenSettings).toHaveBeenCalledOnce();
 });
+it("keeps Ask empty when its default is None until a model is chosen", async () => {
+  const onOpenSettings = vi.fn();
+  const settings = { ...languageModels, ask: null };
+  render(<AskPanel meetingId="m1" transcript={transcript} player={null} aiStatus={aiStatus} languageModels={settings} onOpenSettings={onOpenSettings} />);
+  const picker = await screen.findByRole("button", { name: "Choose Language model" });
+  expect(picker.textContent).toContain("Choose a model");
+  expect(screen.getByRole("textbox", { name: "Question" }).hasAttribute("disabled")).toBe(true);
+  expect(screen.getByRole("button", { name: "Ask" }).hasAttribute("disabled")).toBe(true);
+  expect(screen.getByText(/No default Language model is set for Ask/)).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Language models in Settings →" }));
+  expect(onOpenSettings).toHaveBeenCalledOnce();
+  expect(askMeeting).not.toHaveBeenCalled();
+  fireEvent.pointerDown(picker, { button: 0, ctrlKey: false });
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Ollama · llama" }));
+  fireEvent.change(screen.getByRole("textbox", { name: "Question" }), { target: { value: "What changed?" } });
+  fireEvent.click(screen.getByRole("button", { name: "Ask" }));
+  await waitFor(() => expect(askMeeting).toHaveBeenCalledWith("m1", "What changed?", false, { provider: "ollama", model: "llama" }));
+  expect(settings.ask).toBeNull();
+});

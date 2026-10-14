@@ -29,10 +29,11 @@ export default function AskPanel({ meetingId, transcript, player, aiStatus, lang
   const fallback = aiStatus?.ask_provider && aiStatus.ask_model ? { provider: aiStatus.ask_provider as LanguageModel["provider"], model: aiStatus.ask_model } : aiStatus?.provider && aiStatus.model && aiStatus.provider !== "groq" ? { provider: aiStatus.provider, model: aiStatus.model } : null;
   const models = languageModels?.models ?? (fallback ? [fallback] : []);
   const options = languageModelOptions(languageModels, aiStatus, fallback);
-  const defaultId = languageModels?.ask ? modelId(languageModels.ask) : fallback ? modelId(fallback) : null;
-  const selected = options.find((option) => option.id === (choice ?? defaultId) && option.ready) ?? options.find((option) => option.ready);
+  const defaultId = languageModels ? (languageModels.ask ? modelId(languageModels.ask) : null) : fallback ? modelId(fallback) : null;
+  const selected = options.find((option) => option.id === (choice ?? defaultId) && option.ready);
   const selectedModel = models.find((model) => selected?.id === modelId(model)) ?? null;
   const configured = !!selectedModel;
+  const hasModels = models.length > 0;
   useEffect(() => {
     let active = true;
     setChoice(null);
@@ -79,7 +80,7 @@ export default function AskPanel({ meetingId, transcript, player, aiStatus, lang
       {!loaded && <Loading message="Loading Asks…" rows={2} />}
       {error && <ErrorState title="Couldn't load the Asks" guidance={error} />}
       {loaded && !error && transcriptLoaded && !transcript && <EmptyState title="No Transcript yet" description="Transcribe the Meeting to Ask about it." />}
-      {loaded && !error && transcriptLoaded && !configured && <div role="status" className="rounded-md bg-panel p-4 text-sm text-ink-muted">No Language model is set up for Ask. <button type="button" className="text-accent hover:underline" onClick={onOpenSettings}>Set one up →</button></div>}
+      {loaded && !error && transcriptLoaded && !hasModels && <div role="status" className="rounded-md bg-panel p-4 text-sm text-ink-muted">No Language model is set up for Ask. <button type="button" className="text-accent hover:underline" onClick={onOpenSettings}>Set one up →</button></div>}
       {loaded && !error && transcript && configured && !view.asks.length && !view.active && <EmptyState title="Ask about this Meeting" description="Answers use this Meeting's Transcript and point to the moments they came from." />}
       <ol aria-label="Asks" className="m-0 grid list-none gap-5 p-0">{view.asks.map((entry) => <li key={entry.id} className="grid gap-2">
         <p className="m-0 max-w-[85%] justify-self-end rounded-md bg-panel px-3 py-2 text-base leading-[21px]">{entry.question}</p>
@@ -94,10 +95,11 @@ export default function AskPanel({ meetingId, transcript, player, aiStatus, lang
       </li>)}</ol>
       {view.active && <div className="mt-5 grid gap-2"><div aria-live="polite" className="text-base leading-[23px]"><Markdown text={view.active.partial || "Answering…"} /></div><Button variant="ghost" className="justify-self-start" onClick={() => void stopAsk(meetingId).catch((reason) => setError(String(reason)))}><Square size={16} strokeWidth={1.5} />Stop</Button></div>}
     </div>
-    {configured && <form onSubmit={submit} className="border-t border-line px-4 pb-4 pt-3"><div className="flex items-end gap-2 rounded-md border border-line-strong bg-raised py-1.5 pl-3 pr-1.5 focus-within:border-accent">
-      <Textarea rows={1} aria-label="Question" placeholder="Ask about this Meeting" className="min-h-8 flex-1 resize-none border-0 bg-transparent px-0 py-[5px] text-base shadow-none focus:shadow-none" value={question} onChange={(event) => setQuestion(event.target.value)} onKeyDown={keyDown} disabled={!transcriptLoaded || !transcript || !!view.active || busy} />
-      <Button type="submit" size="icon" aria-label={askProvider && askProvider !== "ollama" ? `Ask ${provider}` : "Ask"} disabled={!transcript || !!view.active || busy || !question.trim()}><ArrowUp size={16} strokeWidth={1.5} /></Button>
-    </div><div className="mt-2 flex items-center gap-2"><ModelPicker options={options} value={selected?.id ?? null} onChange={setChoice} onSetup={onOpenSettings} label="Choose Language model" disabled={busy || !!view.active}><span className="max-w-48 truncate text-xs">{selected?.label}</span></ModelPicker><p className="m-0 flex items-center gap-1.5 text-xs text-ink-faint"><LockKeyhole size={13} strokeWidth={1.5} aria-hidden="true" />Answers come from this Meeting only, using {provider}{askProvider === "ollama" ? " on this PC" : ""}.</p></div></form>}
+    {hasModels && <form onSubmit={submit} className="border-t border-line px-4 pb-4 pt-3"><div className="flex items-end gap-2 rounded-md border border-line-strong bg-raised py-1.5 pl-3 pr-1.5 focus-within:border-accent">
+      <Textarea rows={1} aria-label="Question" placeholder="Ask about this Meeting" className="min-h-8 flex-1 resize-none border-0 bg-transparent px-0 py-[5px] text-base shadow-none focus:shadow-none" value={question} onChange={(event) => setQuestion(event.target.value)} onKeyDown={keyDown} disabled={!configured || !transcriptLoaded || !transcript || !!view.active || busy} />
+      <Button type="submit" size="icon" aria-label={askProvider && askProvider !== "ollama" ? `Ask ${provider}` : "Ask"} disabled={!configured || !transcript || !!view.active || busy || !question.trim()}><ArrowUp size={16} strokeWidth={1.5} /></Button>
+    </div><div className="mt-2 flex items-center gap-2"><ModelPicker options={options} value={selected?.id ?? null} onChange={setChoice} onSetup={onOpenSettings} label="Choose Language model" disabled={busy || !!view.active}><span className="max-w-48 truncate text-xs">{selected?.label ?? "Choose a model"}</span></ModelPicker><p className="m-0 flex items-center gap-1.5 text-xs text-ink-faint"><LockKeyhole size={13} strokeWidth={1.5} aria-hidden="true" />{configured ? <>Answers come from this Meeting only, using {provider}{askProvider === "ollama" ? " on this PC" : ""}.</> : "Answers come from this Meeting only."}</p></div>
+    {!configured && <p role="status" className="m-0 mt-2 text-xs text-ink-muted">{!defaultId ? "No default Language model is set for Ask." : "Choose a ready Language model for Ask."} <button type="button" className="text-accent hover:underline" onClick={onOpenSettings}>Language models in Settings →</button></p>}</form>}
     {plan?.disclosure && pending && <CloudDisclosure disclosure={plan.disclosure} onSend={() => void send(pending.question, pending.retry, true, pending.model)} onCancel={() => { setPlan(null); setPending(null); }} />}
   </section>;
 }
