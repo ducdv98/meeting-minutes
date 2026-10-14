@@ -1,5 +1,6 @@
 pub mod gemini;
 pub mod groq;
+pub mod managed;
 use crate::transcript::{Language, RawSegment};
 use flacenc::{
     bitsink::MemSink,

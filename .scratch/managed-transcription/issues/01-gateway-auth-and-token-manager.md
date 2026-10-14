@@ -16,7 +16,7 @@ Spec: ../spec.md
   - refreshes 60 s before expiry;
   - offers "refresh now", used after a `401` on an upload;
   - when refresh returns `401`, reports Disconnected and clears the stored credentials through the secret store.
-- `client_id` and `refresh_token` go in the existing `SecretStore` (Credential Manager). Add whatever entries it needs, without changing how the existing provider keys are stored.
+- `client_id` and `refresh_token` are stored through a small core trait for the Managed credential (get / set / delete), with an in-memory implementation for tests. `SecretStore` is keyed by `ProviderKind` and stays unchanged; the Credential Manager implementation over `keyring` lives in `src-tauri` and comes with ticket 02.
 - Tokens and invite codes never appear in logs or `Debug` output.
 
 ## Acceptance criteria
