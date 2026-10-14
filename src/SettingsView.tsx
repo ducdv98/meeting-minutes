@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Check } from "lucide-react";
 import { acknowledgeCloudNotice, getSettings, installedModels, MODELS, modelSizeLabel, updateSettings, type Language, type Settings } from "./processing";
-import { aiStatus, deleteApiKey, listAiModels, PROVIDER_NAMES, PROVIDERS, saveApiKey, testAiProvider, testCloudApiKey, updateAiSettings, type AiStatus, type ProviderKind } from "./ai";
+import { aiStatus, deleteApiKey, listAiModels, managedConnect, managedDisconnect, managedStatus, PROVIDER_NAMES, PROVIDERS, saveApiKey, testAiProvider, testCloudApiKey, updateAiSettings, type AiStatus, type ManagedStatus, type ProviderKind } from "./ai";
 import { openLink } from "./app-info";
 import { Badge } from "./components/ui/Badge";
 import { Button } from "./components/ui/Button";
@@ -50,6 +50,10 @@ export default function SettingsView() {
   const [cloudBusy, setCloudBusy] = useState(false);
   const [cloudResults, setCloudResults] = useState<{ groq?: string; gemini?: string }>({});
   const [cloudNoticeError, setCloudNoticeError] = useState<string | null>(null);
+  const [managed, setManaged] = useState<ManagedStatus | null>(null);
+  const [inviteCode, setInviteCode] = useState("");
+  const [managedBusy, setManagedBusy] = useState(false);
+  const [managedError, setManagedError] = useState<string | null>(null);
   useEffect(() => {
     let active = true;
     setLoadFailed(false);
@@ -60,6 +64,11 @@ export default function SettingsView() {
   useEffect(() => {
     let active = true;
     aiStatus().then((next) => { if (active) setProviderStatus(next); }, (reason) => { if (active) setAiError(String(reason)); });
+    return () => { active = false; };
+  }, []);
+  useEffect(() => {
+    let active = true;
+    managedStatus().then((next) => { if (active) setManaged(next); }, (reason) => { if (active) setManagedError(String(reason)); });
     return () => { active = false; };
   }, []);
   /** Shows the change at once and saves it after any save still running, so the last change wins. */
@@ -132,6 +141,18 @@ export default function SettingsView() {
     try { await openLink(kind); }
     catch (reason) { setCloudResults((current) => ({ ...current, [kind]: String(reason) })); }
   }
+  async function connectManaged() {
+    setManagedBusy(true); setManagedError(null);
+    try { setManaged(await managedConnect(inviteCode)); setInviteCode(""); }
+    catch (reason) { setManagedError(String(reason)); }
+    finally { setManagedBusy(false); }
+  }
+  async function disconnectManaged() {
+    setManagedBusy(true); setManagedError(null);
+    try { setManaged(await managedDisconnect()); setInviteCode(""); }
+    catch (reason) { setManagedError(String(reason)); }
+    finally { setManagedBusy(false); }
+  }
   return <section aria-label="Settings" className="min-h-0 flex-1 overflow-y-auto">
     <div className="grid max-w-[680px] gap-8 px-7 pb-12 pt-7">
       <div className="flex items-center gap-3">
@@ -140,6 +161,18 @@ export default function SettingsView() {
       </div>
       {error && <ErrorState title="Couldn't save Settings" guidance={`${error.reason}. The change shown below isn't saved yet.`} onRetry={() => save(error.settings)} />}
       {loadFailed ? <ErrorState title="Couldn't load Settings" guidance="Try again in a moment." onRetry={() => setLoad((value) => value + 1)} /> : !settings ? <Loading message="Loading Settings…" /> : <>
+          <FormSection title="Managed transcription (experimental)">
+            {managed?.connected ? <div className="flex flex-wrap items-center gap-2 text-sm"><span role="status">Connected</span><Button variant="secondary" disabled={managedBusy} onClick={() => void disconnectManaged()}>Disconnect</Button></div> : <>
+              <p className="m-0 text-sm">Disconnected</p>
+              {managed?.revoked && <p role="status" className="m-0 text-sm">Managed transcription was disconnected.</p>}
+              <div className="grid max-w-sm gap-1.5">
+                <label htmlFor="managed-invite-code" className="text-sm">Invite code</label>
+                <div className="flex gap-2"><Input id="managed-invite-code" type="password" value={inviteCode} onChange={(event) => setInviteCode(event.target.value)} /><Button variant="secondary" disabled={managedBusy || !managed || !inviteCode.trim()} onClick={() => void connectManaged()}>Connect</Button></div>
+              </div>
+            </>}
+            {managedError && <p role="alert" className="m-0 text-sm text-record">{managedError}</p>}
+            <p className="m-0 text-xs text-ink-muted">Managed transcription sends your meeting audio over HTTPS to the Meeting Minutes transcription service, which forwards it to Groq for speech-to-text. The service does not store audio: it is held in memory and a temporary file only while each part is checked, then deleted. The transcript of each part is kept for up to 5 minutes so a retry does not reprocess it, then discarded. Your Library stays on this PC. Service logs record request metadata (request ID, timing, outcome) and never audio, transcript text or access tokens.</p>
+          </FormSection>
           <FormSection title="Cloud transcription" hint="Use your own keys for cloud Processing. Keys stay in Windows Credential Manager.">
             {(["groq", "gemini"] as const).map((kind) => {
               const label = PROVIDER_NAMES[kind];

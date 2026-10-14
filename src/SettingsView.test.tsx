@@ -3,19 +3,66 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import SettingsView from "./SettingsView";
 import type { AiSettings } from "./ai";
 import { acknowledgeCloudNotice, getSettings, installedModels, updateSettings, type Settings } from "./processing";
-import { aiStatus, listAiModels, saveApiKey, testAiProvider, testCloudApiKey, updateAiSettings, type AiStatus } from "./ai";
+import { aiStatus, listAiModels, managedConnect, managedDisconnect, managedStatus, saveApiKey, testAiProvider, testCloudApiKey, updateAiSettings, type AiStatus } from "./ai";
 import { openLink } from "./app-info";
 
 vi.mock("./processing", async (importOriginal) => ({ ...(await importOriginal<typeof import("./processing")>()), getSettings: vi.fn(), updateSettings: vi.fn(), installedModels: vi.fn(), acknowledgeCloudNotice: vi.fn() }));
-vi.mock("./ai", async (importOriginal) => ({ ...(await importOriginal<typeof import("./ai")>()), aiStatus: vi.fn(), listAiModels: vi.fn(), saveApiKey: vi.fn(), deleteApiKey: vi.fn(), updateAiSettings: vi.fn(), testAiProvider: vi.fn(), testCloudApiKey: vi.fn() }));
+vi.mock("./ai", async (importOriginal) => ({ ...(await importOriginal<typeof import("./ai")>()), aiStatus: vi.fn(), listAiModels: vi.fn(), managedStatus: vi.fn(), managedConnect: vi.fn(), managedDisconnect: vi.fn(), saveApiKey: vi.fn(), deleteApiKey: vi.fn(), updateAiSettings: vi.fn(), testAiProvider: vi.fn(), testCloudApiKey: vi.fn() }));
 vi.mock("./app-info", () => ({ openLink: vi.fn() }));
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
-beforeEach(() => { vi.mocked(installedModels).mockResolvedValue([]); });
+beforeEach(() => { vi.mocked(installedModels).mockResolvedValue([]); vi.mocked(managedStatus).mockResolvedValue({ connected: false, revoked: false }); });
 
 const noAi: AiSettings = { provider: null, ollama_model: null, openai_model: null, anthropic_model: null, gemini_model: null };
 const empty: AiStatus = { provider: null, model: null, configured: false, has_openai_key: false, has_anthropic_key: false, has_groq_key: false, has_gemini_key: false };
 
 const base: Settings = { recording_notice_acknowledged: true, cloud_notice_acknowledged: false, auto_process: true, model: "small", vocabulary: ["Nguyễn"], language: null, your_name: null, ai: noAi };
+
+it("connects Managed transcription and shows Connected", async () => {
+  vi.mocked(getSettings).mockResolvedValue(base);
+  vi.mocked(aiStatus).mockResolvedValue(empty);
+  vi.mocked(managedConnect).mockResolvedValue({ connected: true, revoked: false });
+  render(<SettingsView />);
+  const section = await screen.findByRole("region", { name: "Managed transcription (experimental)" });
+  fireEvent.change(within(section).getByLabelText("Invite code"), { target: { value: " code " } });
+  fireEvent.click(within(section).getByRole("button", { name: "Connect" }));
+  await waitFor(() => expect(managedConnect).toHaveBeenCalledWith(" code "));
+  expect(await within(section).findByText("Connected")).toBeTruthy();
+  expect(within(section).queryByLabelText("Invite code")).toBeNull();
+});
+
+it("shows the invite error when Managed transcription rejects a code", async () => {
+  vi.mocked(getSettings).mockResolvedValue(base);
+  vi.mocked(aiStatus).mockResolvedValue(empty);
+  vi.mocked(managedConnect).mockRejectedValue("This invite code is used, expired or unknown. Ask for a new one.");
+  render(<SettingsView />);
+  const section = await screen.findByRole("region", { name: "Managed transcription (experimental)" });
+  fireEvent.change(within(section).getByLabelText("Invite code"), { target: { value: "bad-code" } });
+  fireEvent.click(within(section).getByRole("button", { name: "Connect" }));
+  expect((await within(section).findByRole("alert")).textContent).toBe("This invite code is used, expired or unknown. Ask for a new one.");
+});
+
+it("disconnects Managed transcription and returns to an empty invite field", async () => {
+  vi.mocked(getSettings).mockResolvedValue(base);
+  vi.mocked(aiStatus).mockResolvedValue(empty);
+  vi.mocked(managedStatus).mockResolvedValue({ connected: true, revoked: false });
+  vi.mocked(managedDisconnect).mockResolvedValue({ connected: false, revoked: false });
+  render(<SettingsView />);
+  const section = await screen.findByRole("region", { name: "Managed transcription (experimental)" });
+  fireEvent.click(await within(section).findByRole("button", { name: "Disconnect" }));
+  await waitFor(() => expect(managedDisconnect).toHaveBeenCalledTimes(1));
+  expect((await within(section).findByLabelText("Invite code") as HTMLInputElement).value).toBe("");
+  expect(within(section).getByText("Disconnected")).toBeTruthy();
+});
+
+it("explains when Managed transcription was revoked", async () => {
+  vi.mocked(getSettings).mockResolvedValue(base);
+  vi.mocked(aiStatus).mockResolvedValue(empty);
+  vi.mocked(managedStatus).mockResolvedValue({ connected: false, revoked: true });
+  render(<SettingsView />);
+  const section = await screen.findByRole("region", { name: "Managed transcription (experimental)" });
+  expect(await within(section).findByText("Managed transcription was disconnected.")).toBeTruthy();
+  expect(within(section).getByLabelText("Invite code")).toBeTruthy();
+});
 
 it("opens provider key pages, tests saved keys, and shows the cloud notice once", async () => {
   vi.mocked(getSettings).mockResolvedValue(base);

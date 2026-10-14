@@ -12,6 +12,8 @@ use std::{
     time::Duration,
 };
 
+#[cfg(windows)]
+use meeting_minutes_core::cloud::managed::ManagedToken;
 use meeting_minutes_core::{
     ai::{
         self, AiStatus, ApiKey, GenerateRequest, HttpClient, Message, ProviderKind, Role,
@@ -20,7 +22,14 @@ use meeting_minutes_core::{
     ask::{self, AskOptions},
     background,
     capture::{audio_devices, QpcClock, Source, WasapiOpener},
-    cloud::{gemini::GeminiEngine, groq::GroqEngine, CloudEngine},
+    cloud::{
+        gemini::GeminiEngine,
+        groq::GroqEngine,
+        managed::{
+            self, GatewayErrorCode, ManagedCredential, ManagedCredentialStore, TokenManager,
+        },
+        CloudEngine,
+    },
     diagnostics::{build_diagnostics, log_event, DiagnosticsInput, LogEvent},
     import::import_extension,
     models::{self, DEFAULT_MODEL, MODELS},
@@ -121,6 +130,11 @@ struct InstallingUpdate(AtomicBool);
 struct UpdateStartGate(Mutex<()>);
 struct Secrets(Box<dyn SecretStore>);
 struct Http(Arc<dyn HttpClient>);
+struct Managed {
+    tokens: Arc<TokenManager>,
+    store: Arc<dyn ManagedCredentialStore>,
+    base: String,
+}
 
 #[derive(serde::Serialize)]
 struct AppInfo {
@@ -268,6 +282,61 @@ impl SecretStore for KeyringStore {
             Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
             Err(error) => Err(error.to_string()),
         }
+    }
+}
+
+#[cfg(windows)]
+struct KeyringManagedStore;
+#[cfg(windows)]
+impl KeyringManagedStore {
+    fn entry(user: &str) -> Result<keyring::Entry, String> {
+        keyring::Entry::new("Meeting Minutes", user).map_err(|error| error.to_string())
+    }
+
+    fn delete_entry(user: &str) -> Result<(), String> {
+        match Self::entry(user)?.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Err(error) => Err(error.to_string()),
+        }
+    }
+
+    fn read_entry(user: &str) -> Result<Option<String>, String> {
+        match Self::entry(user)?.get_password() {
+            Ok(value) => Ok(Some(value)),
+            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(error) => Err(error.to_string()),
+        }
+    }
+}
+#[cfg(windows)]
+impl ManagedCredentialStore for KeyringManagedStore {
+    fn get(&self) -> Result<Option<ManagedCredential>, String> {
+        let client_id = Self::read_entry("managed-client-id")?;
+        let refresh_token = Self::read_entry("managed-refresh-token")?;
+        Ok(match (client_id, refresh_token) {
+            (Some(client_id), Some(refresh_token)) => {
+                ManagedToken::new(refresh_token).map(|refresh_token| ManagedCredential {
+                    client_id,
+                    refresh_token,
+                })
+            }
+            _ => None,
+        })
+    }
+
+    fn set(&self, credential: &ManagedCredential) -> Result<(), String> {
+        Self::entry("managed-client-id")?
+            .set_password(&credential.client_id)
+            .map_err(|error| error.to_string())?;
+        Self::entry("managed-refresh-token")?
+            .set_password(credential.refresh_token.expose())
+            .map_err(|error| error.to_string())
+    }
+
+    fn delete(&self) -> Result<(), String> {
+        let client = Self::delete_entry("managed-client-id");
+        let refresh = Self::delete_entry("managed-refresh-token");
+        client.and(refresh)
     }
 }
 
@@ -688,6 +757,69 @@ fn ai_status(
     secrets: State<'_, Secrets>,
 ) -> Result<AiStatus, String> {
     Ok(current_ai_status(&path, &secrets))
+}
+
+#[derive(serde::Serialize)]
+struct ManagedStatus {
+    connected: bool,
+    revoked: bool,
+}
+
+fn current_managed_status(managed: &Managed) -> Result<ManagedStatus, String> {
+    Ok(ManagedStatus {
+        connected: managed.store.get()?.is_some(),
+        revoked: managed.tokens.is_disconnected(),
+    })
+}
+
+#[tauri::command]
+fn managed_status(managed: State<'_, Managed>) -> Result<ManagedStatus, String> {
+    current_managed_status(&managed)
+}
+
+fn managed_connect_error(error: managed::GatewayError) -> String {
+    if error.status == Some(401) || error.code == GatewayErrorCode::Unauthorized {
+        "This invite code is used, expired or unknown. Ask for a new one.".into()
+    } else if error.retryable || error.status.is_none() {
+        "Could not reach Managed transcription. Check your connection and try again.".into()
+    } else {
+        "Managed transcription could not connect.".into()
+    }
+}
+
+#[tauri::command]
+async fn managed_connect(app: AppHandle, invite_code: String) -> Result<ManagedStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let invite_code = invite_code.trim();
+        if invite_code.is_empty() {
+            return Err("Enter an invite code.".into());
+        }
+        let managed = app.state::<Managed>();
+        let http = app.state::<Http>();
+        let activation = managed::activate(http.0.as_ref(), &managed.base, invite_code)
+            .map_err(managed_connect_error)?;
+        managed
+            .store
+            .set(&ManagedCredential {
+                client_id: activation.client_id,
+                refresh_token: activation.refresh_token,
+            })
+            .map_err(|_| "Managed transcription could not connect.".to_owned())?;
+        managed.tokens.reset();
+        current_managed_status(&managed)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+fn managed_disconnect(managed: State<'_, Managed>) -> Result<ManagedStatus, String> {
+    managed
+        .store
+        .delete()
+        .map_err(|_| "Managed transcription could not disconnect.".to_owned())?;
+    managed.tokens.reset();
+    current_managed_status(&managed)
 }
 
 #[tauri::command]
@@ -2697,7 +2829,23 @@ fn main() {
             app.manage(Secrets(Box::new(KeyringStore)));
             #[cfg(not(windows))]
             app.manage(Secrets(Box::new(ai::MemorySecretStore::default())));
-            app.manage(Http(Arc::new(UreqClient)));
+            let http: Arc<dyn HttpClient> = Arc::new(UreqClient);
+            #[cfg(windows)]
+            let managed_store: Arc<dyn ManagedCredentialStore> = Arc::new(KeyringManagedStore);
+            #[cfg(not(windows))]
+            let managed_store: Arc<dyn ManagedCredentialStore> =
+                Arc::new(managed::MemoryManagedCredentialStore::default());
+            let base = managed::base_url();
+            app.manage(Managed {
+                tokens: Arc::new(TokenManager::new(
+                    http.clone(),
+                    managed_store.clone(),
+                    base.clone(),
+                )),
+                store: managed_store,
+                base,
+            });
+            app.manage(Http(http));
             app.manage(Mutex::new(AiJobsInner::default()));
             app.manage(ModelsDir(app.path().app_data_dir()?.join("models")));
             app.manage(Quitting(AtomicBool::new(false)));
@@ -2853,6 +3001,9 @@ fn main() {
             update_settings,
             installed_models,
             ai_status,
+            managed_status,
+            managed_connect,
+            managed_disconnect,
             list_ai_models,
             test_cloud_api_key,
             acknowledge_cloud_notice,
