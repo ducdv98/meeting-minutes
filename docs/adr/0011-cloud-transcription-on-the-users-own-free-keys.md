@@ -1,5 +1,7 @@
 # Cloud transcription and Correction on the user's own free Groq and Gemini keys
 
+> Amended by ADR 0012: an optional Managed transcription service, connected by invite, now comes before the user's own keys.
+
 Local Whisper (turbo `q5_0`) was neither accurate nor fast enough on many laptops, and we have at most $10 a month for 1,000 users, so an app-paid relay is ruled out (ADR 0008). Instead each user brings their own free API keys: Groq for transcription (Whisper large-v3, about 8 audio hours a day free) and Gemini for Correction, Summary, Action items and Ask. The app spends nothing, needs no backend, and each user's allowance comes from the provider directly. For now privacy is not a constraint: when a Groq key is set, transcription runs in the cloud automatically. A notice in Settings says that audio goes to the provider, but cloud use does not wait for it to be acknowledged: an unacknowledged notice left users with a saved key on the local model without knowing why. This amends ADR 0002 (cloud Processing no longer needs an explicit action) and supersedes ADR 0008's "cloud transcription deferred".
 
 - Engine order per Chunk: Groq, then Gemini when Groq's quota is spent or it fails, then local Whisper when there is no key, no quota or no network. A Meeting may mix engines in one Revision; a notice says when it fell back.

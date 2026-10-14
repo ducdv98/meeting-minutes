@@ -50,7 +50,15 @@ The reminder that other participants may need to consent to being recorded, plus
 The spoken language of a Meeting (English or Vietnamese), chosen by the user or detected. One language per Meeting.
 
 **Processing**:
-Turning a Meeting's audio into a Transcript, then a Summary and Action items. Processing starts automatically after Stop, in the cloud when the user has set up a provider key and locally otherwise. One Meeting's Transcript may come partly from each.
+Turning a Meeting's audio into a Transcript, then a Summary and Action items. Processing starts automatically after Stop, in the cloud when the user has connected Managed transcription or set up a provider key, and locally otherwise. One Meeting's Transcript may come partly from each.
+
+**Managed transcription**:
+Cloud transcription run by the Meeting Minutes service for a user who has connected it with an Invite code. It is tried before the user's own provider key, which is tried before local transcription. Connecting it is the user's consent to sending audio to the cloud.
+_Avoid_: Gateway, relay, hosted Groq
+
+**Invite code**:
+A one-time code from the operator that connects one install of the app to Managed transcription. Disconnecting, or the operator revoking access, returns the app to its own keys or local transcription.
+_Avoid_: License key, account, token
 
 **Transcript**:
 The ordered list of Segments for a Meeting. Re-transcribing produces a new **Revision**; it never silently rewrites the old one. Editing a Segment's text keeps its ID and Revision.
