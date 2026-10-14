@@ -14,6 +14,31 @@
 }
 
 @keyframes recording-pulse { 50% { opacity: 0.35; } }
+@keyframes motion-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes motion-fade-out { from { opacity: 1; } to { opacity: 0; } }
+@keyframes motion-dialog-in { from { opacity: 0; transform: scale(.98); } to { opacity: 1; transform: scale(1); } }
+@keyframes motion-dialog-out { from { opacity: 1; transform: scale(1); } to { opacity: 0; transform: scale(.98); } }
+@keyframes motion-pop-in { from { opacity: 0; transform: translate(var(--motion-x, 0), var(--motion-y, 0)); } to { opacity: 1; transform: translate(0, 0); } }
+@keyframes motion-pop-out { from { opacity: 1; transform: translate(0, 0); } to { opacity: 0; transform: translate(var(--motion-x, 0), var(--motion-y, 0)); } }
+@keyframes motion-meeting-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+.motion-dialog-overlay[data-state="open"] { animation: motion-fade-in var(--duration-dialog) var(--ease); }
+.motion-dialog-overlay[data-state="closed"] { animation: motion-fade-out var(--duration-dialog) var(--ease); }
+.motion-dialog-content[data-state="open"] { animation: motion-dialog-in var(--duration-dialog) var(--ease); }
+.motion-dialog-content[data-state="closed"] { animation: motion-dialog-out var(--duration-dialog) var(--ease); }
+.motion-popover[data-side="top"] { --motion-y: 4px; }
+.motion-popover[data-side="bottom"] { --motion-y: -4px; }
+.motion-popover[data-side="left"] { --motion-x: 4px; }
+.motion-popover[data-side="right"] { --motion-x: -4px; }
+.motion-popover[data-state="open"], .motion-popover[data-state="delayed-open"] { animation: motion-pop-in var(--duration-panel) var(--ease); }
+.motion-popover[data-state="closed"] { animation: motion-pop-out var(--duration-panel) var(--ease); }
+.motion-content-enter { animation: motion-fade-in var(--duration-panel) var(--ease); }
+.motion-meeting-enter { animation: motion-meeting-in var(--duration-panel) var(--ease); }
+.motion-transcript { view-transition-name: transcript; }
+::view-transition-old(root), ::view-transition-new(root) { animation: none; }
+::view-transition-old(transcript), ::view-transition-new(transcript) { animation-duration: var(--duration-panel); animation-timing-function: var(--ease); }
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-old(transcript), ::view-transition-new(transcript) { animation-duration: 0.01ms !important; }
+}
 .settings-view { display: grid; gap: 0.75rem; max-width: 48rem; padding: 28px; }
 .settings-view textarea, .settings-view select { width: 100%; box-sizing: border-box; }
 .settings-view button { justify-self: start; }

@@ -14,7 +14,7 @@ export default function DraftView({ segments, participants, yourName, isVoiceNot
     const elapsed = formatElapsed(segment.start_ms);
     const time = elapsed.startsWith("00:") ? elapsed.slice(3) : elapsed;
     const name = labelParticipantName(segment.speaker, participants, yourName, isVoiceNote);
-    return <li key={index} className="-mx-2 grid grid-cols-[18px_52px_68px_minmax(0,1fr)] gap-3 rounded-sm px-2 py-2">
+    return <li key={index} data-segment-start={segment.start_ms} className="-mx-2 grid grid-cols-[18px_52px_68px_minmax(0,1fr)] gap-3 rounded-sm px-2 py-2">
       <span aria-hidden="true" />
       <span className="pt-[3px] text-xs tabular-nums text-ink-faint">{time}</span>
       <span title={`Speaker label: ${speakerName(segment.speaker)}`} className="pt-[3px] text-xs font-medium text-ink-muted">{name}</span>

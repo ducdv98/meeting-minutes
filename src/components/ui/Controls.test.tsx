@@ -8,6 +8,7 @@ import { RadioGroup, RadioGroupItem } from "./RadioGroup";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./Tabs";
 import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "./Dialog";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./Tooltip";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "./DropdownMenu";
 
 afterEach(cleanup);
 
@@ -74,13 +75,24 @@ it("switches tab panels", () => {
 it("gives a dialog an accessible title", () => {
   render(<Dialog><DialogTrigger>Open</DialogTrigger><DialogContent><DialogTitle>Delete meeting?</DialogTitle></DialogContent></Dialog>);
   fireEvent.click(screen.getByRole("button", { name: "Open" }));
-  expect(screen.getByRole("dialog", { name: "Delete meeting?" })).toBeTruthy();
+  expect(screen.getByRole("dialog", { name: "Delete meeting?" }).classList.contains("motion-dialog-content")).toBe(true);
+  expect(document.querySelector(".motion-dialog-overlay")?.getAttribute("data-state")).toBe("open");
+});
+
+it("opens a dropdown with motion from its trigger side", async () => {
+  render(<DropdownMenu><DropdownMenuTrigger>More</DropdownMenuTrigger><DropdownMenuContent side="bottom"><DropdownMenuItem>Rename</DropdownMenuItem></DropdownMenuContent></DropdownMenu>);
+  fireEvent.pointerDown(screen.getByRole("button", { name: "More" }), { button: 0, ctrlKey: false });
+  const menu = await screen.findByRole("menu");
+  expect(menu.classList.contains("motion-popover")).toBe(true);
+  expect(menu.getAttribute("data-side")).toBe("bottom");
+  expect(menu.getAttribute("data-state")).toBe("open");
 });
 
 it("shows tooltip content when its trigger receives focus", async () => {
   renderWithTooltips(<Tooltip><TooltipTrigger>Help</TooltipTrigger><TooltipContent>Saved on this PC</TooltipContent></Tooltip>);
   fireEvent.focus(screen.getByRole("button", { name: "Help" }));
   await waitFor(() => expect(screen.getByRole("tooltip").textContent).toContain("Saved on this PC"));
+  expect(screen.getByRole("tooltip").classList.contains("motion-popover")).toBe(true);
 });
 
 it("plays a citation when clicked", () => {

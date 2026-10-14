@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { assignSegments, deleteMeeting, meetingDetail, openMeetingFolder, renameMeeting, renameParticipant, removeParticipant, participantNames, type MeetingDetail, type SearchHit } from "./library";
 import Player, { PlayerContext, type PlayerHandle } from "./Player";
 import type { TimelinePlayer } from "./timeline";
@@ -89,11 +90,24 @@ export default function MeetingView({ id, onBack, onRenamed, onOpenSettings, ope
   const detailVersion = useRef(0);
   const transcriptVersion = useRef(0);
   const publishedRevision = useRef(0);
+  const transcriptScroll = useRef<HTMLElement>(null);
+  const draftScrollAnchor = useRef<{ start: number; offset: number } | null>(null);
   const [transcriptLoaded, setTranscriptLoaded] = useState(false);
   const playerHandle = useRef<PlayerHandle>(null);
   const opened = useRef<string | null>(null);
   const onPlayerChange = useCallback((next: TimelinePlayer | null) => setPlayer(next), []);
   const onPosition = useCallback((ms: number) => setPositionMs(ms), []);
+
+  useLayoutEffect(() => {
+    const anchor = draftScrollAnchor.current;
+    const scroll = transcriptScroll.current;
+    if (!anchor || !scroll || !transcript) return;
+    if (!transcript.segments.length) { draftScrollAnchor.current = null; return; }
+    const nearest = transcript.segments.reduce((best, segment) => Math.abs(segment.start_ms - anchor.start) < Math.abs(best.start_ms - anchor.start) ? segment : best);
+    const row = Array.from(scroll.querySelectorAll<HTMLElement>("[data-segment-start]")).find((item) => Number(item.dataset.segmentStart) === nearest.start_ms);
+    if (row) scroll.scrollTop += row.getBoundingClientRect().top - scroll.getBoundingClientRect().top - anchor.offset;
+    draftScrollAnchor.current = null;
+  }, [transcript]);
 
   useEffect(() => {
     let active = true;
@@ -101,6 +115,7 @@ export default function MeetingView({ id, onBack, onRenamed, onOpenSettings, ope
     jobRef.current = null;
     jobKnown.current = false;
     publishedRevision.current = 0;
+    draftScrollAnchor.current = null;
     opened.current = null;
     setError(null);
     setDetail(null); setTranscript(null); setDraft([]); setTranscriptLoaded(false); setProviderStatus(null); setJob(null); setPlayer(null);
@@ -152,7 +167,20 @@ export default function MeetingView({ id, onBack, onRenamed, onOpenSettings, ope
     const library = onLibraryChanged(() => {
       const transcriptRequest = ++transcriptVersion.current;
       const detailRequest = ++detailVersion.current;
-      void meetingTranscript(id).then((next) => { if (active && transcriptRequest === transcriptVersion.current) { if (next && next.revision > publishedRevision.current) setDraft([]); publishedRevision.current = next?.revision ?? 0; setTranscript(next); setTranscriptLoaded(true); } }, (reason) => { if (active && transcriptRequest === transcriptVersion.current) setError(String(reason)); });
+      void meetingTranscript(id).then((next) => { if (active && transcriptRequest === transcriptVersion.current) {
+        const scroll = transcriptScroll.current;
+        const draftList = scroll?.querySelector('[aria-label="Draft Segments"]');
+        const published = !!next && next.revision > publishedRevision.current;
+        if (published && scroll && draftList) {
+          const top = scroll.getBoundingClientRect().top + 44;
+          const rows = Array.from(draftList.querySelectorAll<HTMLElement>("[data-segment-start]"));
+          const row = rows.find((item) => item.getBoundingClientRect().bottom > top) ?? rows.at(-1);
+          if (row) draftScrollAnchor.current = { start: Number(row.dataset.segmentStart), offset: row.getBoundingClientRect().top - scroll.getBoundingClientRect().top };
+        }
+        const publish = () => { if (!active || transcriptRequest !== transcriptVersion.current) return; if (published) setDraft([]); publishedRevision.current = next?.revision ?? 0; setTranscript(next); setTranscriptLoaded(true); };
+        if (published && draftList && typeof document.startViewTransition === "function" && !window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) document.startViewTransition(() => flushSync(publish));
+        else publish();
+      } }, (reason) => { if (active && transcriptRequest === transcriptVersion.current) setError(String(reason)); });
       void meetingDetail(id).then((next) => { if (active && detailRequest === detailVersion.current) setDetail(next); }, () => {});
     });
     return () => { active = false; void processing.then((stop) => stop(), () => {}); void draftListener.then((stop) => stop(), () => {}); void library.then((stop) => stop(), () => {}); };
@@ -299,7 +327,7 @@ export default function MeetingView({ id, onBack, onRenamed, onOpenSettings, ope
       {confirmingDelete && <ConfirmDelete title={detail.title} busy={deleteBusy} onConfirm={() => void confirmDelete()} onCancel={() => setConfirmingDelete(false)} />}
       {detail.audio_path && audioOpen ? <Player ref={playerHandle} audio_path={detail.audio_path} duration_ms={detail.duration_ms} markers={detail.markers} highlight={highlight} onPlayerChange={onPlayerChange} onPosition={onPosition} /> : !detail.audio_path ? <p className="mx-7 mt-4 text-sm text-ink-muted">No audio yet</p> : null}
       <div className="mt-4 grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_380px] border-t border-line max-[900px]:grid-cols-[minmax(0,1fr)_minmax(300px,42%)] max-[680px]:grid-cols-1">
-        <section aria-label="Transcript" className="min-h-0 min-w-0 overflow-y-auto px-7 pb-8 pt-2 max-[680px]:max-h-[50vh]">
+        <section ref={transcriptScroll} aria-label="Transcript" className="min-h-0 min-w-0 overflow-y-auto px-7 pb-8 pt-2 max-[680px]:max-h-[50vh]">
           <div className="sticky top-0 z-10 flex items-center gap-2 bg-canvas py-2.5"><h2 className="m-0 mr-auto font-display text-heading-sm">Transcript</h2>
             {showingDraft ? <Badge className="rounded-full border border-line bg-transparent">Draft · Transcribing…</Badge> : transcript && <Badge className="rounded-full border border-line bg-transparent">Revision {transcript.revision} · {transcript.model.join(", ")}</Badge>}
             {transcript && !job && <Button variant="ghost" onClick={() => void runTranscription(model || undefined)}><RefreshCw size={16} strokeWidth={1.5} />Re-transcribe</Button>}
@@ -313,7 +341,7 @@ export default function MeetingView({ id, onBack, onRenamed, onOpenSettings, ope
           {job?.stage === "failed" && <div className="mb-4"><ErrorState title="Transcription failed" guidance={job.error ?? "Try again."} onRetry={() => void runTranscription()} /><Button variant="ghost" onClick={() => void dismissJob()}>Dismiss</Button></div>}
           {!transcriptLoaded && <Loading message="Loading Transcript…" />}
           {transcriptLoaded && !job && !transcript && <EmptyState title="No Transcript yet" description="Transcribe this Meeting to see its Segments." action={<Button onClick={() => void runTranscription()}>Transcribe</Button>} />}
-          {showingDraft ? <DraftView segments={draft} participants={detail.participants} yourName={yourName} isVoiceNote={isVoiceNote} /> : transcript && <TranscriptView key={`${id}:${transcript.revision}`} transcript={transcript} positionMs={positionMs} player={player} editable={!job || job.stage === "failed"} onEdit={saveSegment} onMove={isVoiceNote ? undefined : moveSegments} participants={detail.participants} segmentParticipants={detail.segment_participants} yourName={yourName} isVoiceNote={isVoiceNote} />}
+          {showingDraft ? <div className="motion-transcript motion-content-enter"><DraftView segments={draft} participants={detail.participants} yourName={yourName} isVoiceNote={isVoiceNote} /></div> : transcript && <div key={`${id}:${transcript.revision}`} className="motion-transcript motion-content-enter"><TranscriptView transcript={transcript} positionMs={positionMs} player={player} editable={!job || job.stage === "failed"} onEdit={saveSegment} onMove={isVoiceNote ? undefined : moveSegments} participants={detail.participants} segmentParticipants={detail.segment_participants} yourName={yourName} isVoiceNote={isVoiceNote} skipInitialScroll={!!draftScrollAnchor.current} /></div>}
         </section>
         <aside className="flex min-h-0 min-w-0 flex-col border-l border-line max-[680px]:border-l-0 max-[680px]:border-t" aria-label="Summary and Ask">
           {showingDraft ? <p className="p-5 text-sm text-ink-muted">Summary, Ask and Citations are available when the Transcript is ready.</p> : !providerStatus && <div className="px-5 py-4"><Loading message="Loading Summary and Ask…" /></div>}

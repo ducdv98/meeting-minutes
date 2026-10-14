@@ -20,9 +20,10 @@ interface Props {
   segmentParticipants?: MeetingDetail["segment_participants"];
   yourName?: string | null;
   isVoiceNote?: boolean;
+  skipInitialScroll?: boolean;
 }
 
-export default function TranscriptView({ transcript, positionMs, player, editable, onEdit, onMove, participants = {}, segmentParticipants, yourName = null, isVoiceNote = false }: Props) {
+export default function TranscriptView({ transcript, positionMs, player, editable, onEdit, onMove, participants = {}, segmentParticipants, yourName = null, isVoiceNote = false, skipInitialScroll = false }: Props) {
   const [editing, setEditing] = useState<string | null>(null);
   const [text, setText] = useState("");
   const [saving, setSaving] = useState(false);
@@ -32,8 +33,10 @@ export default function TranscriptView({ transcript, positionMs, player, editabl
   const [newName, setNewName] = useState("");
   const currentId = currentSegmentId(transcript.segments, positionMs);
   const currentRow = useRef<HTMLLIElement>(null);
+  const firstScroll = useRef(true);
 
   useEffect(() => {
+    if (firstScroll.current) { firstScroll.current = false; if (skipInitialScroll) return; }
     currentRow.current?.scrollIntoView?.({ block: "nearest" });
   }, [currentId]);
 
@@ -68,7 +71,7 @@ export default function TranscriptView({ transcript, positionMs, player, editabl
       const time = elapsed.startsWith("00:") ? elapsed.slice(3) : elapsed;
       const name = participantName(segment, transcript.revision, participants, segmentParticipants, yourName, isVoiceNote);
       const defaultUnknown = !isVoiceNote && segment.speaker === "unknown" && name === "Unknown";
-      return <li key={segment.id} ref={current ? currentRow : undefined} className={`group -mx-2 grid grid-cols-[18px_52px_68px_minmax(0,1fr)] gap-3 rounded-sm px-2 py-2 transition-colors duration-panel hover:bg-panel ${current ? "current bg-accent-soft hover:bg-accent-soft" : ""}`} aria-current={current ? "true" : undefined}>
+      return <li key={segment.id} ref={current ? currentRow : undefined} data-segment-start={segment.start_ms} className={`group -mx-2 grid grid-cols-[18px_52px_68px_minmax(0,1fr)] gap-3 rounded-sm px-2 py-2 transition-colors duration-panel hover:bg-panel ${current ? "current bg-accent-soft hover:bg-accent-soft" : ""}`} aria-current={current ? "true" : undefined}>
         {onMove ? <input type="checkbox" aria-label={`Select Segment ${segment.id}`} disabled={!editable || !onMove} checked={selected.includes(segment.id)} onChange={(event) => setSelected((current) => event.target.checked ? [...current, segment.id] : current.filter((id) => id !== segment.id))} className={`mt-1 accent-accent ${selected.length ? "opacity-100" : "opacity-0 group-hover:opacity-100 focus:opacity-100"}`} /> : <span aria-hidden="true" />}
         <button type="button" disabled={!player} className="self-start pt-[3px] text-left text-xs tabular-nums text-ink-faint hover:text-accent disabled:opacity-50" aria-label={`Play Segment at ${time}, ${name}`} onClick={() => player?.playSpan(segment.start_ms, segment.end_ms)}>{time}</button>
         <span title={`Speaker label: ${speakerName(segment.speaker)}`} className={`flex items-start gap-1 pt-[3px] text-xs font-medium ${defaultUnknown ? "text-ink-faint" : segment.speaker === "me" ? "text-ink" : "text-ink-muted"}`}>{defaultUnknown && <CircleHelp size={13} strokeWidth={1.5} className="mt-0.5" aria-hidden="true" />}{name}</span>

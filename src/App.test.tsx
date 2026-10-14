@@ -220,6 +220,7 @@ it("lists Meeting titles in the Library", async () => {
 
   expect(await screen.findByText("Planning")).toBeTruthy();
   expect(screen.getByRole("button", { name: "Review" }).textContent).toContain("30 min");
+  expect(screen.getByRole("button", { name: "Planning" }).closest(".motion-meeting-enter")).toBeNull();
   expect(screen.getByRole("button", { name: "Planning" }).querySelector("time")?.getAttribute("datetime")).toBe("2026-10-12T09:00:00Z");
 });
 
@@ -258,6 +259,7 @@ it("rescans the Library when the Rescan button is clicked", async () => {
   openMoreMenu();
   fireEvent.click(await screen.findByRole("menuitem", { name: "Rescan Library" }));
   expect(await screen.findByText("Planning")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Planning" }).closest(".motion-meeting-enter")).toBeTruthy();
   expect(rescanLibrary).toHaveBeenCalledTimes(2);
 });
 

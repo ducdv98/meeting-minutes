@@ -484,6 +484,32 @@ it("replaces the Draft with the published Revision and clears it on failure", as
   expect(screen.queryByText("New Draft words")).toBeNull();
 });
 
+it("aligns the published Revision with the nearest visible Draft Segment", async () => {
+  vi.mocked(processingStatus).mockResolvedValue({ jobs: [{ meeting_id: "old", model: "small", stage: "transcribing", progress: 0.5, error: null }] });
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+    const start = Number(this.dataset.segmentStart);
+    const top = this.getAttribute("aria-label") === "Transcript" ? 100 : start === 1000 ? 120 : start === 2000 ? 160 : start === 2100 ? 200 : 0;
+    return { top, bottom: top + 20 } as DOMRect;
+  });
+  render(<MeetingView id="old" onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
+  await screen.findByRole("heading", { name: "Planning" });
+  await act(async () => vi.mocked(onTranscriptDraft).mock.calls[0][0]({ meeting_id: "old", segments: [
+    { start_ms: 1000, end_ms: 1800, text: "First Draft", speaker: "me" },
+    { start_ms: 2000, end_ms: 2800, text: "Second Draft", speaker: "me" },
+  ] }));
+  const scroll = screen.getByRole("region", { name: "Transcript" });
+  scroll.scrollTop = 100;
+  vi.mocked(meetingTranscript).mockResolvedValue({ ...transcriptWith(2, "First Revision"), segments: [
+    { id: "s00001", start_ms: 1000, end_ms: 1800, text: "First Revision", speaker: "me" },
+    { id: "s00002", start_ms: 2100, end_ms: 2900, text: "Second Revision", speaker: "me" },
+  ] });
+  await act(async () => vi.mocked(onLibraryChanged).mock.calls[0][0]());
+  expect(await screen.findByText("Second Revision")).toBeTruthy();
+  expect(scroll.scrollTop).toBe(140);
+  expect(screen.queryByText("Second Draft")).toBeNull();
+  expect(screen.getByRole("list", { name: "Segments" }).parentElement?.classList.contains("motion-content-enter")).toBe(true);
+});
+
 it("never shows the previous Meeting after switching, even when its data arrives last", async () => {
   const oldDetail = deferred<MeetingDetail>();
   const oldTranscript = deferred<ReturnType<typeof transcriptWith> | null>();
