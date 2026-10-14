@@ -54,6 +54,10 @@ pub enum LogEvent {
         engine: &'static str,
         kind: &'static str,
     },
+    ManagedUploadFailure {
+        code: &'static str,
+        request_id: uuid::Uuid,
+    },
     ProcessingFailed {
         stage: ProcessingStage,
         kind: &'static str,
@@ -170,6 +174,7 @@ fn safe_engine_message(message: &str) -> String {
 impl LogEvent {
     pub fn engine_failure(engine: &str, error: &EngineError) -> Self {
         let engine = match engine {
+            "Managed transcription" => "managed",
             "Groq" => "groq",
             "Gemini" => "gemini",
             _ => "unknown",
@@ -204,6 +209,7 @@ impl LogEvent {
         fallback: Option<&FallbackReason>,
     ) -> Self {
         let engine = match engine {
+            "Managed transcription" => "managed",
             "Groq" => "groq",
             "Gemini" => "gemini",
             "local" => "local",
@@ -386,6 +392,12 @@ impl fmt::Display for LogEvent {
             Self::EngineFailure { engine, kind } => {
                 return write!(f, "engine_failure engine={engine} kind={kind}")
             }
+            Self::ManagedUploadFailure { code, request_id } => {
+                return write!(
+                    f,
+                    "managed_upload_failure code={code} request_id={request_id}"
+                )
+            }
             Self::ProcessingFailed {
                 stage,
                 kind,
@@ -490,7 +502,7 @@ fn parse_cloud_span(event: &str) -> bool {
     let Some((round_trip, fallback)) = rest.split_once(" fallback=") else {
         return false;
     };
-    matches!(engine, "groq" | "gemini" | "local" | "unknown")
+    matches!(engine, "managed" | "groq" | "gemini" | "local" | "unknown")
         && audio.parse::<u64>().is_ok()
         && round_trip.parse::<u128>().is_ok()
         && matches!(
@@ -536,7 +548,7 @@ fn parse_failure_kind(event: &str) -> bool {
     let kind = event.strip_prefix("correction_failure kind=").or_else(|| {
         let rest = event.strip_prefix("engine_failure engine=")?;
         let (engine, kind) = rest.split_once(" kind=")?;
-        matches!(engine, "groq" | "gemini" | "unknown").then_some(kind)
+        matches!(engine, "managed" | "groq" | "gemini" | "unknown").then_some(kind)
     });
     kind.is_some_and(|kind| {
         matches!(
@@ -652,6 +664,27 @@ fn safe_log_line(line: &str) -> bool {
         || parse_failure_kind(event)
     {
         return true;
+    }
+    if let Some(rest) = event.strip_prefix("managed_upload_failure code=") {
+        if let Some((code, request_id)) = rest.split_once(" request_id=") {
+            return matches!(
+                code,
+                "INVALID_REQUEST"
+                    | "INVALID_AUDIO"
+                    | "UNAUTHORIZED"
+                    | "IDEMPOTENCY_CONFLICT"
+                    | "REQUEST_IN_PROGRESS"
+                    | "FILE_TOO_LARGE"
+                    | "RATE_LIMITED"
+                    | "PROVIDER_UNAVAILABLE"
+                    | "CAPACITY_EXHAUSTED"
+                    | "TRANSCRIPTION_TIMEOUT"
+                    | "INTERNAL_ERROR"
+                    | "UNKNOWN"
+                    | "TRANSPORT"
+                    | "INVALID_RESPONSE"
+            ) && uuid::Uuid::parse_str(request_id).is_ok();
+        }
     }
     let Some(rest) = event.strip_prefix("provider_error provider=") else {
         return false;

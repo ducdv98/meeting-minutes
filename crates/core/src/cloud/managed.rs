@@ -1,12 +1,24 @@
-use crate::ai::{HttpBody, HttpClient, HttpRequest, HttpResponse, Method};
+use crate::{
+    ai::{AiError, HttpBody, HttpClient, HttpRequest, HttpResponse, Method},
+    capture::Source,
+    cloud::{encode_flac, CloudEngine, EngineError},
+    diagnostics::{log_event, LogEvent},
+    processing::cloud_span_bounds,
+    transcript::{Language, RawSegment},
+};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{
     fmt,
     io::Read,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc, Arc, Mutex,
+    },
+    thread,
     time::{Duration, Instant},
 };
+use uuid::Uuid;
 
 pub const GATEWAY_URL: &str = "https://transcribe.meeting-minutes.tech";
 const REFRESH_MARGIN: Duration = Duration::from_secs(60);
@@ -455,6 +467,387 @@ impl TokenManager {
                 Err(ManagedAuthError::Disconnected)
             }
             Err(error) => Err(ManagedAuthError::Gateway(error)),
+        }
+    }
+}
+
+const PIECE_SAMPLES: usize = 170 * 16_000;
+const CUT_SEARCH_SAMPLES: usize = 10 * 16_000;
+const MAX_RETRIES: usize = 3;
+type Sleeper = Box<dyn FnMut(Duration, &AtomicBool) -> bool + Send>;
+
+/// A source belongs to one engine instance so the CloudEngine interface stays unchanged.
+pub struct ManagedEngine {
+    http: Arc<dyn HttpClient>,
+    tokens: Arc<TokenManager>,
+    base: String,
+    source: Option<Source>,
+    boundary: String,
+    sleeper: Sleeper,
+}
+
+impl ManagedEngine {
+    pub fn new(
+        http: Arc<dyn HttpClient>,
+        tokens: Arc<TokenManager>,
+        source: Option<Source>,
+    ) -> Self {
+        Self::with_boundary(
+            http,
+            tokens,
+            base_url(),
+            source,
+            format!("mm-{}", Uuid::new_v4()),
+        )
+    }
+
+    pub fn with_boundary(
+        http: Arc<dyn HttpClient>,
+        tokens: Arc<TokenManager>,
+        base: impl Into<String>,
+        source: Option<Source>,
+        boundary: impl Into<String>,
+    ) -> Self {
+        Self {
+            http,
+            tokens,
+            base: base.into(),
+            source,
+            boundary: boundary.into(),
+            sleeper: Box::new(default_sleep),
+        }
+    }
+
+    pub fn set_sleeper(
+        &mut self,
+        sleeper: impl FnMut(Duration, &AtomicBool) -> bool + Send + 'static,
+    ) {
+        self.sleeper = Box::new(sleeper);
+    }
+
+    fn upload(
+        &mut self,
+        samples: &[f32],
+        offset_ms: u64,
+        language: Language,
+        cancel: &AtomicBool,
+    ) -> Result<Vec<RawSegment>, EngineError> {
+        if cancel.load(Ordering::SeqCst) {
+            return Err(EngineError::Cancelled);
+        }
+        let request_id = Uuid::new_v4();
+        let audio = encode_flac(samples)?;
+        let source = source_code(self.source);
+        let duration_ms = samples.len() as u64 * 1000 / 16_000;
+        let body = multipart(
+            &self.boundary,
+            &audio,
+            request_id,
+            source,
+            offset_ms,
+            duration_ms,
+            language,
+        );
+        let mut token = self.tokens.access_token().map_err(|error| {
+            log_failure(auth_code(&error), request_id);
+            auth_error(error)
+        })?;
+        let mut refreshed = false;
+        let mut retry = 0;
+        loop {
+            if cancel.load(Ordering::SeqCst) {
+                return Err(EngineError::Cancelled);
+            }
+            let request = HttpRequest {
+                method: Method::Post,
+                url: format!("{}/v1/transcriptions", self.base.trim_end_matches('/')),
+                headers: vec![("Authorization".into(), format!("Bearer {}", token.expose()))],
+                body: Some(HttpBody::Multipart {
+                    boundary: self.boundary.clone(),
+                    bytes: body.clone(),
+                }),
+            };
+            let result = send_cancellable(self.http.clone(), request, cancel);
+            if cancel.load(Ordering::SeqCst) {
+                return Err(EngineError::Cancelled);
+            }
+            let failure = match result {
+                Ok((200, raw)) => match serde_json::from_slice::<UploadReply>(&raw) {
+                    // duration_ms is the gateway's own measurement, so it is not compared.
+                    Ok(reply) if reply.request_id == request_id.to_string() => {
+                        return Ok(reply
+                            .segments
+                            .into_iter()
+                            .map(|segment| RawSegment {
+                                start_ms: segment.start_ms,
+                                end_ms: segment.end_ms,
+                                text: segment.text,
+                                words: Vec::new(),
+                            })
+                            .collect());
+                    }
+                    _ => UploadFailure::InvalidResponse,
+                },
+                Ok((401, _)) if !refreshed => {
+                    log_failure("UNAUTHORIZED", request_id);
+                    token = self.tokens.refresh_now().map_err(|error| {
+                        log_failure(auth_code(&error), request_id);
+                        auth_error(error)
+                    })?;
+                    refreshed = true;
+                    // Refresh does not consume a retry or change the piece's request ID.
+                    continue;
+                }
+                Ok((401, _)) => UploadFailure::Unauthorized,
+                Ok((status, raw)) => {
+                    let raw = String::from_utf8_lossy(&raw);
+                    UploadFailure::Gateway(parse_gateway_error(status, &raw))
+                }
+                Err(AiError::Cancelled) => return Err(EngineError::Cancelled),
+                Err(_) => UploadFailure::Transport,
+            };
+            log_failure(failure.code(), request_id);
+            if !failure.retryable() {
+                return Err(failure.engine_error());
+            }
+            if retry == MAX_RETRIES {
+                return Err(failure.engine_error());
+            }
+            let pause = failure
+                .retry_after()
+                .unwrap_or_else(|| backoff(retry, request_id));
+            if !(self.sleeper)(pause, cancel) || cancel.load(Ordering::SeqCst) {
+                return Err(EngineError::Cancelled);
+            }
+            retry += 1;
+        }
+    }
+}
+
+impl CloudEngine for ManagedEngine {
+    fn name(&self) -> &str {
+        "Managed transcription"
+    }
+
+    fn transcribe_span(
+        &mut self,
+        samples_16k: &[f32],
+        language: Language,
+        _vocabulary: Option<&str>,
+        cancel: &AtomicBool,
+    ) -> Result<Vec<RawSegment>, EngineError> {
+        let mut segments = Vec::new();
+        if samples_16k.is_empty() {
+            return Ok(segments);
+        }
+        for span in cloud_span_bounds(samples_16k, PIECE_SAMPLES, CUT_SEARCH_SAMPLES) {
+            // Keep the gateway limit even if the splitter's selection changes later.
+            for piece in (span.start..span.end).step_by(PIECE_SAMPLES) {
+                let end = (piece + PIECE_SAMPLES).min(span.end);
+                segments.extend(self.upload(
+                    &samples_16k[piece..end],
+                    piece as u64 * 1000 / 16_000,
+                    language,
+                    cancel,
+                )?);
+            }
+        }
+        Ok(segments)
+    }
+}
+
+#[derive(Deserialize)]
+struct UploadReply {
+    request_id: String,
+    segments: Vec<UploadSegment>,
+}
+
+#[derive(Deserialize)]
+struct UploadSegment {
+    start_ms: u64,
+    end_ms: u64,
+    text: String,
+}
+
+fn source_code(source: Option<Source>) -> &'static str {
+    match source {
+        Some(Source::Microphone) => "microphone",
+        Some(Source::SystemAudio) => "system",
+        None => "unknown",
+    }
+}
+
+fn multipart(
+    boundary: &str,
+    audio: &[u8],
+    request_id: Uuid,
+    source: &str,
+    offset_ms: u64,
+    duration_ms: u64,
+    language: Language,
+) -> Vec<u8> {
+    let mut body = Vec::with_capacity(audio.len() + 1024);
+    let mut field = |name: &str, value: &str| {
+        body.extend_from_slice(format!("--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n").as_bytes());
+    };
+    field("request_id", &request_id.to_string());
+    field("source", source);
+    field("offset_ms", &offset_ms.to_string());
+    field("duration_ms", &duration_ms.to_string());
+    field(
+        "language",
+        match language {
+            Language::En => "en",
+            Language::Vi => "vi",
+        },
+    );
+    field("model", "whisper-large-v3");
+    body.extend_from_slice(format!("--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"span.flac\"\r\nContent-Type: audio/flac\r\n\r\n").as_bytes());
+    body.extend_from_slice(audio);
+    body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+    body
+}
+
+enum UploadFailure {
+    Gateway(GatewayError),
+    Transport,
+    InvalidResponse,
+    Unauthorized,
+}
+
+impl UploadFailure {
+    fn code(&self) -> &'static str {
+        match self {
+            Self::Gateway(error) => match error.code {
+                GatewayErrorCode::InvalidRequest => "INVALID_REQUEST",
+                GatewayErrorCode::InvalidAudio => "INVALID_AUDIO",
+                GatewayErrorCode::Unauthorized => "UNAUTHORIZED",
+                GatewayErrorCode::IdempotencyConflict => "IDEMPOTENCY_CONFLICT",
+                GatewayErrorCode::RequestInProgress => "REQUEST_IN_PROGRESS",
+                GatewayErrorCode::FileTooLarge => "FILE_TOO_LARGE",
+                GatewayErrorCode::RateLimited => "RATE_LIMITED",
+                GatewayErrorCode::ProviderUnavailable => "PROVIDER_UNAVAILABLE",
+                GatewayErrorCode::CapacityExhausted => "CAPACITY_EXHAUSTED",
+                GatewayErrorCode::TranscriptionTimeout => "TRANSCRIPTION_TIMEOUT",
+                GatewayErrorCode::InternalError => "INTERNAL_ERROR",
+                GatewayErrorCode::Unknown => "UNKNOWN",
+            },
+            Self::Transport => "TRANSPORT",
+            Self::InvalidResponse => "INVALID_RESPONSE",
+            Self::Unauthorized => "UNAUTHORIZED",
+        }
+    }
+
+    fn retryable(&self) -> bool {
+        match self {
+            Self::Transport | Self::InvalidResponse => true,
+            Self::Unauthorized => false,
+            Self::Gateway(error) => {
+                matches!(
+                    error.code,
+                    GatewayErrorCode::RateLimited
+                        | GatewayErrorCode::RequestInProgress
+                        | GatewayErrorCode::ProviderUnavailable
+                        | GatewayErrorCode::CapacityExhausted
+                        | GatewayErrorCode::TranscriptionTimeout
+                ) || (error.code == GatewayErrorCode::Unknown
+                    && (matches!(error.status, Some(502..=504)) || error.retryable))
+            }
+        }
+    }
+
+    fn retry_after(&self) -> Option<Duration> {
+        match self {
+            Self::Gateway(error) => error.retry_after,
+            _ => None,
+        }
+    }
+
+    fn engine_error(&self) -> EngineError {
+        match self {
+            Self::Unauthorized => EngineError::Unauthorized,
+            Self::Transport | Self::InvalidResponse => EngineError::Offline,
+            Self::Gateway(error) => match error.code {
+                GatewayErrorCode::RateLimited
+                | GatewayErrorCode::RequestInProgress
+                | GatewayErrorCode::ProviderUnavailable
+                | GatewayErrorCode::CapacityExhausted
+                | GatewayErrorCode::TranscriptionTimeout => EngineError::QuotaExhausted,
+                GatewayErrorCode::Unauthorized => EngineError::Unauthorized,
+                GatewayErrorCode::Unknown if self.retryable() => EngineError::Offline,
+                _ => EngineError::Other,
+            },
+        }
+    }
+}
+
+fn auth_error(error: ManagedAuthError) -> EngineError {
+    match error {
+        ManagedAuthError::Disconnected => EngineError::Unauthorized,
+        ManagedAuthError::Gateway(error) => UploadFailure::Gateway(error).engine_error(),
+        ManagedAuthError::CredentialStoreUnavailable => EngineError::Other,
+    }
+}
+
+fn auth_code(error: &ManagedAuthError) -> &'static str {
+    match error {
+        ManagedAuthError::Disconnected => "UNAUTHORIZED",
+        ManagedAuthError::Gateway(error) => UploadFailure::Gateway(error.clone()).code(),
+        ManagedAuthError::CredentialStoreUnavailable => "UNKNOWN",
+    }
+}
+
+fn log_failure(code: &'static str, request_id: Uuid) {
+    log_event(LogEvent::ManagedUploadFailure { code, request_id });
+}
+
+fn backoff(retry: usize, request_id: Uuid) -> Duration {
+    let base_ms = 2_000_u64 << retry;
+    let random = Uuid::new_v4().as_u128() as u64 ^ request_id.as_u128() as u64;
+    Duration::from_millis((base_ms + random % (base_ms / 4 + 1)).min(60_000))
+}
+
+fn default_sleep(duration: Duration, cancel: &AtomicBool) -> bool {
+    let mut remaining = duration;
+    while !remaining.is_zero() {
+        if cancel.load(Ordering::SeqCst) {
+            return false;
+        }
+        let step = remaining.min(Duration::from_millis(100));
+        thread::sleep(step);
+        remaining -= step;
+    }
+    !cancel.load(Ordering::SeqCst)
+}
+
+fn send_cancellable(
+    http: Arc<dyn HttpClient>,
+    request: HttpRequest,
+    cancel: &AtomicBool,
+) -> Result<(u16, Vec<u8>), AiError> {
+    let (sender, receiver) = mpsc::sync_channel(1);
+    thread::spawn(move || {
+        let result = http.send(request).and_then(|mut response| {
+            let mut raw = Vec::new();
+            response
+                .body
+                .by_ref()
+                .take(16 * 1024 * 1024)
+                .read_to_end(&mut raw)?;
+            Ok((response.status, raw))
+        });
+        let _ = sender.send(result);
+    });
+    loop {
+        if cancel.load(Ordering::SeqCst) {
+            return Err(AiError::Cancelled);
+        }
+        match receiver.recv_timeout(Duration::from_millis(100)) {
+            Ok(result) => return result,
+            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                return Err(AiError::Unreachable("Managed request ended".into()))
+            }
         }
     }
 }
