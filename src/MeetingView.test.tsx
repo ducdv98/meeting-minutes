@@ -4,17 +4,17 @@ import MeetingView from "./MeetingView";
 import { deleteMeeting, meetingDetail, openMeetingFolder, renameMeeting, setParticipantName, participantNames, renameParticipant, removeParticipant, assignSegments, type MeetingDetail } from "./library";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { onLibraryChanged } from "./recording";
-import { processingStatus, meetingTranscript, enqueueTranscription, cancelProcessing, onProcessingStatus, onTranscriptDraft, transcriptDraft, setMeetingLanguage, getSettings, type ProcessingStatus } from "./processing";
+import { processingStatus, meetingTranscript, enqueueTranscription, cancelProcessing, onProcessingStatus, onTranscriptDraft, transcriptDraft, setMeetingLanguage, getSettings, installedModels, type ProcessingStatus } from "./processing";
 import { editSegment } from "./transcript";
-import { aiStatus } from "./ai";
+import { aiStatus, managedStatus } from "./ai";
 import { meetingSummary, summaryStatus } from "./summary";
 import { meetingAsks } from "./ask";
 
-vi.mock("./ai", async (original) => ({ ...(await original<typeof import("./ai")>()), aiStatus: vi.fn() }));
+vi.mock("./ai", async (original) => ({ ...(await original<typeof import("./ai")>()), aiStatus: vi.fn(), managedStatus: vi.fn() }));
 vi.mock("./summary", () => ({ meetingSummary: vi.fn(), summaryParticipantsChanged: vi.fn(() => Promise.resolve(false)), summaryStatus: vi.fn(), onSummaryStatus: vi.fn(() => Promise.resolve(() => {})) }));
 vi.mock("./ask", () => ({ meetingAsks: vi.fn(), onAskDelta: vi.fn(() => Promise.resolve(() => {})), onAsksChanged: vi.fn(() => Promise.resolve(() => {})), answerLabel: () => "" }));
 vi.mock("./library", () => ({ meetingDetail: vi.fn(), openMeetingFolder: vi.fn(), renameMeeting: vi.fn(), deleteMeeting: vi.fn(), setParticipantName: vi.fn(), participantNames: vi.fn(), renameParticipant: vi.fn(), removeParticipant: vi.fn(), assignSegments: vi.fn() }));
-vi.mock("./processing", async (importOriginal) => ({ ...(await importOriginal<typeof import("./processing")>()), processingStatus: vi.fn(), meetingTranscript: vi.fn(), enqueueTranscription: vi.fn(), cancelProcessing: vi.fn(), dismissProcessing: vi.fn(), setMeetingLanguage: vi.fn(), getSettings: vi.fn(), transcriptDraft: vi.fn(), onProcessingStatus: vi.fn(() => Promise.resolve(() => {})), onTranscriptDraft: vi.fn(() => Promise.resolve(() => {})) }));
+vi.mock("./processing", async (importOriginal) => ({ ...(await importOriginal<typeof import("./processing")>()), processingStatus: vi.fn(), meetingTranscript: vi.fn(), enqueueTranscription: vi.fn(), cancelProcessing: vi.fn(), dismissProcessing: vi.fn(), setMeetingLanguage: vi.fn(), getSettings: vi.fn(), installedModels: vi.fn(), transcriptDraft: vi.fn(), onProcessingStatus: vi.fn(() => Promise.resolve(() => {})), onTranscriptDraft: vi.fn(() => Promise.resolve(() => {})) }));
 vi.mock("./recording", async (importOriginal) => ({ ...(await importOriginal<typeof import("./recording")>()), onLibraryChanged: vi.fn(() => Promise.resolve(() => {})) }));
 vi.mock("./transcript", async (importOriginal) => ({ ...(await importOriginal<typeof import("./transcript")>()), editSegment: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ convertFileSrc: vi.fn((path: string) => `asset:${path}`) }));
@@ -37,6 +37,8 @@ beforeEach(() => {
   vi.mocked(summaryStatus).mockResolvedValue({ jobs: [] });
   vi.mocked(meetingAsks).mockResolvedValue({ asks: [], active: null, retryable_id: null });
   vi.mocked(aiStatus).mockResolvedValue({ provider: null, model: null, configured: false, has_openai_key: false, has_anthropic_key: false, has_groq_key: false, has_gemini_key: false });
+  vi.mocked(managedStatus).mockResolvedValue({ connected: false, revoked: false });
+  vi.mocked(installedModels).mockResolvedValue([]);
   vi.mocked(meetingDetail).mockResolvedValue(detail);
   vi.mocked(participantNames).mockResolvedValue(["Anna"]);
   vi.mocked(setParticipantName).mockResolvedValue();
@@ -271,7 +273,8 @@ it("shows no audio, disables empty saves, and handles Escape", async () => {
 it("enqueues transcription and can cancel a queued job", async () => {
   render(<MeetingView id="old" onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
   fireEvent.click(await screen.findByRole("button", { name: "Transcribe" }));
-  expect(enqueueTranscription).toHaveBeenCalledWith("old");
+  fireEvent.click(await screen.findByRole("button", { name: "Transcribe" }));
+  await waitFor(() => expect(enqueueTranscription).toHaveBeenCalledWith("old"));
   expect(await screen.findByText("Waiting to transcribe")).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Cancel processing" }));
   await waitFor(() => expect(cancelProcessing).toHaveBeenCalledWith("old"));
@@ -294,9 +297,10 @@ it("shows transcript metadata and changes the Meeting language", async () => {
   vi.mocked(meetingTranscript).mockResolvedValue({ schema_version: 1, revision: 2, created_at: "2026-10-12T10:00:00Z", model: ["small"], language: "vi", language_detected: true, duration_ms: 125000, segments: [{ id: "s00001", start_ms: 0, end_ms: 1000, text: "Hello", speaker: "me" }] });
   render(<MeetingView id="old" onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
   expect(await screen.findByText("Transcript revision 2 · model small · 1 segments · Vietnamese")).toBeTruthy();
-  expect(screen.getByRole("button", { name: "Re-transcribe" })).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "Re-transcribe" }));
-  expect(enqueueTranscription).toHaveBeenCalledWith("old");
+  expect(screen.getByRole("button", { name: "Transcribe again with…" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Transcribe again with…" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Transcribe" }));
+  await waitFor(() => expect(enqueueTranscription).toHaveBeenCalledWith("old"));
   fireEvent.change(screen.getByRole("combobox", { name: "Language" }), { target: { value: "en" } });
   await waitFor(() => expect(setMeetingLanguage).toHaveBeenCalledWith("old", "en"));
 });
@@ -312,9 +316,40 @@ it("re-transcribes with the chosen model and edits the current Revision", async 
   fireEvent.click(screen.getByRole("button", { name: "Save" }));
   expect(await screen.findByText("Updated")).toBeTruthy();
   expect(editSegment).toHaveBeenCalledWith("old", 2, "s00001", "Updated");
-  fireEvent.change(screen.getByRole("combobox", { name: "Model" }), { target: { value: "large-v3-turbo-q5_0" } });
-  fireEvent.click(screen.getByRole("button", { name: "Re-transcribe" }));
-  expect(enqueueTranscription).toHaveBeenCalledWith("old", "large-v3-turbo-q5_0");
+  fireEvent.click(screen.getByRole("button", { name: "Transcribe again with…" }));
+  fireEvent.pointerDown(await screen.findByRole("button", { name: "Choose Speech-to-text model" }), { button: 0, ctrlKey: false });
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Local Whisper · Large v3 turbo" }));
+  fireEvent.click(screen.getByRole("button", { name: "Transcribe" }));
+  await waitFor(() => expect(enqueueTranscription).toHaveBeenCalledWith("old", "local:large-v3-turbo-q5_0"));
+});
+
+it("keeps re-transcription disabled during a Recording of this Meeting", async () => {
+  vi.mocked(meetingTranscript).mockResolvedValue({ schema_version: 1, revision: 1, created_at: "now", model: ["small"], language: "en", language_detected: false, duration_ms: 1000, segments: [] });
+  render(<MeetingView id="old" recordingMeetingId="old" onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
+  const action = await screen.findByRole("button", { name: "Transcribe again with…" });
+  expect((action as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.pointerDown(screen.getByRole("button", { name: "More actions" }), { button: 0, ctrlKey: false });
+  expect((await screen.findByRole("menuitem", { name: "Transcribe again with…" })).hasAttribute("data-disabled")).toBe(true);
+  expect(enqueueTranscription).not.toHaveBeenCalled();
+});
+
+it("keeps the current Revision visible when a chosen cloud model fails", async () => {
+  vi.mocked(getSettings).mockResolvedValue({ recording_notice_acknowledged: true, cloud_notice_acknowledged: true, auto_process: true, model: "small", vocabulary: [], language: null, your_name: "Duc", ai: { provider: null, ollama_model: null, openai_model: null, anthropic_model: null, gemini_model: null }, speech: { models: [{ provider: "groq", model: "whisper-large-v3" }], automatic_groq: "whisper-large-v3", automatic_gemini: null, automatic_whisper: "small" } });
+  vi.mocked(aiStatus).mockResolvedValue({ provider: null, model: null, configured: false, has_openai_key: false, has_anthropic_key: false, has_groq_key: true, has_gemini_key: false });
+  vi.mocked(meetingTranscript).mockResolvedValue({ schema_version: 1, revision: 2, created_at: "now", model: ["small"], language: "en", language_detected: false, duration_ms: 1000, segments: [{ id: "s00001", start_ms: 0, end_ms: 900, text: "Original words", speaker: "me" }] });
+  render(<MeetingView id="old" onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
+  await screen.findByText("Original words");
+  fireEvent.click(screen.getByRole("button", { name: "Transcribe again with…" }));
+  fireEvent.pointerDown(await screen.findByRole("button", { name: "Choose Speech-to-text model" }), { button: 0, ctrlKey: false });
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Groq · whisper-large-v3" }));
+  fireEvent.click(screen.getByRole("button", { name: "Transcribe" }));
+  fireEvent.click(screen.getByRole("button", { name: "Send and transcribe" }));
+  await waitFor(() => expect(enqueueTranscription).toHaveBeenCalledWith("old", "groq:whisper-large-v3"));
+  await screen.findByText("Waiting to transcribe");
+  await act(async () => { vi.mocked(onProcessingStatus).mock.calls[0][0]({ jobs: [{ meeting_id: "old", model: "groq:whisper-large-v3", stage: "failed", progress: 0, error: "Groq: Daily limit reached" }] }); });
+  expect(screen.getByText("Original words")).toBeTruthy();
+  expect(screen.getByText("Transcript revision 2 · model small · 1 segments · English")).toBeTruthy();
+  expect(screen.getByRole("alert").textContent).toContain("Groq: Daily limit reached");
 });
 
 it("closes an open Segment editor and keeps the newer Revision when one arrives", async () => {

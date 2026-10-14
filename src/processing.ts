@@ -33,7 +33,8 @@ export const GROQ_SPEECH_MODELS = ["whisper-large-v3", "whisper-large-v3-turbo"]
 export interface Settings { recording_notice_acknowledged: boolean; cloud_notice_acknowledged: boolean; auto_process: boolean; model: string; vocabulary: string[]; language: Language | null; your_name: string | null; ai: AiSettings; speech?: SpeechSettings; language_models?: LanguageModelSettings }
 
 export const processingStatus = () => invoke<ProcessingStatus>("processing_status");
-export const enqueueTranscription = (meetingId: string, model?: string) => invoke<ProcessingStatus>("transcribe_meeting", { meetingId, model: model ?? null });
+/** A chosen Speech-to-text model is local:<name>, groq:<id>, gemini:<id>, or managed. Omit it for the Transcription order. */
+export const enqueueTranscription = (meetingId: string, chosenModel?: string) => invoke<ProcessingStatus>("transcribe_meeting", { meetingId, model: chosenModel ?? null });
 export const cancelProcessing = (meetingId: string) => invoke<ProcessingStatus>("cancel_processing", { meetingId });
 export const dismissProcessing = (meetingId: string) => invoke<ProcessingStatus>("dismiss_processing", { meetingId });
 export const meetingTranscript = (meetingId: string) => invoke<Transcript | null>("meeting_transcript", { meetingId });
@@ -46,4 +47,3 @@ export const testSpeechModel = (provider: SpeechProvider, model: string) => invo
 export const installedModels = () => invoke<string[]>("installed_models");
 export const onProcessingStatus = (handler: (status: ProcessingStatus) => void): Promise<UnlistenFn> => listen<ProcessingStatus>("processing-status", (event) => handler(event.payload));
 export const onTranscriptDraft = (handler: (draft: TranscriptDraftEvent) => void): Promise<UnlistenFn> => listen<TranscriptDraftEvent>("transcript-draft", (event) => handler(event.payload));
-

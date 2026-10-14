@@ -616,8 +616,35 @@ fn transcribe_meeting(
     let _update_gate = lock_update_start_gate(&app)?;
     ensure_update_not_active(&app)?;
     if let Some(name) = model.as_deref() {
-        if !MODELS.iter().any(|candidate| candidate.name == name) {
-            return Err(format!("Unknown transcription model: {name}"));
+        let settings = Settings::load(&app.state::<SettingsPath>().0);
+        let valid = if let Some(local) = name.strip_prefix("local:") {
+            MODELS.iter().any(|candidate| candidate.name == local)
+        } else if let Some(cloud) = name.strip_prefix("groq:") {
+            settings
+                .speech
+                .models
+                .iter()
+                .any(|entry| entry.provider == SpeechProvider::Groq && entry.model == cloud)
+                && app.state::<Secrets>().0.get(ProviderKind::Groq)?.is_some()
+        } else if let Some(cloud) = name.strip_prefix("gemini:") {
+            settings
+                .speech
+                .models
+                .iter()
+                .any(|entry| entry.provider == SpeechProvider::Gemini && entry.model == cloud)
+                && app
+                    .state::<Secrets>()
+                    .0
+                    .get(ProviderKind::Gemini)?
+                    .is_some()
+        } else if name == "managed" {
+            let managed = app.state::<Managed>();
+            !managed.tokens.is_disconnected() && matches!(managed.store.get(), Ok(Some(_)))
+        } else {
+            MODELS.iter().any(|candidate| candidate.name == name)
+        };
+        if !valid {
+            return Err(format!("Speech-to-text model is not ready: {name}"));
         }
     }
     let mut processor = lock_processor(&app)?;
@@ -1583,11 +1610,53 @@ fn meeting_vocabulary(
 fn transcription_chain<'a>(
     app: &AppHandle,
     model: &str,
+    chosen: Option<&str>,
     local: Box<dyn FnMut() -> Result<Box<dyn SpeechEngine + 'a>, processing::ProcessingError> + 'a>,
 ) -> Result<processing::EngineChain<'a>, processing::ProcessingError> {
     let mut cloud: Vec<Box<dyn CloudEngine>> = Vec::new();
     let settings = Settings::load(&app.state::<SettingsPath>().0);
     let managed = app.state::<Managed>();
+    if let Some(chosen) = chosen {
+        let selected: Option<Box<dyn CloudEngine>> = if chosen == "managed" {
+            Some(Box::new(ManagedEngine::new(
+                app.state::<Http>().0.clone(),
+                managed.tokens.clone(),
+                None,
+            )))
+        } else if let Some(name) = chosen.strip_prefix("groq:") {
+            let key = app
+                .state::<Secrets>()
+                .0
+                .get(ProviderKind::Groq)
+                .map_err(processing::ProcessingError::Engine)?
+                .ok_or_else(|| processing::ProcessingError::Engine("Groq key is missing".into()))?;
+            Some(Box::new(GroqEngine::new_with_model(
+                app.state::<Http>().0.clone(),
+                key,
+                name,
+            )))
+        } else if let Some(name) = chosen.strip_prefix("gemini:") {
+            let key = app
+                .state::<Secrets>()
+                .0
+                .get(ProviderKind::Gemini)
+                .map_err(processing::ProcessingError::Engine)?
+                .ok_or_else(|| {
+                    processing::ProcessingError::Engine("Gemini key is missing".into())
+                })?;
+            Some(Box::new(GeminiEngine::new(
+                app.state::<Http>().0.clone(),
+                key,
+                name,
+            )))
+        } else {
+            None
+        };
+        return Ok(match selected {
+            Some(engine) => processing::EngineChain::chosen_cloud(engine, model, local),
+            None => processing::EngineChain::new(vec![], model, local),
+        });
+    }
     if !managed.tokens.is_disconnected() && matches!(managed.store.get(), Ok(Some(_))) {
         cloud.push(Box::new(ManagedEngine::new(
             app.state::<Http>().0.clone(),
@@ -1689,6 +1758,7 @@ fn start_background(app: &AppHandle) {
             let mut chain = match transcription_chain(
                 &app,
                 model.name,
+                None,
                 Box::new(|| {
                     // Never load a second model while Processing has one on the GPU.
                     if lock_processor(&app).map(|p| p.is_running()).unwrap_or(true) {
@@ -1835,9 +1905,17 @@ fn processing_worker(app: AppHandle) {
                 library.meeting_dir(&id)
             };
             let settings = Settings::load(&app.state::<SettingsPath>().0);
+            let local_choice = job_model.as_deref().and_then(|name| {
+                name.strip_prefix("local:").or_else(|| {
+                    MODELS
+                        .iter()
+                        .any(|candidate| candidate.name == name)
+                        .then_some(name)
+                })
+            });
             let model = MODELS
                 .iter()
-                .find(|m| Some(m.name) == job_model.as_deref())
+                .find(|m| Some(m.name) == local_choice)
                 .or_else(|| MODELS.iter().find(|m| m.name == settings.model))
                 .unwrap_or_else(|| MODELS.iter().find(|m| m.name == DEFAULT_MODEL).unwrap());
             let models_state = app.state::<ModelsDir>();
@@ -1849,7 +1927,12 @@ fn processing_worker(app: AppHandle) {
             processing_stage(&app, &id, JobStage::Transcribing, 0.0);
             let vocabulary = meeting_vocabulary(&app, &id, &settings)?;
             // Joined before the engine loads, so two models never share the GPU.
-            let cached = take_background_results(&app, &id);
+            let background = take_background_results(&app, &id);
+            let cached = if job_model.is_some() {
+                Vec::new()
+            } else {
+                background
+            };
             let request = TranscribeRequest {
                 meeting_dir: &meeting_dir,
                 model: model.name,
@@ -1864,6 +1947,7 @@ fn processing_worker(app: AppHandle) {
             let mut engine = transcription_chain(
                 &app,
                 model.name,
+                job_model.as_deref(),
                 Box::new(|| {
                     let needs_model_download = !models::is_installed(models_dir, model);
                     let needs_vad_download = !models::is_installed(models_dir, &models::VAD_MODEL);

@@ -132,6 +132,7 @@ pub struct EngineChain<'a> {
     used: Vec<EngineName>,
     fallback: Option<FallbackReason>,
     audio_ms: std::collections::BTreeMap<EngineName, u64>,
+    chosen_cloud: bool,
 }
 
 struct BorrowedEngine<'a>(&'a mut dyn SpeechEngine);
@@ -270,7 +271,19 @@ impl<'a> EngineChain<'a> {
             used: Vec::new(),
             fallback: None,
             audio_ms: std::collections::BTreeMap::new(),
+            chosen_cloud: false,
         }
+    }
+
+    /// Runs one chosen cloud Speech-to-text model without trying another Provider or local Whisper.
+    pub fn chosen_cloud(
+        engine: Box<dyn CloudEngine>,
+        local_name: &str,
+        local_factory: LocalFactory<'a>,
+    ) -> Self {
+        let mut chain = Self::new(vec![engine], local_name, local_factory);
+        chain.chosen_cloud = true;
+        chain
     }
 
     pub fn set_sleeper(&mut self, sleeper: RetrySleeper<'a>) {
@@ -381,6 +394,9 @@ impl<'a> EngineChain<'a> {
                             continue;
                         }
                         log_event(LogEvent::engine_failure(&name, &error));
+                        if self.chosen_cloud {
+                            return Err(ProcessingError::Engine(format!("{name}: {error}")));
+                        }
                         let engine_name = EngineName::from(name.as_str());
                         let reason = match error {
                             EngineError::QuotaExhausted => FallbackReason::Quota(engine_name),
@@ -405,6 +421,11 @@ impl<'a> EngineChain<'a> {
                     }
                 }
             }
+        }
+        if self.chosen_cloud {
+            return Err(ProcessingError::Engine(
+                "Chosen Speech-to-text model is unavailable".into(),
+            ));
         }
         let local_name = self.local_name.clone();
         let started = Instant::now();
@@ -491,6 +512,9 @@ impl SpeechEngine for EngineChain<'_> {
                 }
                 Err(error) => {
                     log_event(LogEvent::engine_failure(engine.name(), &error));
+                    if self.chosen_cloud {
+                        return Err(format!("{}: {error}", engine.name()));
+                    }
                     if matches!(
                         error,
                         EngineError::QuotaExhausted
@@ -1694,5 +1718,102 @@ impl Processor {
         ProcessingStatus {
             jobs: self.jobs.clone(),
         }
+    }
+}
+
+#[cfg(test)]
+mod chosen_model_tests {
+    use super::*;
+    use std::sync::atomic::AtomicUsize;
+
+    struct Cloud {
+        calls: Arc<AtomicUsize>,
+    }
+    impl CloudEngine for Cloud {
+        fn name(&self) -> &str {
+            "Groq"
+        }
+        fn transcribe_span(
+            &mut self,
+            _: &[f32],
+            _: Language,
+            _: Option<&str>,
+            _: &AtomicBool,
+        ) -> Result<Vec<RawSegment>, EngineError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Err(EngineError::QuotaExhausted)
+        }
+    }
+
+    struct Local;
+    impl SpeechEngine for Local {
+        fn backend(&self) -> &str {
+            "CPU"
+        }
+        fn thread_count(&self) -> usize {
+            1
+        }
+        fn detect_language(&mut self, _: &[f32], _: &AtomicBool) -> Result<Language, String> {
+            Ok(Language::En)
+        }
+        fn transcribe(
+            &mut self,
+            _: &[f32],
+            _: Language,
+            _: Option<&str>,
+            _: &mut dyn FnMut(f32),
+            _: &AtomicBool,
+        ) -> Result<Vec<RawSegment>, ProcessingError> {
+            Ok(vec![])
+        }
+    }
+
+    #[test]
+    fn chosen_cloud_failure_does_not_try_local() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut chain = EngineChain::chosen_cloud(
+            Box::new(Cloud {
+                calls: calls.clone(),
+            }),
+            "small",
+            Box::new(|| panic!("local fallback must not load")),
+        );
+        let error = chain
+            .transcribe(
+                &[0.5; 16_000],
+                Language::En,
+                None,
+                &mut |_| {},
+                &AtomicBool::new(false),
+            )
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "Transcription error: Groq: Daily limit reached"
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(chain.engines_used().is_empty());
+    }
+
+    #[test]
+    fn chosen_local_does_not_call_cloud() {
+        let mut chain = EngineChain::new(
+            vec![],
+            "large-v3-turbo-q5_0",
+            Box::new(|| Ok(Box::new(Local))),
+        );
+        chain
+            .transcribe(
+                &[0.5; 16_000],
+                Language::En,
+                None,
+                &mut |_| {},
+                &AtomicBool::new(false),
+            )
+            .unwrap();
+        assert_eq!(
+            chain.engines_used(),
+            vec![EngineName::Local("large-v3-turbo-q5_0".into())]
+        );
     }
 }

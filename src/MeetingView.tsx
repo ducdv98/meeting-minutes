@@ -5,7 +5,7 @@ import Player, { PlayerContext, type PlayerHandle } from "./Player";
 import type { TimelinePlayer } from "./timeline";
 import { formatElapsed } from "./recording";
 import { onLibraryChanged } from "./recording";
-import { cancelProcessing, dismissProcessing, enqueueTranscription, getSettings, meetingTranscript, MODELS, onProcessingStatus, onTranscriptDraft, processingStageLabel, processingStatus, setMeetingLanguage, transcriptDraft, type DraftSegment, type Language, type ProcessingJob, type Speaker, type Transcript } from "./processing";
+import { cancelProcessing, dismissProcessing, enqueueTranscription, getSettings, meetingTranscript, onProcessingStatus, onTranscriptDraft, processingStageLabel, processingStatus, setMeetingLanguage, transcriptDraft, type DraftSegment, type Language, type ProcessingJob, type Speaker, type Transcript } from "./processing";
 import TranscriptView from "./TranscriptView";
 import DraftView from "./DraftView";
 import { editSegment, labelParticipantName, participantList, speakerName } from "./transcript";
@@ -25,6 +25,7 @@ import { Loading, LoadingRows } from "./components/states/Loading";
 import { PageHeader } from "./components/PageHeader";
 import type { SettingsTabId } from "./SettingsView";
 import type { Citation } from "./summary";
+import TranscribeDialog from "./TranscribeDialog";
 
 interface Props {
   id: string;
@@ -85,7 +86,7 @@ export default function MeetingView({ id, onBack, onRenamed, onOpenSettings, ope
   const [highlight, setHighlight] = useState<Citation | null>(null);
   const [transcript, setTranscript] = useState<Transcript | null>(null);
   const [draft, setDraft] = useState<DraftSegment[]>([]);
-  const [model, setModel] = useState("");
+  const [transcribeOpen, setTranscribeOpen] = useState(false);
   const [job, setJob] = useState<ProcessingJob | null>(null);
   const jobRef = useRef<ProcessingJob | null>(null);
   const jobKnown = useRef(false);
@@ -121,7 +122,7 @@ export default function MeetingView({ id, onBack, onRenamed, onOpenSettings, ope
     draftScrollAnchor.current = null;
     opened.current = null;
     setError(null);
-    setDetail(null); setTranscript(null); setDraft([]); setTranscriptLoaded(false); setProviderStatus(null); setLanguageModels(undefined); setJob(null); setPlayer(null);
+    setDetail(null); setTranscript(null); setDraft([]); setTranscriptLoaded(false); setProviderStatus(null); setLanguageModels(undefined); setJob(null); setPlayer(null); setTranscribeOpen(false);
     setStaleSearchResult(false);
     setPositionMs(0);
     setHighlight(null);
@@ -190,6 +191,7 @@ export default function MeetingView({ id, onBack, onRenamed, onOpenSettings, ope
   }, [id]);
 
   async function runTranscription(chosenModel?: string) {
+    setTranscribeOpen(false);
     setError(null);
     setDraft([]);
     try { const status = chosenModel ? await enqueueTranscription(id, chosenModel) : await enqueueTranscription(id); jobRef.current = status.jobs.find((item) => item.meeting_id === id) ?? null; jobKnown.current = true; setJob(jobRef.current); }
@@ -316,7 +318,7 @@ export default function MeetingView({ id, onBack, onRenamed, onOpenSettings, ope
           </div> : "Opening Meeting…"}
       actions={detail && <DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" aria-label="More actions"><Ellipsis size={16} strokeWidth={1.5} /></Button></DropdownMenuTrigger><DropdownMenuContent align="end">
           <DropdownMenuItem onSelect={() => { setTitle(detail.title); setRenaming(true); }}><Pencil size={16} strokeWidth={1.5} />Rename</DropdownMenuItem>
-          <DropdownMenuItem disabled={!transcript || !!job} onSelect={() => void runTranscription(model || undefined)}><RefreshCw size={16} strokeWidth={1.5} />Re-transcribe</DropdownMenuItem>
+          <DropdownMenuItem disabled={!!job || recordingMeetingId === id} onSelect={() => setTranscribeOpen(true)}><RefreshCw size={16} strokeWidth={1.5} />{transcript ? "Transcribe again with…" : "Transcribe…"}</DropdownMenuItem>
           <DropdownMenuSeparator className="my-1 h-px bg-line" />
           <DropdownMenuItem className="text-record" disabled={recordingMeetingId === id || (!!job && job.stage !== "failed")} onSelect={() => { setError(null); setConfirmingDelete(true); }}><Trash2 size={16} strokeWidth={1.5} />Delete</DropdownMenuItem>
         </DropdownMenuContent></DropdownMenu>} />
@@ -326,22 +328,22 @@ export default function MeetingView({ id, onBack, onRenamed, onOpenSettings, ope
     {!detail && !error && <div className="px-7"><Loading message="Opening Meeting…" /></div>}
     {detail && <>
       {confirmingDelete && <ConfirmDelete title={detail.title} busy={deleteBusy} onConfirm={() => void confirmDelete()} onCancel={() => setConfirmingDelete(false)} />}
+      {transcribeOpen && <TranscribeDialog again={!!transcript} onClose={() => setTranscribeOpen(false)} onTranscribe={(chosen) => void runTranscription(chosen)} onOpenSettings={() => onOpenSettings("speech-to-text")} />}
       {detail.audio_path && audioOpen ? <Player ref={playerHandle} audio_path={detail.audio_path} duration_ms={detail.duration_ms} markers={detail.markers} highlight={highlight} onPlayerChange={onPlayerChange} onPosition={onPosition} /> : !detail.audio_path ? <p className="mx-7 mt-4 text-sm text-ink-muted">No audio yet</p> : null}
       <div className="mt-4 grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_380px] border-t border-line max-[900px]:grid-cols-[minmax(0,1fr)_minmax(300px,42%)] max-[680px]:grid-cols-1">
         <section ref={transcriptScroll} aria-label="Transcript" className="min-h-0 min-w-0 overflow-y-auto px-7 pb-8 pt-2 max-[680px]:max-h-[50vh]">
           <div className="sticky top-0 z-10 flex items-center gap-2 bg-canvas py-2.5"><h2 className="m-0 mr-auto font-display text-heading-sm">Transcript</h2>
             {showingDraft ? <Badge className="rounded-full border border-line bg-transparent">Draft · Transcribing…</Badge> : transcript && <Badge className="rounded-full border border-line bg-transparent">Revision {transcript.revision} · {transcript.model.join(", ")}</Badge>}
-            {transcript && !job && <Button variant="ghost" onClick={() => void runTranscription(model || undefined)}><RefreshCw size={16} strokeWidth={1.5} />Re-transcribe</Button>}
+            {transcript && !job && <Button variant="ghost" disabled={recordingMeetingId === id} onClick={() => setTranscribeOpen(true)}><RefreshCw size={16} strokeWidth={1.5} />Transcribe again with…</Button>}
           </div>
           {transcript && !showingDraft && <p className="sr-only">Transcript revision {transcript.revision} · model {transcript.model.join(", ")} · {transcript.segments.length} segments · {languageName(transcript.language)}</p>}
           {transcript?.fallback_reason && !showingDraft && <p role="status" className="mb-3 text-sm text-ink-muted">Part of this Meeting was transcribed {transcript.model.every((engine) => engine === "Groq" || engine === "Gemini" || engine === "Managed transcription") ? `with ${transcript.model.at(-1)}` : "locally"}: {transcript.fallback_reason}.</p>}
           {transcript && !showingDraft && detail.correction_notice && <p role="status" className="mb-4 text-sm text-ink-muted">{detail.correction_notice}</p>}
           {transcript && !showingDraft && meetingParticipants.length > 0 && <div className="mb-4 grid gap-2 rounded-md border border-line bg-raised p-3"><h3 className="m-0 text-sm font-medium">Participants</h3><datalist id="participant-names">{suggestions.map((name) => <option key={name} value={name} />)}</datalist><div className="flex flex-wrap gap-3">{meetingParticipants.map((name) => { const labels = speakerLabels.filter((label) => labelParticipantName(label, detail.participants, yourName, isVoiceNote) === name); const removable = Object.values(detail.participants).includes(name) || Object.values(detail.segment_participants?.segments ?? {}).includes(name); return <div key={name} className="grid min-w-[130px] flex-1 gap-1 text-xs text-ink-muted"><label>{labels.length ? labels.map(speakerName).join(", ") : name} Participant<Input aria-label={`${labels.length === 1 ? speakerName(labels[0]) : name} Participant`} list="participant-names" value={participantDrafts[name] ?? name} onChange={(event) => setParticipantDrafts((current) => ({ ...current, [name]: event.target.value }))} onBlur={() => void saveParticipant(name)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); event.currentTarget.blur(); } }} /></label>{labels.length > 0 && <span className="text-ink-faint">Speaker labels: {labels.map(speakerName).join(", ")}</span>}{removable && <Button variant="ghost" className="justify-self-start px-0 text-xs" onClick={() => void removeName(name)}>Remove {name}</Button>}</div>; })}</div></div>}
-          {transcript && !job && <div className="mb-3 flex items-center gap-2 text-xs text-ink-muted"><label htmlFor="meeting-model">Model</label><select id="meeting-model" className="rounded-sm border border-line-strong bg-raised px-2 py-1 text-xs outline-none focus:border-accent" value={model} onChange={(event) => setModel(event.target.value)}><option value="">Model from Settings</option>{MODELS.map((option) => <option key={option.name} value={option.name}>{option.name}</option>)}</select><span>Re-transcribing adds a new Revision.</span></div>}
           {job && job.stage !== "failed" && <div role="status" className="mb-4"><LoadingRows rows={2} /><p className="text-sm text-ink-muted">{processingStageLabel(job)}</p>{job.stage !== "queued" && <div role="progressbar" aria-label={processingStageLabel(job)} aria-valuenow={Math.round(job.progress * 100)} aria-valuemin={0} aria-valuemax={100} className="mt-2 h-1.5 max-w-md rounded-sm bg-page-shadow"><div className="h-full rounded-sm bg-accent" style={{ width: `${Math.round(job.progress * 100)}%` }} /></div>}<Button variant="ghost" className="mt-2" onClick={() => void cancelJob()}>Cancel processing</Button></div>}
           {job?.stage === "failed" && <div className="mb-4"><ErrorState title="Transcription failed" guidance={job.error ?? "Try again."} onRetry={() => void runTranscription()} /><Button variant="ghost" onClick={() => void dismissJob()}>Dismiss</Button></div>}
           {!transcriptLoaded && <Loading message="Loading Transcript…" />}
-          {transcriptLoaded && !job && !transcript && <EmptyState title="No Transcript yet" description="Transcribe this Meeting to see its Segments." action={<Button onClick={() => void runTranscription()}>Transcribe</Button>} />}
+          {transcriptLoaded && !job && !transcript && <EmptyState title="No Transcript yet" description="Transcribe this Meeting to see its Segments." action={<Button disabled={recordingMeetingId === id} onClick={() => setTranscribeOpen(true)}>Transcribe</Button>} />}
           {showingDraft ? <div className="motion-transcript motion-content-enter"><DraftView segments={draft} participants={detail.participants} yourName={yourName} isVoiceNote={isVoiceNote} /></div> : transcript && <div key={`${id}:${transcript.revision}`} className="motion-transcript motion-content-enter"><TranscriptView transcript={transcript} positionMs={positionMs} player={player} editable={!job || job.stage === "failed"} onEdit={saveSegment} onMove={isVoiceNote ? undefined : moveSegments} participants={detail.participants} segmentParticipants={detail.segment_participants} yourName={yourName} isVoiceNote={isVoiceNote} skipInitialScroll={!!draftScrollAnchor.current} /></div>}
         </section>
         <aside className="flex min-h-0 min-w-0 flex-col border-l border-line max-[680px]:border-l-0 max-[680px]:border-t" aria-label="Summary and Ask">
