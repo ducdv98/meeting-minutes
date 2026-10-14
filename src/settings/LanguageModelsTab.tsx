@@ -1,9 +1,8 @@
 import { useState, type Dispatch, type SetStateAction } from "react";
 import { Check } from "lucide-react";
-import { deleteApiKey, listAiModels, PROVIDER_NAMES, PROVIDERS, saveApiKey, testAiProvider, updateAiSettings, type AiStatus, type ProviderKind } from "../ai";
+import { listAiModels, PROVIDER_NAMES, PROVIDERS, testAiProvider, updateAiSettings, type AiStatus, type ProviderKind } from "../ai";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
-import { Input } from "../components/ui/Input";
 import { RadioGroup, RadioGroupItem } from "../components/ui/RadioGroup";
 import { ErrorState } from "../components/states/ErrorState";
 import { FormSection } from "../components/FormSection";
@@ -18,9 +17,8 @@ const PROVIDER_NOTES: Record<ProviderKind, string> = {
   gemini: "Sends the Transcript to Gemini when you click. Also used for Correction. Key kept in Windows Credential Manager.",
 };
 
-export function LanguageModelsTab({ providerStatus, setProviderStatus, aiError, setAiError }: { providerStatus: AiStatus | null; setProviderStatus: Dispatch<SetStateAction<AiStatus | null>>; aiError: string | null; setAiError: Dispatch<SetStateAction<string | null>> }) {
+export function LanguageModelsTab({ providerStatus, setProviderStatus, aiError, setAiError, onManageKeys }: { providerStatus: AiStatus | null; setProviderStatus: Dispatch<SetStateAction<AiStatus | null>>; aiError: string | null; setAiError: Dispatch<SetStateAction<string | null>>; onManageKeys: () => void }) {
   const [models, setModels] = useState<string[]>([]);
-  const [key, setKey] = useState("");
   const [reply, setReply] = useState<string | null>(null);
   const [aiBusy, setAiBusy] = useState(false);
   async function runAi(action: () => Promise<AiStatus | string[] | string>) {
@@ -47,11 +45,7 @@ export function LanguageModelsTab({ providerStatus, setProviderStatus, aiError, 
       </RadioGroupItem>)}
       <RadioGroupItem value="none" description="Summary and Ask stay off.">None</RadioGroupItem>
     </RadioGroup>
-    {isCloud && (hasKey(provider) ? <p className="m-0 flex flex-wrap items-center gap-2 text-sm text-ink-muted">API key saved in Windows Credential Manager <Button variant="secondary" disabled={aiBusy} onClick={() => void runAi(() => deleteApiKey(provider))}>Remove key</Button></p> : <div className="grid max-w-sm gap-1.5">
-      <label htmlFor="ai-key" className="text-sm font-medium">API key</label>
-      <div className="flex gap-2"><Input id="ai-key" type="password" value={key} onChange={(event) => setKey(event.target.value)} />
-        <Button variant="secondary" disabled={aiBusy} onClick={() => { const entered = key; setKey(""); void runAi(() => saveApiKey(provider, entered)); }}>Save key</Button></div>
-    </div>)}
+    {isCloud && <p className="m-0 flex flex-wrap items-center gap-2 text-sm text-ink-muted">{hasKey(provider) ? "Key saved in Windows Credential Manager" : "No key"}<button type="button" className="text-accent hover:underline" onClick={onManageKeys}>Manage keys</button></p>}
     {provider && <div className="flex flex-wrap items-end gap-2">
       {(models.length > 0 || providerStatus?.model) && <div className="grid min-w-56 gap-1.5"><label htmlFor="ai-model" className="text-sm font-medium">Model</label>
         <select id="ai-model" className={selectClass} value={providerStatus?.model ?? ""} disabled={aiBusy} onChange={(event) => void runAi(() => updateAiSettings(provider, event.target.value))}>
