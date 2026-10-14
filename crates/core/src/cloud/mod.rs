@@ -61,6 +61,10 @@ impl std::error::Error for EngineError {}
 pub trait CloudEngine: Send {
     fn name(&self) -> &str;
     fn set_source(&mut self, _source: Option<Source>) {}
+    /// True for an engine that cannot detect the language and must be told it.
+    fn needs_detected_language(&self) -> bool {
+        false
+    }
     fn transcribe_span(
         &mut self,
         samples_16k: &[f32],

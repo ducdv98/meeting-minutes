@@ -456,3 +456,93 @@ fn managed_engine_name_and_fallback_round_trip_with_old_transcripts() {
         EngineName::Managed
     );
 }
+
+#[test]
+fn a_long_retry_after_is_capped_at_a_minute() {
+    let http = FakeHttp::new(
+        [
+            Reply::Error(
+                503,
+                r#"{"error":{"code":"CAPACITY_EXHAUSTED","retryable":true,"retry_after_ms":36000000}}"#,
+            ),
+            Reply::Ok,
+        ],
+        false,
+    );
+    let waits = Arc::new(Mutex::new(Vec::new()));
+    let mut engine = engine(http, None);
+    let recorded = waits.clone();
+    engine.set_sleeper(move |duration, _: &AtomicBool| {
+        recorded.lock().unwrap().push(duration);
+        true
+    });
+    transcribe(&mut engine).unwrap();
+    assert_eq!(*waits.lock().unwrap(), vec![Duration::from_secs(60)]);
+}
+
+#[test]
+fn disconnecting_during_a_retry_wait_sends_nothing_more() {
+    let http = FakeHttp::new(
+        [
+            Reply::Error(
+                503,
+                r#"{"error":{"code":"PROVIDER_UNAVAILABLE","retryable":true}}"#,
+            ),
+            Reply::Ok,
+        ],
+        false,
+    );
+    let store = Arc::new(MemoryManagedCredentialStore::default());
+    store
+        .set(&ManagedCredential {
+            client_id: "client".into(),
+            refresh_token: ManagedToken::new("refresh-secret").unwrap(),
+        })
+        .unwrap();
+    let tokens = Arc::new(TokenManager::new(
+        http.clone(),
+        store.clone(),
+        "https://gateway.test",
+    ));
+    let mut engine = ManagedEngine::with_boundary(
+        http.clone(),
+        tokens.clone(),
+        "https://gateway.test",
+        None,
+        "test-boundary",
+    );
+    engine.set_sleeper(move |_, _: &AtomicBool| {
+        store.delete().unwrap();
+        tokens.reset();
+        true
+    });
+    assert_eq!(
+        transcribe(&mut engine).unwrap_err(),
+        EngineError::Unauthorized
+    );
+    assert_eq!(http.uploads().len(), 1);
+}
+
+#[test]
+fn a_reply_that_keeps_failing_moves_on_but_no_reply_at_all_is_offline() {
+    let http = FakeHttp::new([Reply::Error(502, "<html>bad gateway</html>"); 4], false);
+    let mut replied = engine(http.clone(), None);
+    replied.set_sleeper(|_: Duration, _: &AtomicBool| true);
+    assert_eq!(
+        transcribe(&mut replied).unwrap_err(),
+        EngineError::QuotaExhausted
+    );
+    assert_eq!(http.uploads().len(), 4);
+    let http = FakeHttp::new(
+        [
+            Reply::Transport,
+            Reply::Transport,
+            Reply::Transport,
+            Reply::Transport,
+        ],
+        false,
+    );
+    let mut engine = engine(http, None);
+    engine.set_sleeper(|_: Duration, _: &AtomicBool| true);
+    assert_eq!(transcribe(&mut engine).unwrap_err(), EngineError::Offline);
+}

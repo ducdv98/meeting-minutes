@@ -1,6 +1,6 @@
 # Managed transcription spec
 
-Status: ready-for-agent
+Status: ready-for-human
 
 Wire the app to the experimental Meeting Minutes transcription service (the "gateway"), so an invited user gets cloud transcription without their own Groq key. Vocabulary: `CONTEXT.md` (**Managed transcription**, **Invite code**, **Processing**, **Chunk**, **Vocabulary**, **Meeting language**). Decisions: ADR 0012 (this feature), ADR 0011 (amended), ADR 0010 (background transcription).
 

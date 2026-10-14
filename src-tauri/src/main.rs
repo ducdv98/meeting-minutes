@@ -290,54 +290,49 @@ impl SecretStore for KeyringStore {
 struct KeyringManagedStore;
 #[cfg(windows)]
 impl KeyringManagedStore {
-    fn entry(user: &str) -> Result<keyring::Entry, String> {
-        keyring::Entry::new("Meeting Minutes", user).map_err(|error| error.to_string())
-    }
-
-    fn delete_entry(user: &str) -> Result<(), String> {
-        match Self::entry(user)?.delete_credential() {
-            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-            Err(error) => Err(error.to_string()),
-        }
-    }
-
-    fn read_entry(user: &str) -> Result<Option<String>, String> {
-        match Self::entry(user)?.get_password() {
-            Ok(value) => Ok(Some(value)),
-            Err(keyring::Error::NoEntry) => Ok(None),
-            Err(error) => Err(error.to_string()),
-        }
+    /// One entry holds both values, so a failed write never leaves a mismatched pair.
+    fn entry() -> Result<keyring::Entry, String> {
+        keyring::Entry::new("Meeting Minutes", "managed-credential")
+            .map_err(|error| error.to_string())
     }
 }
 #[cfg(windows)]
 impl ManagedCredentialStore for KeyringManagedStore {
     fn get(&self) -> Result<Option<ManagedCredential>, String> {
-        let client_id = Self::read_entry("managed-client-id")?;
-        let refresh_token = Self::read_entry("managed-refresh-token")?;
-        Ok(match (client_id, refresh_token) {
-            (Some(client_id), Some(refresh_token)) => {
-                ManagedToken::new(refresh_token).map(|refresh_token| ManagedCredential {
-                    client_id,
-                    refresh_token,
-                })
-            }
-            _ => None,
-        })
+        let raw = match Self::entry()?.get_password() {
+            Ok(raw) => raw,
+            Err(keyring::Error::NoEntry) => return Ok(None),
+            Err(error) => return Err(error.to_string()),
+        };
+        let value: serde_json::Value = match serde_json::from_str(&raw) {
+            Ok(value) => value,
+            Err(_) => return Ok(None),
+        };
+        let client_id = value["client_id"].as_str().filter(|id| !id.is_empty());
+        let refresh_token = value["refresh_token"].as_str().and_then(ManagedToken::new);
+        Ok(client_id
+            .zip(refresh_token)
+            .map(|(client_id, refresh_token)| ManagedCredential {
+                client_id: client_id.to_owned(),
+                refresh_token,
+            }))
     }
 
     fn set(&self, credential: &ManagedCredential) -> Result<(), String> {
-        Self::entry("managed-client-id")?
-            .set_password(&credential.client_id)
-            .map_err(|error| error.to_string())?;
-        Self::entry("managed-refresh-token")?
-            .set_password(credential.refresh_token.expose())
+        let value = serde_json::json!({
+            "client_id": credential.client_id,
+            "refresh_token": credential.refresh_token.expose(),
+        });
+        Self::entry()?
+            .set_password(&value.to_string())
             .map_err(|error| error.to_string())
     }
 
     fn delete(&self) -> Result<(), String> {
-        let client = Self::delete_entry("managed-client-id");
-        let refresh = Self::delete_entry("managed-refresh-token");
-        client.and(refresh)
+        match Self::entry()?.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Err(error) => Err(error.to_string()),
+        }
     }
 }
 
@@ -813,14 +808,20 @@ async fn managed_connect(app: AppHandle, invite_code: String) -> Result<ManagedS
     .map_err(|error| error.to_string())?
 }
 
+/// Runs off the UI thread: resetting the tokens waits for any refresh in flight.
 #[tauri::command]
-fn managed_disconnect(managed: State<'_, Managed>) -> Result<ManagedStatus, String> {
-    managed
-        .store
-        .delete()
-        .map_err(|_| "Managed transcription could not disconnect.".to_owned())?;
-    managed.tokens.reset();
-    current_managed_status(&managed)
+async fn managed_disconnect(app: AppHandle) -> Result<ManagedStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let managed = app.state::<Managed>();
+        managed
+            .store
+            .delete()
+            .map_err(|_| "Managed transcription could not disconnect.".to_owned())?;
+        managed.tokens.reset();
+        current_managed_status(&managed)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]

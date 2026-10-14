@@ -361,7 +361,6 @@ struct CachedToken {
 struct TokenState {
     credential: Option<ManagedCredential>,
     access: Option<CachedToken>,
-    disconnected: bool,
 }
 
 pub struct TokenManager {
@@ -370,6 +369,8 @@ pub struct TokenManager {
     base: String,
     clock: Arc<dyn Fn() -> Instant + Send + Sync>,
     state: Mutex<TokenState>,
+    // Outside the state lock, so Settings never waits for a refresh in flight.
+    revoked: AtomicBool,
 }
 
 impl TokenManager {
@@ -393,14 +394,12 @@ impl TokenManager {
             base: base.into(),
             clock,
             state: Mutex::new(TokenState::default()),
+            revoked: AtomicBool::new(false),
         }
     }
 
     pub fn is_disconnected(&self) -> bool {
-        self.state
-            .lock()
-            .map(|state| state.disconnected)
-            .unwrap_or(true)
+        self.revoked.load(Ordering::SeqCst)
     }
 
     /// Forgets cached credentials and the revoked state, after Connect or Disconnect in Settings.
@@ -408,6 +407,7 @@ impl TokenManager {
         if let Ok(mut state) = self.state.lock() {
             *state = TokenState::default();
         }
+        self.revoked.store(false, Ordering::SeqCst);
     }
 
     pub fn access_token(&self) -> Result<ManagedToken, ManagedAuthError> {
@@ -415,7 +415,7 @@ impl TokenManager {
             .state
             .lock()
             .map_err(|_| ManagedAuthError::CredentialStoreUnavailable)?;
-        if state.disconnected {
+        if self.is_disconnected() {
             return Err(ManagedAuthError::Disconnected);
         }
         if let Some(access) = &state.access {
@@ -436,7 +436,7 @@ impl TokenManager {
     }
 
     fn refresh_locked(&self, state: &mut TokenState) -> Result<ManagedToken, ManagedAuthError> {
-        if state.disconnected {
+        if self.is_disconnected() {
             return Err(ManagedAuthError::Disconnected);
         }
         if state.credential.is_none() {
@@ -460,7 +460,7 @@ impl TokenManager {
             Err(error) if error.status == Some(401) => {
                 state.access = None;
                 state.credential = None;
-                state.disconnected = true;
+                self.revoked.store(true, Ordering::SeqCst);
                 self.store
                     .delete()
                     .map_err(|_| ManagedAuthError::CredentialStoreUnavailable)?;
@@ -474,6 +474,7 @@ impl TokenManager {
 const PIECE_SAMPLES: usize = 170 * 16_000;
 const CUT_SEARCH_SAMPLES: usize = 10 * 16_000;
 const MAX_RETRIES: usize = 3;
+const MAX_WAIT: Duration = Duration::from_secs(60);
 type Sleeper = Box<dyn FnMut(Duration, &AtomicBool) -> bool + Send>;
 
 pub struct ManagedEngine {
@@ -547,16 +548,17 @@ impl ManagedEngine {
             duration_ms,
             language,
         );
-        let mut token = self.tokens.access_token().map_err(|error| {
-            log_failure(auth_code(&error), request_id);
-            auth_error(error)
-        })?;
         let mut refreshed = false;
         let mut retry = 0;
         loop {
             if cancel.load(Ordering::SeqCst) {
                 return Err(EngineError::Cancelled);
             }
+            // Asked again before every attempt, so a Disconnect stops the next one.
+            let token = self.tokens.access_token().map_err(|error| {
+                log_failure(auth_code(&error), request_id);
+                auth_error(error)
+            })?;
             let request = HttpRequest {
                 method: Method::Post,
                 url: format!("{}/v1/transcriptions", self.base.trim_end_matches('/')),
@@ -589,7 +591,7 @@ impl ManagedEngine {
                 },
                 Ok((401, _)) if !refreshed => {
                     log_failure("UNAUTHORIZED", request_id);
-                    token = self.tokens.refresh_now().map_err(|error| {
+                    self.tokens.refresh_now().map_err(|error| {
                         log_failure(auth_code(&error), request_id);
                         auth_error(error)
                     })?;
@@ -614,7 +616,7 @@ impl ManagedEngine {
             }
             let pause = failure
                 .retry_after()
-                .unwrap_or_else(|| backoff(retry, request_id));
+                .map_or_else(|| backoff(retry, request_id), |pause| pause.min(MAX_WAIT));
             if !(self.sleeper)(pause, cancel) || cancel.load(Ordering::SeqCst) {
                 return Err(EngineError::Cancelled);
             }
@@ -626,6 +628,10 @@ impl ManagedEngine {
 impl CloudEngine for ManagedEngine {
     fn name(&self) -> &str {
         "Managed transcription"
+    }
+
+    fn needs_detected_language(&self) -> bool {
+        true
     }
 
     fn set_source(&mut self, source: Option<Source>) {
@@ -769,7 +775,10 @@ impl UploadFailure {
     fn engine_error(&self) -> EngineError {
         match self {
             Self::Unauthorized => EngineError::Unauthorized,
-            Self::Transport | Self::InvalidResponse => EngineError::Offline,
+            // Only no reply at all is Offline: a reply means the network works, so the chain
+            // moves on to the next engine instead of pausing.
+            Self::Transport => EngineError::Offline,
+            Self::InvalidResponse => EngineError::QuotaExhausted,
             Self::Gateway(error) => match error.code {
                 GatewayErrorCode::RateLimited
                 | GatewayErrorCode::RequestInProgress
@@ -777,7 +786,7 @@ impl UploadFailure {
                 | GatewayErrorCode::CapacityExhausted
                 | GatewayErrorCode::TranscriptionTimeout => EngineError::QuotaExhausted,
                 GatewayErrorCode::Unauthorized => EngineError::Unauthorized,
-                GatewayErrorCode::Unknown if self.retryable() => EngineError::Offline,
+                GatewayErrorCode::Unknown if self.retryable() => EngineError::QuotaExhausted,
                 _ => EngineError::Other,
             },
         }
@@ -807,7 +816,7 @@ fn log_failure(code: &'static str, request_id: Uuid) {
 fn backoff(retry: usize, request_id: Uuid) -> Duration {
     let base_ms = 2_000_u64 << retry;
     let random = Uuid::new_v4().as_u128() as u64 ^ request_id.as_u128() as u64;
-    Duration::from_millis((base_ms + random % (base_ms / 4 + 1)).min(60_000))
+    Duration::from_millis(base_ms + random % (base_ms / 4 + 1)).min(MAX_WAIT)
 }
 
 fn default_sleep(duration: Duration, cancel: &AtomicBool) -> bool {

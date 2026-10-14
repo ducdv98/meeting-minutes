@@ -41,6 +41,9 @@ impl CloudEngine for TrackingCloud {
     fn name(&self) -> &str {
         self.name
     }
+    fn needs_detected_language(&self) -> bool {
+        self.name == "Managed transcription"
+    }
     fn set_source(&mut self, source: Option<Source>) {
         self.source = source;
     }
@@ -657,4 +660,29 @@ fn managed_auto_language_defers_instead_of_guessing_while_local_is_not_allowed()
         .is_err());
     assert!(engine.chain_report().deferred);
     assert!(managed.lock().unwrap().is_empty());
+}
+
+#[test]
+fn engines_that_neither_detect_nor_need_a_language_keep_english_without_loading_local() {
+    let loads = Arc::new(AtomicUsize::new(0));
+    let local_loads = loads.clone();
+    let mut engine = EngineChain::new(
+        vec![tracking_cloud(
+            "Gemini",
+            vec![],
+            None,
+            call_log(),
+            Arc::new(AtomicUsize::new(0)),
+        )],
+        "small",
+        Box::new(move || {
+            local_loads.fetch_add(1, Ordering::SeqCst);
+            Ok(Box::new(VietnameseLocal))
+        }),
+    );
+    assert_eq!(
+        engine.detect_language(&[0.1; 160], &AtomicBool::new(false)),
+        Ok(Language::En)
+    );
+    assert_eq!(loads.load(Ordering::SeqCst), 0);
 }

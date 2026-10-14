@@ -1,6 +1,6 @@
 # Gateway auth client and token manager
 
-Status: ready-for-agent
+Status: ready-for-human
 Spec: ../spec.md
 
 ## What

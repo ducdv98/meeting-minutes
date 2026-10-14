@@ -509,14 +509,28 @@ impl SpeechEngine for EngineChain<'_> {
                 }
             }
         }
-        if self.cloud.is_empty() {
+        let available = self
+            .cloud
+            .iter()
+            .zip(&self.unavailable)
+            .filter(|(_, unavailable)| !**unavailable);
+        let any_available = available.clone().next().is_some();
+        let needs_language = available
+            .clone()
+            .any(|(engine, _)| engine.needs_detected_language());
+        if !needs_language {
+            // While a cloud engine can transcribe, the local model is never loaded just to detect.
+            if any_available {
+                return Ok(Language::En);
+            }
             return self
                 .local()
                 .map_err(|error| error.to_string())?
                 .detect_language(samples, cancel);
         }
-        // No cloud engine could detect. During a Recording a deferred local engine defers
-        // detection rather than guessing, because the background guess becomes the Meeting language.
+        // An engine needs the language and no cloud engine could detect it, so local detects.
+        // During a Recording a deferred local engine defers detection rather than guessing,
+        // because the background guess becomes the Meeting language.
         let recording = self.background_local_allowed.is_some();
         match self.local() {
             Ok(local) => local.detect_language(samples, cancel),

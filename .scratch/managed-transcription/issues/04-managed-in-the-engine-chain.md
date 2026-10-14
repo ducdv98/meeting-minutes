@@ -1,6 +1,6 @@
 # Managed transcription in the engine chain
 
-Status: ready-for-agent
+Status: ready-for-human
 Spec: ../spec.md
 Blocked by: 02, 03
 
