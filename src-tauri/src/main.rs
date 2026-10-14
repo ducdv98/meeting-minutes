@@ -19,8 +19,8 @@ use meeting_minutes_core::{
     },
     ask::{self, AskOptions},
     background,
-    cloud::{gemini::GeminiEngine, groq::GroqEngine, CloudEngine},
     capture::{audio_devices, QpcClock, Source, WasapiOpener},
+    cloud::{gemini::GeminiEngine, groq::GroqEngine, CloudEngine},
     diagnostics::{build_diagnostics, log_event, DiagnosticsInput, LogEvent},
     import::import_extension,
     models::{self, DEFAULT_MODEL, MODELS},
@@ -654,10 +654,16 @@ fn update_settings(
     settings.model = model;
     settings.vocabulary = vocabulary;
     settings.language = language;
-    settings.your_name = your_name.map(|name| name.trim().to_owned()).filter(|name| !name.is_empty());
+    settings.your_name = your_name
+        .map(|name| name.trim().to_owned())
+        .filter(|name| !name.is_empty());
     settings.save(&path.0).map_err(|e| e.to_string())?;
     if let Ok(mut guard) = app.state::<LibraryState>().lock() {
-        if let Ok(library) = guard.as_mut() { library.set_your_name(settings.your_name.as_deref()).map_err(|error| error.to_string())?; }
+        if let Ok(library) = guard.as_mut() {
+            library
+                .set_your_name(settings.your_name.as_deref())
+                .map_err(|error| error.to_string())?;
+        }
     }
     let _ = app.emit("library-changed", ());
     Ok(settings)
@@ -802,7 +808,15 @@ fn configured_ai(app: &AppHandle) -> Result<ai::HttpProvider, String> {
 fn meeting_context(
     app: &AppHandle,
     id: &str,
-) -> Result<(MeetingDetail, Transcript, meeting_minutes_core::participant::Participants, PathBuf), String> {
+) -> Result<
+    (
+        MeetingDetail,
+        Transcript,
+        meeting_minutes_core::participant::Participants,
+        PathBuf,
+    ),
+    String,
+> {
     let state = app.state::<LibraryState>();
     let guard = state.lock().map_err(|error| error.to_string())?;
     let library = guard.as_ref().map_err(Clone::clone)?;
@@ -811,7 +825,9 @@ fn meeting_context(
         .transcript(id)
         .map_err(|error| error.to_string())?
         .ok_or("Transcribe this Meeting first")?;
-    let participants = library.participants(id).map_err(|error| error.to_string())?;
+    let participants = library
+        .participants(id)
+        .map_err(|error| error.to_string())?;
     Ok((detail, transcript, participants, library.meeting_dir(id)))
 }
 
@@ -874,7 +890,11 @@ fn meeting_summary(app: AppHandle, meeting_id: String) -> Result<Option<Summary>
 fn summary_participants_changed(app: AppHandle, meeting_id: String) -> Result<bool, String> {
     let state = app.state::<LibraryState>();
     let guard = state.lock().map_err(|error| error.to_string())?;
-    guard.as_ref().map_err(|error| error.clone())?.summary_participants_changed(&meeting_id).map_err(|error| error.to_string())
+    guard
+        .as_ref()
+        .map_err(|error| error.clone())?
+        .summary_participants_changed(&meeting_id)
+        .map_err(|error| error.to_string())
 }
 #[tauri::command]
 fn summary_status(app: AppHandle) -> Result<SummaryStatus, String> {
@@ -887,7 +907,11 @@ fn summary_send_plan(app: AppHandle, meeting_id: String) -> Result<SendPlan, Str
     let kind = provider.kind();
     let consented = !kind.is_cloud() || cloud_consented(&app, &meeting_id, kind)?;
     let disclosure = if kind.is_cloud() && !consented {
-        let requests = summary::summary_requests(&transcript, &participants, &SummaryOptions::for_provider(kind));
+        let requests = summary::summary_requests(
+            &transcript,
+            &participants,
+            &SummaryOptions::for_provider(kind),
+        );
         let first = requests.first().ok_or("The Transcript has no Segments")?;
         let mut disclosure = ai::disclosure(&provider, first);
         disclosure.messages = requests
@@ -1273,12 +1297,32 @@ fn transcription_chain<'a>(
     let mut cloud: Vec<Box<dyn CloudEngine>> = Vec::new();
     let settings = Settings::load(&app.state::<SettingsPath>().0);
     // A saved key is the user's choice of cloud transcription (ADR 0011).
-    if let Some(key) = app.state::<Secrets>().0.get(ProviderKind::Groq).map_err(processing::ProcessingError::Engine)? {
-        cloud.push(Box::new(GroqEngine::new(app.state::<Http>().0.clone(), key)));
+    if let Some(key) = app
+        .state::<Secrets>()
+        .0
+        .get(ProviderKind::Groq)
+        .map_err(processing::ProcessingError::Engine)?
+    {
+        cloud.push(Box::new(GroqEngine::new(
+            app.state::<Http>().0.clone(),
+            key,
+        )));
     }
-    if let Some(key) = app.state::<Secrets>().0.get(ProviderKind::Gemini).map_err(processing::ProcessingError::Engine)? {
-        let gemini_model = settings.ai.model_for(ProviderKind::Gemini).expect("Gemini always has a default model");
-        cloud.push(Box::new(GeminiEngine::new(app.state::<Http>().0.clone(), key, gemini_model)));
+    if let Some(key) = app
+        .state::<Secrets>()
+        .0
+        .get(ProviderKind::Gemini)
+        .map_err(processing::ProcessingError::Engine)?
+    {
+        let gemini_model = settings
+            .ai
+            .model_for(ProviderKind::Gemini)
+            .expect("Gemini always has a default model");
+        cloud.push(Box::new(GeminiEngine::new(
+            app.state::<Http>().0.clone(),
+            key,
+            gemini_model,
+        )));
     }
     Ok(processing::EngineChain::new(cloud, model, local))
 }
@@ -1286,7 +1330,10 @@ fn transcription_chain<'a>(
 /// Starts transcribing the new Recording's Chunks in the background when Groq is configured or
 /// local Whisper can run on a discrete GPU. The cache remains in memory until Stop.
 fn start_background(app: &AppHandle) {
-    let has_groq_key = matches!(app.state::<Secrets>().0.get(ProviderKind::Groq), Ok(Some(_)));
+    let has_groq_key = matches!(
+        app.state::<Secrets>().0.get(ProviderKind::Groq),
+        Ok(Some(_))
+    );
     let discrete_gpu = WhisperEngine::discrete_gpu_available();
     let on_ac = processing::PowerState::current() != processing::PowerState::Battery;
     // Cloud availability is learned from Offline errors; the worker retries after its backoff.
@@ -1336,21 +1383,25 @@ fn start_background(app: &AppHandle) {
                 language,
                 processing::initial_prompt(&vocabulary),
             );
-            let mut chain = match transcription_chain(&app, model.name, Box::new(|| {
-                // Never load a second model while Processing has one on the GPU.
-                if lock_processor(&app).map(|p| p.is_running()).unwrap_or(true) {
-                    return Err(processing::ProcessingError::Deferred);
-                }
-                if !models::is_installed(&models_dir, model) {
-                    return Err(processing::ProcessingError::Deferred);
-                }
-                let engine = WhisperEngine::load_with_vad(&model_path, vad_path.as_deref())
-                    .map_err(processing::ProcessingError::Engine)?;
-                if engine.backend() != "Vulkan" {
-                    return Err(processing::ProcessingError::Deferred);
-                }
-                Ok(Box::new(engine) as Box<dyn SpeechEngine>)
-            })) {
+            let mut chain = match transcription_chain(
+                &app,
+                model.name,
+                Box::new(|| {
+                    // Never load a second model while Processing has one on the GPU.
+                    if lock_processor(&app).map(|p| p.is_running()).unwrap_or(true) {
+                        return Err(processing::ProcessingError::Deferred);
+                    }
+                    if !models::is_installed(&models_dir, model) {
+                        return Err(processing::ProcessingError::Deferred);
+                    }
+                    let engine = WhisperEngine::load_with_vad(&model_path, vad_path.as_deref())
+                        .map_err(processing::ProcessingError::Engine)?;
+                    if engine.backend() != "Vulkan" {
+                        return Err(processing::ProcessingError::Deferred);
+                    }
+                    Ok(Box::new(engine) as Box<dyn SpeechEngine>)
+                }),
+            ) {
                 Ok(chain) => chain,
                 Err(_) => return Some(transcriber.finish()),
             };
@@ -1365,14 +1416,17 @@ fn start_background(app: &AppHandle) {
                 &chunk_dir,
                 background::BackgroundControl {
                     stop: &stop,
-                    allowed: &mut || matches!(
-                        background::start_decision(
-                            has_groq_key,
-                            discrete_gpu,
-                            processing::PowerState::current() != processing::PowerState::Battery,
-                        ),
-                        background::BackgroundStart::Cloud | background::BackgroundStart::Local
-                    ),
+                    allowed: &mut || {
+                        matches!(
+                            background::start_decision(
+                                has_groq_key,
+                                discrete_gpu,
+                                processing::PowerState::current()
+                                    != processing::PowerState::Battery,
+                            ),
+                            background::BackgroundStart::Cloud | background::BackgroundStart::Local
+                        )
+                    },
                     now: &mut || started.elapsed(),
                     wait: &mut || thread::sleep(Duration::from_secs(2)),
                 },
@@ -1445,7 +1499,11 @@ fn processing_worker(app: AppHandle) {
             log_event(LogEvent::processing_result(
                 &processing::ProcessingError::Cancelled,
                 processing::ProcessingStage::Preparing,
-                None, None, 0, 0, Duration::ZERO,
+                None,
+                None,
+                0,
+                0,
+                Duration::ZERO,
             ));
             if let Ok(mut processor) = lock_processor(&app) {
                 processor.finished(&id, Err(processing::ProcessingError::Cancelled));
@@ -1500,75 +1558,80 @@ fn processing_worker(app: AppHandle) {
             if !early_draft.is_empty() {
                 emit_draft(&app, &id, &early_draft);
             }
-            let mut engine = transcription_chain(&app, model.name, Box::new(|| {
-                let needs_model_download = !models::is_installed(models_dir, model);
-                let needs_vad_download = !models::is_installed(models_dir, &models::VAD_MODEL);
-                if needs_model_download || needs_vad_download {
-                    failure_stage = processing::ProcessingStage::Downloading;
-                    processing_stage(&app, &id, JobStage::Downloading, 0.0);
-                }
-                let model_path = if !needs_model_download {
-                    models::model_path(models_dir, model)
-                } else {
-                    let mut last = 0u32;
-                    models::download(
-                        models_dir,
-                        model,
-                        &mut |bytes| {
-                            let percent = (bytes.saturating_mul(100) / model.size) as u32;
-                            if percent > last {
-                                last = percent;
-                                processing_stage(
-                                    &app,
-                                    &id,
-                                    JobStage::Downloading,
-                                    bytes as f32 / model.size as f32
-                                        * if needs_vad_download { 0.9 } else { 1.0 },
-                                );
-                            }
-                        },
-                        &cancel,
-                    )?
-                };
-                let vad_path = if needs_vad_download {
-                    let mut last = 0u32;
-                    match models::download_vad(
-                        models_dir,
-                        &mut |bytes| {
-                            let percent = (bytes.saturating_mul(100) / models::VAD_MODEL.size) as u32;
-                            if percent > last {
-                                last = percent;
-                                processing_stage(
-                                    &app,
-                                    &id,
-                                    JobStage::Downloading,
-                                    if needs_model_download { 0.9 } else { 0.0 }
-                                        + bytes as f32 / models::VAD_MODEL.size as f32
-                                            * if needs_model_download { 0.1 } else { 1.0 },
-                                );
-                            }
-                        },
-                        &cancel,
-                    ) {
-                        Ok(path) => Some(path),
-                        Err(processing::ProcessingError::Cancelled) => {
-                            return Err(processing::ProcessingError::Cancelled)
-                        }
-                        Err(_) if cancel.load(std::sync::atomic::Ordering::SeqCst) => {
-                            return Err(processing::ProcessingError::Cancelled)
-                        }
-                        Err(_) => {
-                            log_event(LogEvent::VadUnavailable);
-                            None
-                        }
+            let mut engine = transcription_chain(
+                &app,
+                model.name,
+                Box::new(|| {
+                    let needs_model_download = !models::is_installed(models_dir, model);
+                    let needs_vad_download = !models::is_installed(models_dir, &models::VAD_MODEL);
+                    if needs_model_download || needs_vad_download {
+                        failure_stage = processing::ProcessingStage::Downloading;
+                        processing_stage(&app, &id, JobStage::Downloading, 0.0);
                     }
-                } else {
-                    Some(models::model_path(models_dir, &models::VAD_MODEL))
-                };
-                let engine = WhisperEngine::load_with_vad(&model_path, vad_path.as_deref())
-                    .map_err(processing::ProcessingError::Engine)?;
-                Ok(Box::new(engine) as Box<dyn SpeechEngine>)
-            }))?;
+                    let model_path = if !needs_model_download {
+                        models::model_path(models_dir, model)
+                    } else {
+                        let mut last = 0u32;
+                        models::download(
+                            models_dir,
+                            model,
+                            &mut |bytes| {
+                                let percent = (bytes.saturating_mul(100) / model.size) as u32;
+                                if percent > last {
+                                    last = percent;
+                                    processing_stage(
+                                        &app,
+                                        &id,
+                                        JobStage::Downloading,
+                                        bytes as f32 / model.size as f32
+                                            * if needs_vad_download { 0.9 } else { 1.0 },
+                                    );
+                                }
+                            },
+                            &cancel,
+                        )?
+                    };
+                    let vad_path = if needs_vad_download {
+                        let mut last = 0u32;
+                        match models::download_vad(
+                            models_dir,
+                            &mut |bytes| {
+                                let percent =
+                                    (bytes.saturating_mul(100) / models::VAD_MODEL.size) as u32;
+                                if percent > last {
+                                    last = percent;
+                                    processing_stage(
+                                        &app,
+                                        &id,
+                                        JobStage::Downloading,
+                                        if needs_model_download { 0.9 } else { 0.0 }
+                                            + bytes as f32 / models::VAD_MODEL.size as f32
+                                                * if needs_model_download { 0.1 } else { 1.0 },
+                                    );
+                                }
+                            },
+                            &cancel,
+                        ) {
+                            Ok(path) => Some(path),
+                            Err(processing::ProcessingError::Cancelled) => {
+                                return Err(processing::ProcessingError::Cancelled)
+                            }
+                            Err(_) if cancel.load(std::sync::atomic::Ordering::SeqCst) => {
+                                return Err(processing::ProcessingError::Cancelled)
+                            }
+                            Err(_) => {
+                                log_event(LogEvent::VadUnavailable);
+                                None
+                            }
+                        }
+                    } else {
+                        Some(models::model_path(models_dir, &models::VAD_MODEL))
+                    };
+                    let engine = WhisperEngine::load_with_vad(&model_path, vad_path.as_deref())
+                        .map_err(processing::ProcessingError::Engine)?;
+                    Ok(Box::new(engine) as Box<dyn SpeechEngine>)
+                }),
+            )?;
             let correction = ai::correction_provider(
                 &settings.ai,
                 app.state::<Secrets>().0.as_ref(),
@@ -1597,7 +1660,10 @@ fn processing_worker(app: AppHandle) {
                 &cancel,
                 settings.your_name.as_deref(),
                 &mut |segments| emit_draft(&app, &id, segments),
-                processing::TranscriptionContext { background: &cached, correction },
+                processing::TranscriptionContext {
+                    background: &cached,
+                    correction,
+                },
             )?;
             Ok(())
         })();
@@ -1607,7 +1673,13 @@ fn processing_worker(app: AppHandle) {
         } else if !transcription_started {
             if let Err(error) = &result {
                 log_event(LogEvent::processing_result(
-                    error, failure_stage, None, None, 0, 0, Duration::ZERO,
+                    error,
+                    failure_stage,
+                    None,
+                    None,
+                    0,
+                    0,
+                    Duration::ZERO,
                 ));
             }
         }
@@ -1806,39 +1878,67 @@ fn rename_meeting(
 }
 
 #[tauri::command]
-fn set_participant_name(app: AppHandle, meeting_id: String, label: Speaker, name: Option<String>) -> Result<(), String> {
+fn set_participant_name(
+    app: AppHandle,
+    meeting_id: String,
+    label: Speaker,
+    name: Option<String>,
+) -> Result<(), String> {
     let settings = Settings::load(&app.state::<SettingsPath>().0);
     let state = app.state::<LibraryState>();
     let mut guard = state.lock().map_err(|error| error.to_string())?;
     let library = guard.as_mut().map_err(|error| error.clone())?;
-    library.set_your_name(settings.your_name.as_deref()).map_err(|error| error.to_string())?;
-    library.set_participant_name(&meeting_id, label, name.as_deref()).map_err(|error| error.to_string())?;
+    library
+        .set_your_name(settings.your_name.as_deref())
+        .map_err(|error| error.to_string())?;
+    library
+        .set_participant_name(&meeting_id, label, name.as_deref())
+        .map_err(|error| error.to_string())?;
     drop(guard);
     let _ = app.emit("library-changed", ());
     Ok(())
 }
 
 #[tauri::command]
-fn assign_segments(app: AppHandle, meeting_id: String, revision: u32, segment_ids: Vec<String>, name: Option<String>) -> Result<(), String> {
+fn assign_segments(
+    app: AppHandle,
+    meeting_id: String,
+    revision: u32,
+    segment_ids: Vec<String>,
+    name: Option<String>,
+) -> Result<(), String> {
     let settings = Settings::load(&app.state::<SettingsPath>().0);
     let state = app.state::<LibraryState>();
     let mut guard = state.lock().map_err(|error| error.to_string())?;
     let library = guard.as_mut().map_err(|error| error.clone())?;
-    library.set_your_name(settings.your_name.as_deref()).map_err(|error| error.to_string())?;
-    library.assign_segments(&meeting_id, revision, &segment_ids, name.as_deref()).map_err(|error| error.to_string())?;
+    library
+        .set_your_name(settings.your_name.as_deref())
+        .map_err(|error| error.to_string())?;
+    library
+        .assign_segments(&meeting_id, revision, &segment_ids, name.as_deref())
+        .map_err(|error| error.to_string())?;
     drop(guard);
     let _ = app.emit("library-changed", ());
     Ok(())
 }
 
 #[tauri::command]
-fn rename_participant(app: AppHandle, meeting_id: String, from: String, to: String) -> Result<(), String> {
+fn rename_participant(
+    app: AppHandle,
+    meeting_id: String,
+    from: String,
+    to: String,
+) -> Result<(), String> {
     let settings = Settings::load(&app.state::<SettingsPath>().0);
     let state = app.state::<LibraryState>();
     let mut guard = state.lock().map_err(|error| error.to_string())?;
     let library = guard.as_mut().map_err(|error| error.clone())?;
-    library.set_your_name(settings.your_name.as_deref()).map_err(|error| error.to_string())?;
-    library.rename_participant(&meeting_id, &from, &to).map_err(|error| error.to_string())?;
+    library
+        .set_your_name(settings.your_name.as_deref())
+        .map_err(|error| error.to_string())?;
+    library
+        .rename_participant(&meeting_id, &from, &to)
+        .map_err(|error| error.to_string())?;
     drop(guard);
     let _ = app.emit("library-changed", ());
     Ok(())
@@ -1850,8 +1950,12 @@ fn remove_participant(app: AppHandle, meeting_id: String, name: String) -> Resul
     let state = app.state::<LibraryState>();
     let mut guard = state.lock().map_err(|error| error.to_string())?;
     let library = guard.as_mut().map_err(|error| error.clone())?;
-    library.set_your_name(settings.your_name.as_deref()).map_err(|error| error.to_string())?;
-    library.remove_participant(&meeting_id, &name).map_err(|error| error.to_string())?;
+    library
+        .set_your_name(settings.your_name.as_deref())
+        .map_err(|error| error.to_string())?;
+    library
+        .remove_participant(&meeting_id, &name)
+        .map_err(|error| error.to_string())?;
     drop(guard);
     let _ = app.emit("library-changed", ());
     Ok(())
@@ -1860,7 +1964,11 @@ fn remove_participant(app: AppHandle, meeting_id: String, name: String) -> Resul
 #[tauri::command]
 fn list_participant_names(state: State<'_, LibraryState>) -> Result<Vec<String>, String> {
     let guard = state.lock().map_err(|error| error.to_string())?;
-    guard.as_ref().map_err(Clone::clone)?.participant_names().map_err(|error| error.to_string())
+    guard
+        .as_ref()
+        .map_err(Clone::clone)?
+        .participant_names()
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -2580,7 +2688,8 @@ fn main() {
                     .app_data_dir()
                     .map_err(|error| error.to_string())?
                     .join("index.sqlite3");
-                Library::open_with_name(root, index, settings.your_name.as_deref()).map_err(|error| error.to_string())
+                Library::open_with_name(root, index, settings.your_name.as_deref())
+                    .map_err(|error| error.to_string())
             })();
             app.manage(Mutex::new(library));
             app.manage(SettingsPath(settings_path));
