@@ -6,8 +6,10 @@ import { escapeHtml, releasePageState, renderNotes } from './lib/release.mjs';
 const root = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(root, '..');
 const src = join(root, 'src');
-const dist = join(root, 'dist');
 const args = process.argv.slice(2);
+const outputIndex = args.indexOf('--output');
+if (outputIndex !== -1 && !args[outputIndex + 1]) { console.error('--output needs a directory path'); process.exit(1); }
+const dist = outputIndex === -1 ? join(root, 'dist') : resolve(args[outputIndex + 1]);
 const draft = args.includes('--draft');
 const offline = args.includes('--offline');
 const checkReady = args.includes('--check-ready');
@@ -89,9 +91,9 @@ if (blockers.length && !draft) {
   process.exit(1);
 }
 const releaseButton = latest ? `<a class="button primary" href="${escapeHtml(latest.url)}">Download for Windows</a>` : '';
-const target = '<span class="status-line"><strong>Free Beta for Windows:</strong> December 2026 (target)</span>';
+const target = '<span class="status-line"><strong>Free for Windows:</strong> December 2026 (target)</span>';
 const heroAction = latest
-  ? `${releaseButton}<small>Version ${escapeHtml(latest.version)} · ${escapeHtml(latest.size)} · Windows 11 · Free Beta · unsigned, <a href="/support/#smartscreen">see why</a></small>`
+  ? `${releaseButton}<small>Version ${escapeHtml(latest.version)} · ${escapeHtml(latest.size)} · Windows 11 · Free · unsigned, <a href="/support/#smartscreen">see why</a></small>`
   : `${target}<small><a href="/#roadmap">See the roadmap</a></small>`;
 const closingAction = latest ? releaseButton : `${target}<a class="textlink" href="/#roadmap">See the roadmap →</a>`;
 const headerAction = latest ? `<a class="button primary header-download" href="${escapeHtml(latest.url)}">Download for Windows <span>${escapeHtml(latest.version)}</span></a>` : '';
@@ -135,7 +137,7 @@ function shell(title, description, body, current = '') {
 <meta property="og:type" content="website"><meta property="og:title" content="${escapeHtml(title)} · Meeting Minutes"><meta property="og:description" content="${escapeHtml(description)}"><meta property="og:image" content="https://meeting-minutes.tech/brand/og.png">
 <link rel="icon" type="image/png" href="/brand/mark-dark.png"><link rel="stylesheet" href="/style.css"><script src="/main.js" defer></script></head>
 <body><a class="skip-link" href="#main">Skip to content</a>
-<header class="site-head"><div class="wrap header-inner"><a href="/" class="brand-link" aria-label="Meeting Minutes home">${brand('')}</a><span class="beta">Beta</span>
+<header class="site-head"><div class="wrap header-inner"><a href="/" class="brand-link" aria-label="Meeting Minutes home">${brand('')}</a>
 <nav class="site-nav" aria-label="Main navigation">${nav}${headerAction}</nav>
 <details class="mobile-menu"><summary aria-label="Open menu">Menu</summary><nav aria-label="Mobile navigation">${nav}${headerAction}</nav></details></div></header>
 <main id="main">${body}</main>
@@ -152,13 +154,13 @@ const support = replace(await readFile(join(src, 'support.html'), 'utf8'));
 const privacy = await readFile(join(src, 'privacy.html'), 'utf8').catch(() => '<article class="doc"><h1>Privacy policy</h1><p>Draft pending ticket 14.</p></article>');
 const entries = published.map(release => `<article class="release"><h2>${escapeHtml(release.tag_name)}</h2><time datetime="${escapeHtml(release.published_at.slice(0, 10))}">${escapeHtml(new Intl.DateTimeFormat('en', { dateStyle: 'long', timeZone: 'UTC' }).format(new Date(release.published_at)))}</time><div class="notes">${renderNotes(release.body) || '<p>No release notes provided.</p>'}</div></article>`).join('');
 const cloudEntry = '<article class="release"><h2>Cloud transcription · In development</h2><time datetime="2026-10-13">October 13, 2026</time><div class="notes"><p>Adding transcription with your own Groq key, Gemini fallback and Correction. Local Whisper remains available.</p></div></article>';
-const changelog = `<article class="doc"><h1>Changelog</h1><p class="updated">Work in progress and published releases, newest first.</p>${cloudEntry}${entries || '<p>No public releases yet. The Windows Free Beta is targeted for December 2026.</p>'}</article>`;
+const changelog = `<article class="doc"><h1>Changelog</h1><p class="updated">Work in progress and published releases, newest first.</p>${cloudEntry}${entries || '<p>No public releases yet. Windows: December 2026 (target).</p>'}</article>`;
 await write(join(dist, 'index.html'), shell('Home', 'Record any call on Windows. Keep a Transcript on your PC and get Answers with Citations.', home));
 await write(join(dist, 'support', 'index.html'), shell('Support', 'Get help with Meeting Minutes, diagnostics, installation and uninstalling.', support, '/support/'));
 await write(join(dist, 'privacy', 'index.html'), shell('Privacy', 'How Meeting Minutes handles your meetings and data.', privacy, '/privacy/'));
 await write(join(dist, 'changelog', 'index.html'), shell('Changelog', 'Meeting Minutes updates and published releases.', changelog, '/changelog/'));
 await write(join(dist, '404.html'), shell('Page not found', 'This page could not be found.', '<article class="doc"><h1>Page not found</h1><p>The page you requested does not exist. <a href="/">Go to the home page</a>.</p></article>'));
-await write(join(dist, 'llms.txt'), `# Meeting Minutes\n\nMeeting Minutes is a local-first Windows 11 app by Duc Dao. It records Microphone and System audio from meetings, transcribes English or Vietnamese locally by default, and provides cited Summaries and Answers. With the user's own keys, audio can go to Groq or Gemini for transcription; Gemini can receive Transcript text for Correction. No account or telemetry.\n\nWindows Free Beta: ${latest ? `${latest.version}, published ${latest.date}; download: ${latest.url}` : 'December 2026 (target); no public download yet'}.\nMac App Store: December 2026 (target).\n\nHome: https://meeting-minutes.tech/\nPrivacy: https://meeting-minutes.tech/privacy/\nSupport: https://meeting-minutes.tech/support/\nChangelog: https://meeting-minutes.tech/changelog/\nRepository: https://github.com/ducdv98/meeting-minutes\nContact: admin@meeting-minutes.tech\n`);
+await write(join(dist, 'llms.txt'), `# Meeting Minutes\n\nMeeting Minutes is a local-first Windows 11 app by Duc Dao. It records Microphone and System audio from meetings, transcribes English or Vietnamese locally by default, and provides cited Summaries and Answers. With the user's own keys, audio can go to Groq or Gemini for transcription; Gemini can receive Transcript text for Correction. No account or telemetry.\n\nFree for Windows: ${latest ? `${latest.version}, published ${latest.date}; download: ${latest.url}` : 'December 2026 (target); no public download yet'}.\nMac App Store: December 2026 (target).\n\nHome: https://meeting-minutes.tech/\nPrivacy: https://meeting-minutes.tech/privacy/\nSupport: https://meeting-minutes.tech/support/\nChangelog: https://meeting-minutes.tech/changelog/\nRepository: https://github.com/ducdv98/meeting-minutes\nContact: admin@meeting-minutes.tech\n`);
 
 const ranges = { latin: 'U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD',
   'latin-ext': 'U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20CF,U+2113,U+2C60-2C7F,U+A720-A7FF',
@@ -188,4 +190,4 @@ for (const name of screens) for (const theme of ['light', 'dark']) {
     await copyFile(join(src, 'assets', 'screens', file), join(dist, 'assets', 'screens', file));
   }
 }
-console.log(`Built website/dist (${draft ? 'draft' : 'publishable'}, ${published.length} published releases${missingScreens.length ? `, ${missingScreens.length} screenshots ${draft ? 'shown as placeholders' : 'left out'}` : ''}).`);
+console.log(`Built ${outputIndex === -1 ? 'website/dist' : dist} (${draft ? 'draft' : 'publishable'}, ${published.length} published releases${missingScreens.length ? `, ${missingScreens.length} screenshots ${draft ? 'shown as placeholders' : 'left out'}` : ''}).`);
