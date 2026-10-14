@@ -12,6 +12,7 @@ vi.mock("./RecordingBar", () => ({ default: () => null }));
 vi.mock("./SettingsView", () => ({ default: () => <section><h1>Settings pane</h1></section> }));
 vi.mock("./HelpView", () => ({ default: () => <section><h1>Help pane</h1></section> }));
 vi.mock("./processing", async (importOriginal) => ({ ...(await importOriginal<typeof import("./processing")>()), processingStatus: vi.fn(), onProcessingStatus: vi.fn(), cancelProcessing: vi.fn() }));
+vi.mock("./summary", () => ({ meetingSummary: vi.fn(() => Promise.resolve(null)), onSummaryStatus: vi.fn(() => Promise.resolve(() => {})) }));
 vi.mock("./MeetingView", () => ({ default: ({ id, openAt, onBack }: { id: string; openAt?: { segment_id: string }; onBack: () => void }) => (
   <section><h1>Meeting {id}</h1>{openAt && <p>Segment {openAt.segment_id}</p>}<button type="button" onClick={onBack}>Back to Library</button></section>
 ) }));
@@ -178,16 +179,17 @@ it("shows each Meeting's live processing state and cancels its job", async () =>
     { meeting_id: "two", model: null, stage: "downloading", progress: 0.34, error: null },
   ] });
   render(<App />);
-  expect(await screen.findByText("Waiting to transcribe")).toBeTruthy();
-  expect(screen.getByText("Downloading model · 34%")).toBeTruthy();
+  const table = await screen.findByRole("table", { name: "Meetings in the Library" });
+  expect(within(table).getByText("Waiting to transcribe")).toBeTruthy();
+  expect(within(table).getByText("Downloading model · 34%")).toBeTruthy();
   const handler = vi.mocked(onProcessingStatus).mock.calls[0][0];
   const live: ProcessingStatus = { jobs: [
     { meeting_id: "one", model: null, stage: "transcribing", progress: 0.61, error: null },
     { meeting_id: "two", model: null, stage: "failed", progress: 0.34, error: "network" },
   ] };
   await act(async () => handler(live));
-  expect(screen.getByText("Transcribing · 61%")).toBeTruthy();
-  expect(screen.getByText("Transcription failed")).toBeTruthy();
+  expect(within(table).getByText("Transcribing · 61%")).toBeTruthy();
+  expect(within(table).getByText("Failed")).toBeTruthy();
   openRowMenu("Planning");
   fireEvent.click(await screen.findByRole("menuitem", { name: "Cancel processing" }));
   await waitFor(() => expect(cancelProcessing).toHaveBeenCalledWith("one"));
@@ -219,7 +221,7 @@ it("lists Meeting titles in the Library", async () => {
 
   render(<App />);
 
-  expect(await screen.findByText("Planning")).toBeTruthy();
+  expect(await within(screen.getByRole("navigation", { name: "Meetings" })).findByText("Planning")).toBeTruthy();
   expect(screen.getByRole("button", { name: "Review" }).textContent).toContain("30 min");
   expect(screen.getByRole("button", { name: "Planning" }).closest(".motion-meeting-enter")).toBeNull();
   expect(screen.getByRole("button", { name: "Planning" }).querySelector("time")?.getAttribute("datetime")).toBe("2026-10-12T09:00:00Z");
@@ -246,7 +248,7 @@ it("reports malformed folders while listing valid Meetings", async () => {
     malformed: [{ folder: "Broken folder", reason: "missing meeting.json" }],
   });
   render(<App />);
-  expect(await screen.findByText("Planning")).toBeTruthy();
+  expect(await within(screen.getByRole("navigation", { name: "Meetings" })).findByText("Planning")).toBeTruthy();
   expect(screen.getByRole("status").textContent).toContain("1 folder could not be read");
   expect(screen.getByRole("status").textContent).toContain("Broken folder: missing meeting.json");
   const notifications = screen.getByRole("region", { name: "Notifications" });
@@ -264,7 +266,8 @@ it("rescans the Library when the Rescan button is clicked", async () => {
   await screen.findByRole("heading", { name: "Your Library is empty" });
   openMoreMenu();
   fireEvent.click(await screen.findByRole("menuitem", { name: "Rescan Library" }));
-  expect(await screen.findByText("Planning")).toBeTruthy();
+  expect(await within(screen.getByRole("navigation", { name: "Meetings" })).findByText("Planning")).toBeTruthy();
+  expect(within(screen.getByRole("table", { name: "Meetings in the Library" })).getByRole("row", { name: "Planning" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "Planning" }).closest(".motion-meeting-enter")).toBeTruthy();
   expect(rescanLibrary).toHaveBeenCalledTimes(2);
 });
@@ -279,6 +282,21 @@ it("opens a Meeting from its title and returns to the Library", async () => {
   expect(screen.getByRole("heading", { name: "Meeting one" })).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Back to Library" }));
   expect(screen.getByRole("heading", { name: "Library" })).toBeTruthy();
+});
+
+it("opens a Meeting from the Library table with Enter and keeps the sidebar list", async () => {
+  vi.mocked(rescanLibrary).mockResolvedValue({ meetings: [
+    { id: "one", title: "Planning", started_at: "2026-10-12T09:00:00Z", duration_ms: 600_000 },
+    { id: "two", title: "Review", started_at: "2026-10-13T09:00:00Z", duration_ms: 1_200_000 },
+  ], malformed: [] });
+  render(<App />);
+  const table = await screen.findByRole("table", { name: "Meetings in the Library" });
+  expect(within(table).getAllByRole("row")).toHaveLength(3);
+  expect(within(screen.getByRole("navigation", { name: "Meetings" })).getByRole("button", { name: "Planning" })).toBeTruthy();
+  fireEvent.keyDown(within(table).getByRole("row", { name: "Planning" }), { key: "Enter" });
+  expect(screen.getByRole("heading", { name: "Meeting one" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Back to Library" }));
+  expect(await screen.findByRole("table", { name: "Meetings in the Library" })).toBeTruthy();
 });
 
 it("picks audio and shows import queue, errors, and drop hint", async () => {
