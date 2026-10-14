@@ -494,6 +494,9 @@ impl TextProvider for HttpProvider {
         if cancel.load(Ordering::SeqCst) {
             return Err(AiError::Cancelled);
         }
+        if !self.kind.supports_text() {
+            return Err(AiError::unsupported_for_text(self.kind));
+        }
         let body = match self.kind {
             ProviderKind::Ollama => {
                 let mut messages = vec![json!({"role":"system", "content":request.system})];
@@ -544,12 +547,7 @@ impl TextProvider for HttpProvider {
                 }
                 body
             }
-            ProviderKind::Groq => {
-                return Err(AiError::Unsupported(format!(
-                    "{} is not supported for Summary or Ask yet",
-                    self.kind.label()
-                )))
-            }
+            ProviderKind::Groq => unreachable!("text capability was checked"),
         };
         let response = self
             .http
@@ -681,12 +679,7 @@ impl TextProvider for HttpProvider {
                     }
                     continue;
                 }
-                ProviderKind::Groq => {
-                    return Err(AiError::Unsupported(format!(
-                        "{} is not supported for Summary or Ask yet",
-                        self.kind.label()
-                    )))
-                }
+                ProviderKind::Groq => unreachable!("text capability was checked"),
             };
             if let Some(delta) = delta {
                 if !delta.is_empty() {

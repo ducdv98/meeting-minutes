@@ -1,7 +1,8 @@
 use meeting_minutes_core::{
     cloud::{CloudEngine, EngineError},
+    diagnostics::LogEvent,
     processing::{EngineChain, ProcessingError, SpeechEngine},
-    transcript::{Language, RawSegment},
+    transcript::{EngineName, FallbackReason, Language, RawSegment},
 };
 use std::{
     cell::Cell,
@@ -42,7 +43,7 @@ impl SpeechEngine for Local {
     fn thread_count(&self) -> usize {
         1
     }
-    fn detect_language(&mut self, _: &[f32]) -> Result<Language, String> {
+    fn detect_language(&mut self, _: &[f32], _: &AtomicBool) -> Result<Language, String> {
         Ok(Language::En)
     }
     fn transcribe(
@@ -89,8 +90,11 @@ fn next_cloud_engine_can_handle_fallback_without_local_model() {
     assert_eq!(groq_calls.load(Ordering::SeqCst), 1);
     assert_eq!(gemini_calls.load(Ordering::SeqCst), 1);
     assert_eq!(loads.load(Ordering::SeqCst), 0);
-    assert_eq!(engine.engines_used(), vec!["Gemini"]);
-    assert_eq!(engine.fallback_reason(), Some("Groq daily limit reached"));
+    assert_eq!(engine.engines_used(), vec![EngineName::Gemini]);
+    assert_eq!(
+        engine.fallback_reason(),
+        Some(&FallbackReason::Quota(EngineName::Groq))
+    );
 }
 
 #[test]
@@ -116,8 +120,18 @@ fn one_revision_can_use_groq_then_gemini_then_local_after_quotas() {
     assert_eq!(groq_calls.load(Ordering::SeqCst), 2);
     assert_eq!(gemini_calls.load(Ordering::SeqCst), 2);
     assert_eq!(loads.load(Ordering::SeqCst), 1);
-    assert_eq!(engine.engines_used(), vec!["Groq", "Gemini", "small"]);
-    assert_eq!(engine.fallback_reason(), Some("Groq daily limit reached"));
+    assert_eq!(
+        engine.engines_used(),
+        vec![
+            EngineName::Groq,
+            EngineName::Gemini,
+            EngineName::Local("small".into())
+        ]
+    );
+    assert_eq!(
+        engine.fallback_reason(),
+        Some(&FallbackReason::Quota(EngineName::Groq))
+    );
 }
 fn chain(clouds: Vec<Box<dyn CloudEngine>>, loads: Arc<AtomicUsize>) -> EngineChain<'static> {
     EngineChain::new(
@@ -149,7 +163,7 @@ fn groq_only_does_not_load_local() {
     run(&mut engine, &[0.0; 16_000]).unwrap();
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     assert_eq!(loads.load(Ordering::SeqCst), 0);
-    assert_eq!(engine.engines_used(), vec!["Groq"]);
+    assert_eq!(engine.engines_used(), vec![EngineName::Groq]);
 }
 
 #[test]
@@ -177,8 +191,14 @@ fn quota_midway_skips_groq_for_remaining_spans() {
     run(&mut engine, &vec![0.0; 21 * 60 * 16_000]).unwrap();
     assert_eq!(calls.load(Ordering::SeqCst), 2);
     assert_eq!(loads.load(Ordering::SeqCst), 1);
-    assert_eq!(engine.engines_used(), vec!["Groq", "small"]);
-    assert_eq!(engine.fallback_reason(), Some("Groq daily limit reached"));
+    assert_eq!(
+        engine.engines_used(),
+        vec![EngineName::Groq, EngineName::Local("small".into())]
+    );
+    assert_eq!(
+        engine.fallback_reason(),
+        Some(&FallbackReason::Quota(EngineName::Groq))
+    );
 }
 
 #[test]
@@ -187,8 +207,43 @@ fn no_key_uses_local_only() {
     let mut engine = chain(vec![], loads.clone());
     run(&mut engine, &[0.0; 16_000]).unwrap();
     assert_eq!(loads.load(Ordering::SeqCst), 1);
-    assert_eq!(engine.engines_used(), vec!["small"]);
+    assert_eq!(
+        engine.engines_used(),
+        vec![EngineName::Local("small".into())]
+    );
     assert_eq!(engine.fallback_reason(), None);
+}
+
+#[test]
+fn chain_run_reports_per_engine_audio_totals_for_diagnostics() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let loads = Arc::new(AtomicUsize::new(0));
+    let mut engine = chain(
+        vec![
+            cloud(
+                vec![Ok(vec![]), Err(EngineError::QuotaExhausted)],
+                calls.clone(),
+            ),
+            Box::new(FakeCloud {
+                name: "Gemini",
+                calls: Arc::new(AtomicUsize::new(0)),
+                replies: vec![Ok(vec![]), Err(EngineError::QuotaExhausted)].into(),
+            }),
+        ],
+        loads,
+    );
+    for _ in 0..3 {
+        run(&mut engine, &[0.1; 16_000]).unwrap();
+    }
+    let report = engine.chain_report();
+    let totals = report.engine_audio_ms.unwrap();
+    assert_eq!(totals.get(&EngineName::Groq), Some(&1_000));
+    assert_eq!(totals.get(&EngineName::Gemini), Some(&1_000));
+    assert_eq!(totals.get(&EngineName::Local("small".into())), Some(&1_000));
+    assert_eq!(
+        LogEvent::engine_usage(1_000, 1_000, 1_000, report.fallback_reason.as_ref()).to_string(),
+        "engine_usage groq_ms=1000 gemini_ms=1000 local_ms=1000 fallback=quota"
+    );
 }
 
 #[test]

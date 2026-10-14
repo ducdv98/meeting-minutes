@@ -1,6 +1,6 @@
 # Tidy the engine chain after the cloud transcription review
 
-Status: ready-for-agent
+Status: resolved
 Spec: ../spec.md
 Blocked by: 03, 04, 05, 06, 07
 
@@ -24,10 +24,16 @@ Small separate commits are fine. Items 5–7 are independent of 1–4.
 
 ## Acceptance criteria
 
-- [ ] No user-visible change. Meeting view notices, diagnostics fields and on-disk JSON are the same. A test loads a Transcript and Meeting file saved before this ticket.
-- [ ] `SpeechEngine` has only the methods every engine uses.
-- [ ] Engine names and fallback reasons are enums, with no suffix matching on strings.
-- [ ] The Summary/Ask unsupported error, the offset shift and the default Gemini model are each defined once, and the dead Groq arm is gone.
-- [ ] `start_decision` has no argument that is always the same value. Code used only by tests is under `#[cfg(test)]`.
-- [ ] Engine errors keep their kind for diagnostics. No key or Meeting audio or text appears in errors, logs or diagnostics.
-- [ ] Checks pass: core tests, clippy, the frontend tests, `tsc`, and the Windows clippy check on `src-tauri/src/main.rs`.
+- [x] No user-visible change. Meeting view notices, diagnostics fields and on-disk JSON are the same. A test loads a Transcript and Meeting file saved before this ticket.
+- [x] `SpeechEngine` has only the methods every engine uses.
+- [x] Engine names and fallback reasons are enums, with no suffix matching on strings.
+- [x] The Summary/Ask unsupported error, the offset shift and the default Gemini model are each defined once, and the dead Groq arm is gone.
+- [x] `start_decision` has no argument that is always the same value. Code used only by tests is under `#[cfg(test)]`.
+- [x] Engine errors keep their kind for diagnostics. No key or Meeting audio or text appears in errors, logs or diagnostics.
+- [x] Checks pass: core tests, clippy, the frontend tests, `tsc`, and the Windows clippy check on `src-tauri/src/main.rs`.
+
+## Comments
+
+- Done by Codex with two review rounds (standards and spec). Items 1–3 and 5–9 are done. Item 4 is left as-is: moving either notice would change saved Meeting or Transcript JSON, so `meeting_file.rs` has a comment saying why the Correction notice stays in Meeting metadata.
+- `chain_report()` now lives only on `EngineChain`. Tests and the Whisper benchmark wrap their local engine with `EngineChain::borrow_local`.
+- Checks: 257 core tests, core and whisper clippy, 133 frontend tests, tsc, and Windows clippy on `src-tauri/src/main.rs` (stub whisper crate) all pass.

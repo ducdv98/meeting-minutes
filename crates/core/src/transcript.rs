@@ -1,5 +1,100 @@
 use crate::participant::{MeetingParticipants, Participants};
 use serde::{Deserialize, Serialize};
+use std::fmt;
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum EngineName {
+    Groq,
+    Gemini,
+    Local(String),
+}
+
+impl EngineName {
+    pub fn label(&self) -> &str {
+        match self {
+            Self::Groq => "Groq",
+            Self::Gemini => "Gemini",
+            Self::Local(model) => model,
+        }
+    }
+}
+impl From<&str> for EngineName {
+    fn from(name: &str) -> Self {
+        match name {
+            "Groq" => Self::Groq,
+            "Gemini" => Self::Gemini,
+            model => Self::Local(model.to_owned()),
+        }
+    }
+}
+impl From<String> for EngineName {
+    fn from(name: String) -> Self {
+        Self::from(name.as_str())
+    }
+}
+impl fmt::Display for EngineName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.label())
+    }
+}
+impl Serialize for EngineName {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.label())
+    }
+}
+impl<'de> Deserialize<'de> for EngineName {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        String::deserialize(deserializer).map(Self::from)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FallbackReason {
+    Quota(EngineName),
+    Unauthorized(EngineName),
+    Offline(EngineName),
+    RateLimit(EngineName),
+    Other(EngineName),
+    Legacy(String),
+}
+impl FallbackReason {
+    fn from_saved(value: String) -> Self {
+        let Some((engine, reason)) = value.split_once(' ') else {
+            return Self::Legacy(value);
+        };
+        let engine = EngineName::from(engine);
+        match reason {
+            "daily limit reached" => Self::Quota(engine),
+            "API key rejected" => Self::Unauthorized(engine),
+            "unavailable" => Self::Offline(engine),
+            "rate limit reached" => Self::RateLimit(engine),
+            "transcription failed" => Self::Other(engine),
+            _ => Self::Legacy(value),
+        }
+    }
+}
+impl fmt::Display for FallbackReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Quota(engine) => write!(f, "{engine} daily limit reached"),
+            Self::Unauthorized(engine) => write!(f, "{engine} API key rejected"),
+            Self::Offline(engine) => write!(f, "{engine} unavailable"),
+            Self::RateLimit(engine) => write!(f, "{engine} rate limit reached"),
+            Self::Other(engine) => write!(f, "{engine} transcription failed"),
+            Self::Legacy(value) => f.write_str(value),
+        }
+    }
+}
+impl Serialize for FallbackReason {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+impl<'de> Deserialize<'de> for FallbackReason {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        String::deserialize(deserializer).map(Self::from_saved)
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -42,9 +137,9 @@ pub struct Transcript {
     pub revision: u32,
     pub created_at: String,
     #[serde(deserialize_with = "deserialize_engines")]
-    pub model: Vec<String>,
+    pub model: Vec<EngineName>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fallback_reason: Option<String>,
+    pub fallback_reason: Option<FallbackReason>,
     pub language: Language,
     pub language_detected: bool,
     pub duration_ms: u64,
@@ -53,7 +148,7 @@ pub struct Transcript {
 
 fn deserialize_engines<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
-) -> Result<Vec<String>, D::Error> {
+) -> Result<Vec<EngineName>, D::Error> {
     #[derive(Deserialize)]
     #[serde(untagged)]
     enum Engines {
@@ -61,8 +156,8 @@ fn deserialize_engines<'de, D: serde::Deserializer<'de>>(
         Current(Vec<String>),
     }
     Ok(match Engines::deserialize(deserializer)? {
-        Engines::Old(name) => vec![name],
-        Engines::Current(names) => names,
+        Engines::Old(name) => vec![EngineName::from(name)],
+        Engines::Current(names) => names.into_iter().map(EngineName::from).collect(),
     })
 }
 
@@ -87,6 +182,20 @@ pub struct RawWord {
     pub start_ms: u64,
     pub end_ms: u64,
     pub text: String,
+}
+
+pub fn shift_segment_times(
+    start_ms: &mut u64,
+    end_ms: &mut u64,
+    words: &mut [RawWord],
+    offset_ms: u64,
+) {
+    *start_ms += offset_ms;
+    *end_ms += offset_ms;
+    for word in words {
+        word.start_ms += offset_ms;
+        word.end_ms += offset_ms;
+    }
 }
 
 pub const MAX_VAD_GAP_MS: u64 = 2_000;
@@ -353,7 +462,12 @@ pub fn render_markdown_named(
     let mut result = format!(
         "# {title}\n\nTranscript revision {} · model {} · {language}\n",
         transcript.revision,
-        transcript.model.join(", ")
+        transcript
+            .model
+            .iter()
+            .map(EngineName::label)
+            .collect::<Vec<_>>()
+            .join(", ")
     );
     for s in &transcript.segments {
         let seconds = s.start_ms / 1000;

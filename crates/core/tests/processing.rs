@@ -5,7 +5,7 @@ use meeting_minutes_core::processing::{
     TranscribeRequest, TranscriptionContext,
 };
 use meeting_minutes_core::processing::{JobStage, ProcessingError, Processor};
-use meeting_minutes_core::transcript::{Language, RawSegment, Speaker};
+use meeting_minutes_core::transcript::{EngineName, FallbackReason, Language, RawSegment, Speaker};
 use meeting_minutes_core::{capture::Source, finalize_recording, recording::ChunkWriter, Library};
 use meeting_minutes_core::{
     cloud::{CloudEngine, EngineError},
@@ -55,7 +55,7 @@ fn correction_changes_the_revision_after_the_uncorrected_draft() {
             vocabulary: &[],
             default_language: Some(Language::En),
         },
-        &mut engine,
+        &mut EngineChain::borrow_local("small", &mut engine),
         &mut |_| {},
         &AtomicBool::new(false),
         None,
@@ -89,7 +89,7 @@ fn correction_quota_failure_publishes_original_revision_with_notice() {
             vocabulary: &[],
             default_language: Some(Language::En),
         },
-        &mut engine,
+        &mut EngineChain::borrow_local("small", &mut engine),
         &mut |_| {},
         &AtomicBool::new(false),
         None,
@@ -141,7 +141,7 @@ impl SpeechEngine for FakeEngine {
     fn audio_after_vad_ms(&self) -> Option<u64> {
         Some(40)
     }
-    fn detect_language(&mut self, _: &[f32]) -> Result<Language, String> {
+    fn detect_language(&mut self, _: &[f32], _: &AtomicBool) -> Result<Language, String> {
         self.detected += 1;
         Ok(Language::Vi)
     }
@@ -182,6 +182,158 @@ fn record_events() {
         log::set_max_level(log::LevelFilter::Info);
     });
 }
+
+#[test]
+fn cloud_language_detection_failure_logs_only_the_error_kind() {
+    struct FailingDetection;
+    impl CloudEngine for FailingDetection {
+        fn name(&self) -> &str {
+            "Groq"
+        }
+        fn transcribe_span(
+            &mut self,
+            _: &[f32],
+            _: Language,
+            _: Option<&str>,
+            _: &AtomicBool,
+        ) -> Result<Vec<RawSegment>, EngineError> {
+            Ok(vec![])
+        }
+        fn detect_language(
+            &mut self,
+            _: &[f32],
+            _: &AtomicBool,
+        ) -> Result<Option<Language>, EngineError> {
+            Err(EngineError::InvalidResponse)
+        }
+    }
+    record_events();
+    let mut engine = EngineChain::new(
+        vec![Box::new(FailingDetection)],
+        "small",
+        Box::new(|| {
+            Ok(Box::new(FakeEngine {
+                calls: 0,
+                prompts: vec![],
+                detected: 0,
+                lengths: vec![],
+            }))
+        }),
+    );
+    assert_eq!(
+        engine.detect_language(&[0.1; 16_000], &AtomicBool::new(false)),
+        Ok(Language::Vi)
+    );
+    let current = std::thread::current().id();
+    let events = EVENTS.get().unwrap().lock().unwrap();
+    assert!(events.iter().any(|(thread, event)| *thread == current
+        && event == "engine_failure engine=groq kind=invalid_response"));
+}
+
+#[test]
+fn offline_background_language_detection_logs_its_safe_kind() {
+    struct OfflineDetection;
+    impl CloudEngine for OfflineDetection {
+        fn name(&self) -> &str {
+            "Groq"
+        }
+        fn transcribe_span(
+            &mut self,
+            _: &[f32],
+            _: Language,
+            _: Option<&str>,
+            _: &AtomicBool,
+        ) -> Result<Vec<RawSegment>, EngineError> {
+            Ok(vec![])
+        }
+        fn detect_language(
+            &mut self,
+            _: &[f32],
+            _: &AtomicBool,
+        ) -> Result<Option<Language>, EngineError> {
+            Err(EngineError::Offline)
+        }
+    }
+    record_events();
+    let mut engine = EngineChain::new(
+        vec![Box::new(OfflineDetection)],
+        "small",
+        Box::new(|| {
+            Ok(Box::new(FakeEngine {
+                calls: 0,
+                prompts: vec![],
+                detected: 0,
+                lengths: vec![],
+            }))
+        }),
+    );
+    engine.set_background_local_allowed(Box::new(|| false));
+    assert!(engine
+        .detect_language(&[0.1; 16_000], &AtomicBool::new(false))
+        .is_err());
+    let current = std::thread::current().id();
+    let events = EVENTS.get().unwrap().lock().unwrap();
+    assert!(events
+        .iter()
+        .any(|(thread, event)| *thread == current
+            && event == "engine_failure engine=groq kind=offline"));
+}
+
+#[test]
+fn offline_background_span_logs_its_safe_kind() {
+    struct OfflineSpan;
+    impl CloudEngine for OfflineSpan {
+        fn name(&self) -> &str {
+            "Groq"
+        }
+        fn transcribe_span(
+            &mut self,
+            _: &[f32],
+            _: Language,
+            _: Option<&str>,
+            _: &AtomicBool,
+        ) -> Result<Vec<RawSegment>, EngineError> {
+            Err(EngineError::Offline)
+        }
+        fn detect_language(
+            &mut self,
+            _: &[f32],
+            _: &AtomicBool,
+        ) -> Result<Option<Language>, EngineError> {
+            Ok(Some(Language::En))
+        }
+    }
+    record_events();
+    let mut engine = EngineChain::new(
+        vec![Box::new(OfflineSpan)],
+        "small",
+        Box::new(|| {
+            Ok(Box::new(FakeEngine {
+                calls: 0,
+                prompts: vec![],
+                detected: 0,
+                lengths: vec![],
+            }))
+        }),
+    );
+    engine.set_background_local_allowed(Box::new(|| false));
+    assert!(matches!(
+        engine.transcribe(
+            &[0.1; 16_000],
+            Language::En,
+            None,
+            &mut |_| {},
+            &AtomicBool::new(false)
+        ),
+        Err(ProcessingError::Offline)
+    ));
+    let current = std::thread::current().id();
+    let events = EVENTS.get().unwrap().lock().unwrap();
+    assert!(events
+        .iter()
+        .any(|(thread, event)| *thread == current
+            && event == "engine_failure engine=groq kind=offline"));
+}
 impl log::Log for EventRecorder {
     fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
         metadata.target() == "meeting_minutes_events"
@@ -216,7 +368,7 @@ fn completed_transcription_reports_speech_duration_across_recordings() {
             vocabulary: &[],
             default_language: Some(Language::En),
         },
-        &mut engine,
+        &mut EngineChain::borrow_local("small", &mut engine),
         &mut |_| {},
         &AtomicBool::new(false),
     )
@@ -245,7 +397,7 @@ fn engine_failure_logs_transcribing_stage_and_completed_audio() {
         fn thread_count(&self) -> usize {
             1
         }
-        fn detect_language(&mut self, _: &[f32]) -> Result<Language, String> {
+        fn detect_language(&mut self, _: &[f32], _: &AtomicBool) -> Result<Language, String> {
             Ok(Language::En)
         }
         fn transcribe(
@@ -278,7 +430,7 @@ fn engine_failure_logs_transcribing_stage_and_completed_audio() {
             vocabulary: &[],
             default_language: Some(Language::En),
         },
-        &mut engine,
+        &mut EngineChain::borrow_local("small", &mut engine),
         &mut |_| {},
         &AtomicBool::new(false),
     );
@@ -314,7 +466,7 @@ fn cancelled_transcription_logs_cancellation() {
             vocabulary: &[],
             default_language: None,
         },
-        &mut engine,
+        &mut EngineChain::borrow_local("small", &mut engine),
         &mut |_| {},
         &AtomicBool::new(true),
     );
@@ -429,23 +581,25 @@ fn cloud_quota_mid_meeting_publishes_one_revision_with_both_engines() {
     )
     .unwrap();
     assert_eq!(transcript.revision, 1);
-    assert_eq!(transcript.model, vec!["Groq", "small"]);
     assert_eq!(
-        transcript.fallback_reason.as_deref(),
-        Some("Groq daily limit reached")
+        transcript.model,
+        vec![EngineName::Groq, EngineName::Local("small".into())]
+    );
+    assert_eq!(
+        transcript.fallback_reason,
+        Some(FallbackReason::Quota(EngineName::Groq))
     );
     assert!(dir.join("transcript.r1.json").exists());
     assert!(!dir.join("transcript.r2.json").exists());
     let current = std::thread::current().id();
-    assert!(EVENTS
-        .get()
-        .unwrap()
-        .lock()
-        .unwrap()
-        .iter()
-        .any(|(thread, event)| *thread == current
-            && event.starts_with("engine_usage groq_ms=")
-            && event.contains("fallback=quota")));
+    let events = EVENTS.get().unwrap().lock().unwrap();
+    let usage = events.iter().find_map(|(thread, event)| {
+        (*thread == current && event.starts_with("engine_usage ")).then_some(event.as_str())
+    });
+    assert_eq!(
+        usage,
+        Some("engine_usage groq_ms=100 gemini_ms=0 local_ms=300 fallback=quota")
+    );
 }
 
 struct AudibleEngine {
@@ -464,7 +618,7 @@ impl SpeechEngine for AudibleEngine {
     fn audio_after_vad_ms(&self) -> Option<u64> {
         Some(60)
     }
-    fn detect_language(&mut self, samples: &[f32]) -> Result<Language, String> {
+    fn detect_language(&mut self, samples: &[f32], _: &AtomicBool) -> Result<Language, String> {
         self.detected += 1;
         self.detected_peak = samples
             .iter()
@@ -514,7 +668,7 @@ fn each_source_is_transcribed_and_labelled_on_the_meeting_timeline() {
             vocabulary: &[],
             default_language: None,
         },
-        &mut engine,
+        &mut EngineChain::borrow_local("small", &mut engine),
         &mut |p| progress.push(p),
         &AtomicBool::new(false),
     )
@@ -558,7 +712,7 @@ fn simultaneous_sources_keep_overlapping_segments_with_distinct_speakers() {
             vocabulary: &[],
             default_language: Some(Language::En),
         },
-        &mut engine,
+        &mut EngineChain::borrow_local("small", &mut engine),
         &mut |_| {},
         &AtomicBool::new(false),
     )
@@ -590,7 +744,7 @@ fn draft_callback_reports_placed_segments_per_source_with_bounded_progress() {
             vocabulary: &[],
             default_language: Some(Language::En),
         },
-        &mut engine,
+        &mut EngineChain::borrow_local("small", &mut engine),
         &mut |fraction| progress.push(fraction),
         &AtomicBool::new(false),
         None,
@@ -665,7 +819,7 @@ fn language_detection_uses_system_audio_when_microphone_has_no_speech() {
             vocabulary: &[],
             default_language: None,
         },
-        &mut engine,
+        &mut EngineChain::borrow_local("small", &mut engine),
         &mut |_| {},
         &AtomicBool::new(false),
     )
@@ -691,7 +845,7 @@ fn silent_sources_do_not_claim_a_detected_language() {
             vocabulary: &[],
             default_language: None,
         },
-        &mut engine,
+        &mut EngineChain::borrow_local("small", &mut engine),
         &mut |_| {},
         &AtomicBool::new(false),
     )
@@ -726,7 +880,7 @@ fn voice_note_segments_are_me_when_only_microphone_source_is_present() {
             vocabulary: &[],
             default_language: Some(Language::En),
         },
-        &mut engine,
+        &mut EngineChain::borrow_local("small", &mut engine),
         &mut |_| {},
         &AtomicBool::new(false),
     )
@@ -752,8 +906,13 @@ fn transcribes_two_recordings_on_timeline_and_creates_revisions() {
         vocabulary: &vocabulary,
         default_language: None,
     };
-    let first =
-        transcribe_meeting(&request, &mut engine, &mut |_| {}, &AtomicBool::new(false)).unwrap();
+    let first = transcribe_meeting(
+        &request,
+        &mut EngineChain::borrow_local("small", &mut engine),
+        &mut |_| {},
+        &AtomicBool::new(false),
+    )
+    .unwrap();
     assert_eq!(first.revision, 1);
     assert_eq!(first.language, Language::Vi);
     assert!(first.language_detected);
@@ -792,8 +951,13 @@ fn transcribes_two_recordings_on_timeline_and_creates_revisions() {
     library
         .assign_segments(id, 1, &["s00001".into()], Some("Anna"))
         .unwrap();
-    let second =
-        transcribe_meeting(&request, &mut engine, &mut |_| {}, &AtomicBool::new(false)).unwrap();
+    let second = transcribe_meeting(
+        &request,
+        &mut EngineChain::borrow_local("small", &mut engine),
+        &mut |_| {},
+        &AtomicBool::new(false),
+    )
+    .unwrap();
     assert_eq!(second.revision, 2);
     assert!(dir.join("transcript.r1.json").exists());
     assert_eq!(
@@ -830,8 +994,13 @@ fn transcribes_two_recordings_on_timeline_and_creates_revisions() {
         serde_json::to_vec(&metadata).unwrap(),
     )
     .unwrap();
-    let third =
-        transcribe_meeting(&request, &mut engine, &mut |_| {}, &AtomicBool::new(false)).unwrap();
+    let third = transcribe_meeting(
+        &request,
+        &mut EngineChain::borrow_local("small", &mut engine),
+        &mut |_| {},
+        &AtomicBool::new(false),
+    )
+    .unwrap();
     assert_eq!(third.revision, 6);
     let carried = library.meeting(id).unwrap().segment_participants.unwrap();
     assert_eq!(carried.revision, 6);
@@ -864,12 +1033,22 @@ fn stale_json_temp_is_not_a_revision_and_existing_revision_is_preserved() {
         vocabulary: &[],
         default_language: None,
     };
-    let first =
-        transcribe_meeting(&request, &mut engine, &mut |_| {}, &AtomicBool::new(false)).unwrap();
+    let first = transcribe_meeting(
+        &request,
+        &mut EngineChain::borrow_local("small", &mut engine),
+        &mut |_| {},
+        &AtomicBool::new(false),
+    )
+    .unwrap();
     assert_eq!(first.revision, 1);
     let original = std::fs::read(dir.join("transcript.r1.json")).unwrap();
-    let second =
-        transcribe_meeting(&request, &mut engine, &mut |_| {}, &AtomicBool::new(false)).unwrap();
+    let second = transcribe_meeting(
+        &request,
+        &mut EngineChain::borrow_local("small", &mut engine),
+        &mut |_| {},
+        &AtomicBool::new(false),
+    )
+    .unwrap();
     assert_eq!(second.revision, 2);
     assert_eq!(
         std::fs::read(dir.join("transcript.r1.json")).unwrap(),
@@ -901,7 +1080,7 @@ fn chosen_meeting_language_skips_detection() {
             vocabulary: &[],
             default_language: None,
         },
-        &mut engine,
+        &mut EngineChain::borrow_local("small", &mut engine),
         &mut |_| {},
         &AtomicBool::new(false),
     )
@@ -927,7 +1106,7 @@ fn default_language_from_settings_skips_detection() {
             vocabulary: &[],
             default_language: Some(Language::En),
         },
-        &mut engine,
+        &mut EngineChain::borrow_local("small", &mut engine),
         &mut |_| {},
         &AtomicBool::new(false),
     )
@@ -960,7 +1139,7 @@ fn meeting_language_wins_over_default_language() {
             vocabulary: &[],
             default_language: Some(Language::En),
         },
-        &mut engine,
+        &mut EngineChain::borrow_local("small", &mut engine),
         &mut |_| {},
         &AtomicBool::new(false),
     )
@@ -985,7 +1164,12 @@ fn cancellation_and_no_audio_do_not_write_a_transcript() {
         default_language: None,
     };
     assert!(matches!(
-        transcribe_meeting(&request, &mut engine, &mut |_| {}, &AtomicBool::new(true)),
+        transcribe_meeting(
+            &request,
+            &mut EngineChain::borrow_local("small", &mut engine),
+            &mut |_| {},
+            &AtomicBool::new(true)
+        ),
         Err(ProcessingError::Cancelled)
     ));
     assert!(!dir.join("transcript.r1.json").exists());
@@ -997,7 +1181,7 @@ fn cancellation_and_no_audio_do_not_write_a_transcript() {
         fn thread_count(&self) -> usize {
             1
         }
-        fn detect_language(&mut self, _: &[f32]) -> Result<Language, String> {
+        fn detect_language(&mut self, _: &[f32], _: &AtomicBool) -> Result<Language, String> {
             Ok(Language::En)
         }
         fn transcribe(
@@ -1015,7 +1199,7 @@ fn cancellation_and_no_audio_do_not_write_a_transcript() {
     assert!(matches!(
         transcribe_meeting(
             &request,
-            &mut CancelEngine,
+            &mut EngineChain::borrow_local("small", &mut CancelEngine),
             &mut |_| {},
             &AtomicBool::new(false)
         ),
@@ -1031,7 +1215,12 @@ fn cancellation_and_no_audio_do_not_write_a_transcript() {
         default_language: None,
     };
     assert!(matches!(
-        transcribe_meeting(&request, &mut engine, &mut |_| {}, &AtomicBool::new(false)),
+        transcribe_meeting(
+            &request,
+            &mut EngineChain::borrow_local("small", &mut engine),
+            &mut |_| {},
+            &AtomicBool::new(false)
+        ),
         Err(ProcessingError::NoAudio)
     ));
 }
@@ -1047,7 +1236,7 @@ impl SpeechEngine for SignalEngine {
     fn thread_count(&self) -> usize {
         1
     }
-    fn detect_language(&mut self, _: &[f32]) -> Result<Language, String> {
+    fn detect_language(&mut self, _: &[f32], _: &AtomicBool) -> Result<Language, String> {
         Ok(Language::En)
     }
     fn transcribe(
@@ -1083,7 +1272,7 @@ fn transcription_completes_without_vad_and_reports_no_speech_duration() {
             vocabulary: &[],
             default_language: Some(Language::En),
         },
-        &mut engine,
+        &mut EngineChain::borrow_local("small", &mut engine),
         &mut |_| {},
         &AtomicBool::new(false),
     )
@@ -1120,7 +1309,7 @@ fn rename_during_transcription_is_the_published_markdown_title() {
             vocabulary: &[],
             default_language: Some(Language::En),
         },
-        &mut engine,
+        &mut EngineChain::borrow_local("small", &mut engine),
         &mut |_| {},
         &AtomicBool::new(false),
     )
@@ -1170,7 +1359,7 @@ fn prepared_tone(hz: f32) -> Vec<f32> {
             vocabulary: &[],
             default_language: None,
         },
-        &mut engine,
+        &mut EngineChain::borrow_local("small", &mut engine),
         &mut |_| {},
         &AtomicBool::new(false),
     )

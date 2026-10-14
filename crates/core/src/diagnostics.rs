@@ -3,7 +3,9 @@ use std::{fmt, time::Duration};
 use crate::{
     ai::{AiError, ProviderKind},
     ask::AnswerState,
+    cloud::EngineError,
     processing::{PowerState, ProcessingError, ProcessingStage},
+    transcript::FallbackReason,
 };
 
 pub struct DiagnosticsInput {
@@ -44,6 +46,13 @@ pub enum LogEvent {
         outcome: &'static str,
         changed_segments: usize,
         duration_ms: u128,
+    },
+    CorrectionFailure {
+        kind: &'static str,
+    },
+    EngineFailure {
+        engine: &'static str,
+        kind: &'static str,
     },
     ProcessingFailed {
         stage: ProcessingStage,
@@ -159,7 +168,28 @@ fn safe_engine_message(message: &str) -> String {
 }
 
 impl LogEvent {
-    pub fn engine_usage(groq_ms: u64, gemini_ms: u64, local_ms: u64, reason: Option<&str>) -> Self {
+    pub fn engine_failure(engine: &str, error: &EngineError) -> Self {
+        let engine = match engine {
+            "Groq" => "groq",
+            "Gemini" => "gemini",
+            _ => "unknown",
+        };
+        Self::EngineFailure {
+            engine,
+            kind: error.diagnostic_kind(),
+        }
+    }
+    pub fn correction_failure(error: &AiError) -> Self {
+        Self::CorrectionFailure {
+            kind: error.diagnostic_kind(),
+        }
+    }
+    pub fn engine_usage(
+        groq_ms: u64,
+        gemini_ms: u64,
+        local_ms: u64,
+        reason: Option<&FallbackReason>,
+    ) -> Self {
         Self::EngineUsage {
             groq_ms,
             gemini_ms,
@@ -171,7 +201,7 @@ impl LogEvent {
         engine: &str,
         audio_ms: u64,
         round_trip: Duration,
-        fallback: Option<&str>,
+        fallback: Option<&FallbackReason>,
     ) -> Self {
         let engine = match engine {
             "Groq" => "groq",
@@ -352,6 +382,10 @@ impl fmt::Display for LogEvent {
             } => {
                 return write!(f, "correction_result outcome={outcome} changed_segments={changed_segments} duration_ms={duration_ms}");
             }
+            Self::CorrectionFailure { kind } => return write!(f, "correction_failure kind={kind}"),
+            Self::EngineFailure { engine, kind } => {
+                return write!(f, "engine_failure engine={engine} kind={kind}")
+            }
             Self::ProcessingFailed {
                 stage,
                 kind,
@@ -465,12 +499,12 @@ fn parse_cloud_span(event: &str) -> bool {
         )
 }
 
-fn safe_fallback(reason: Option<&str>) -> &'static str {
+fn safe_fallback(reason: Option<&FallbackReason>) -> &'static str {
     match reason {
-        Some(reason) if reason.ends_with("daily limit reached") => "quota",
-        Some(reason) if reason.ends_with("API key rejected") => "unauthorized",
-        Some(reason) if reason.ends_with("unavailable") => "offline",
-        Some(reason) if reason.ends_with("rate limit reached") => "rate_limit",
+        Some(FallbackReason::Quota(_)) => "quota",
+        Some(FallbackReason::Unauthorized(_)) => "unauthorized",
+        Some(FallbackReason::Offline(_)) => "offline",
+        Some(FallbackReason::RateLimit(_)) => "rate_limit",
         Some(_) => "other",
         None => "none",
     }
@@ -496,6 +530,30 @@ fn parse_engine_usage(event: &str) -> bool {
             fallback,
             "none" | "quota" | "unauthorized" | "offline" | "rate_limit" | "other"
         )
+}
+
+fn parse_failure_kind(event: &str) -> bool {
+    let kind = event.strip_prefix("correction_failure kind=").or_else(|| {
+        let rest = event.strip_prefix("engine_failure engine=")?;
+        let (engine, kind) = rest.split_once(" kind=")?;
+        matches!(engine, "groq" | "gemini" | "unknown").then_some(kind)
+    });
+    kind.is_some_and(|kind| {
+        matches!(
+            kind,
+            "rate_limit"
+                | "quota"
+                | "unauthorized"
+                | "offline"
+                | "cancelled"
+                | "invalid_response"
+                | "http_status"
+                | "transport"
+                | "invalid_output"
+                | "key_store"
+                | "other"
+        )
+    })
 }
 
 pub fn log_provider_error(kind: ProviderKind, error: &AiError) {
@@ -591,6 +649,7 @@ fn safe_log_line(line: &str) -> bool {
     if parse_transcription_rtf(event).is_some()
         || parse_cloud_span(event)
         || parse_engine_usage(event)
+        || parse_failure_kind(event)
     {
         return true;
     }

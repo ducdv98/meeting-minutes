@@ -42,8 +42,12 @@ impl SpeechEngine for MeasuredEngine<'_> {
     fn audio_after_vad_ms(&self) -> Option<u64> {
         self.inner.audio_after_vad_ms()
     }
-    fn detect_language(&mut self, samples: &[f32]) -> Result<Language, String> {
-        self.inner.detect_language(samples)
+    fn detect_language(
+        &mut self,
+        samples: &[f32],
+        cancel: &AtomicBool,
+    ) -> Result<Language, String> {
+        self.inner.detect_language(samples, cancel)
     }
     fn transcribe(
         &mut self,
@@ -179,7 +183,7 @@ fn run_clip(
             vocabulary: &[],
             default_language: Some(language),
         },
-        &mut measured,
+        &mut meeting_minutes_core::processing::EngineChain::borrow_local(model, &mut measured),
         &mut |_| {},
         &cancel,
     )

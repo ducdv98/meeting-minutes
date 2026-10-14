@@ -102,6 +102,7 @@ pub(crate) struct MeetingFile {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cloud_consent: Vec<CloudConsent>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    // Keep this in meeting.json: moving it beside the Transcript fallback notice changes saved Meetings.
     pub correction_notice: Option<String>,
 }
 
@@ -140,5 +141,41 @@ impl MeetingFile {
             .flatten()
             .collect();
         !sources.is_empty() && sources.iter().all(|source| *source == Source::Microphone)
+    }
+}
+
+#[cfg(test)]
+mod compatibility_tests {
+    use super::*;
+    use crate::transcript::Transcript;
+
+    #[test]
+    fn saved_transcript_and_meeting_formats_still_load_and_round_trip() {
+        let transcript = serde_json::json!({
+            "schema_version": 1, "revision": 2, "created_at": "2026-10-12T10:00:00Z",
+            "model": ["Groq", "Gemini", "turbo-q5_0"],
+            "fallback_reason": "Groq daily limit reached", "language": "en",
+            "language_detected": false, "duration_ms": 1000, "segments": []
+        });
+        let decoded: Transcript = serde_json::from_value(transcript.clone()).unwrap();
+        assert_eq!(serde_json::to_value(decoded).unwrap(), transcript);
+
+        let meeting = serde_json::json!({
+            "schema_version": 1, "title": "Planning", "started_at": "2026-10-12T09:00:00Z",
+            "language": "en", "duration_ms": 1000, "audio": null, "recordings": [],
+            "markers": [], "correction_notice": "Correction unavailable"
+        });
+        let decoded: MeetingFile = serde_json::from_value(meeting.clone()).unwrap();
+        assert_eq!(serde_json::to_value(decoded).unwrap(), meeting);
+
+        let mut old = transcript;
+        old["model"] = serde_json::json!("turbo-q5_0");
+        old.as_object_mut().unwrap().remove("fallback_reason");
+        let decoded: Transcript = serde_json::from_value(old).unwrap();
+        assert_eq!(decoded.model, vec!["turbo-q5_0".into()]);
+        assert_eq!(
+            serde_json::to_value(decoded).unwrap()["model"],
+            serde_json::json!(["turbo-q5_0"])
+        );
     }
 }

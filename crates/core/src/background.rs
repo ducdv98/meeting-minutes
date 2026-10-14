@@ -11,8 +11,11 @@ use std::{fs, io, path::Path, sync::atomic::AtomicBool, time::Duration};
 use crate::{
     audio_prep::{Decimator, WHISPER_RATE},
     capture::Source,
-    processing::{ProcessingError, SpeechEngine},
-    transcript::{ends_sentence, place_segments, Language, PlacedSegment, RawWord, Speaker},
+    processing::{EngineChain, ProcessingError, SpeechEngine},
+    transcript::{
+        ends_sentence, place_segments, EngineName, FallbackReason, Language, PlacedSegment,
+        RawWord, Speaker,
+    },
 };
 
 /// New audio a Source must have pending before a span is transcribed.
@@ -29,18 +32,9 @@ pub enum BackgroundStart {
 }
 
 /// Selects background work for a Recording; a waiting worker can resume after power or network returns.
-pub fn start_decision(
-    has_groq_key: bool,
-    online: bool,
-    discrete_gpu: bool,
-    on_ac: bool,
-) -> BackgroundStart {
+pub fn start_decision(has_groq_key: bool, discrete_gpu: bool, on_ac: bool) -> BackgroundStart {
     if has_groq_key {
-        return if online {
-            BackgroundStart::Cloud
-        } else {
-            BackgroundStart::Waiting
-        };
+        return BackgroundStart::Cloud;
     }
     if discrete_gpu {
         return if on_ac {
@@ -70,9 +64,9 @@ pub struct BackgroundResult {
     pub model: String,
     pub language: Option<Language>,
     pub initial_prompt: Option<String>,
-    pub engines_used: Vec<String>,
-    pub fallback_reason: Option<String>,
-    pub engine_audio_ms: Option<(u64, u64, u64)>,
+    pub engines_used: Vec<EngineName>,
+    pub fallback_reason: Option<FallbackReason>,
+    pub engine_audio_ms: Option<std::collections::BTreeMap<EngineName, u64>>,
     pub sources: Vec<SourceProgress>,
 }
 
@@ -233,9 +227,9 @@ pub struct BackgroundTranscriber {
     model: String,
     language: Option<Language>,
     initial_prompt: Option<String>,
-    engines_used: Vec<String>,
-    fallback_reason: Option<String>,
-    engine_audio_ms: Option<(u64, u64, u64)>,
+    engines_used: Vec<EngineName>,
+    fallback_reason: Option<FallbackReason>,
+    engine_audio_ms: Option<std::collections::BTreeMap<EngineName, u64>>,
     streams: Vec<SourceStream>,
 }
 
@@ -290,7 +284,7 @@ impl BackgroundTranscriber {
     /// cancelled span is discarded and the results committed before it are kept.
     pub fn transcribe_ready(
         &mut self,
-        engine: &mut dyn SpeechEngine,
+        engine: &mut EngineChain<'_>,
         cancel: &AtomicBool,
     ) -> Result<Vec<PlacedSegment>, ProcessingError> {
         let mut finished = Vec::new();
@@ -309,10 +303,14 @@ impl BackgroundTranscriber {
                         continue;
                     }
                     let pending = &stream.decimator.output;
-                    let language = engine.detect_language(pending).map_err(|error| {
-                        if engine.is_offline() {
+                    let language = engine.detect_language(pending, cancel).map_err(|error| {
+                        if cancel.load(std::sync::atomic::Ordering::SeqCst) {
+                            return ProcessingError::Cancelled;
+                        }
+                        let report = engine.chain_report();
+                        if report.offline {
                             ProcessingError::Offline
-                        } else if engine.is_deferred() {
+                        } else if report.deferred {
                             ProcessingError::Deferred
                         } else {
                             ProcessingError::Engine(error)
@@ -325,9 +323,10 @@ impl BackgroundTranscriber {
             let prompt = self.initial_prompt.clone();
             let result =
                 self.streams[index].transcribe_span(engine, language, prompt.as_deref(), cancel);
-            self.engines_used = engine.engines_used();
-            self.fallback_reason = engine.fallback_reason().map(str::to_owned);
-            self.engine_audio_ms = engine.engine_audio_ms();
+            let report = engine.chain_report();
+            self.engines_used = report.engines_used;
+            self.fallback_reason = report.fallback_reason;
+            self.engine_audio_ms = report.engine_audio_ms;
             finished.extend(result?);
         }
         Ok(finished)
@@ -370,9 +369,9 @@ pub struct BackgroundControl<'a> {
 /// Transcribes a Recording's Chunks as they are completed, until told to stop. The engine is
 /// loaded only when a span may run and is dropped while work is not allowed (on battery), so the
 /// GPU is free; work resumes with the audio captured meanwhile once it is allowed again.
-pub fn run<E: SpeechEngine>(
+pub fn run<'a>(
     transcriber: &mut BackgroundTranscriber,
-    load: &mut dyn FnMut() -> Option<E>,
+    load: &mut dyn FnMut() -> Option<EngineChain<'a>>,
     chunk_dir: &Path,
     control: BackgroundControl<'_>,
     finished: &mut dyn FnMut(&[PlacedSegment]),

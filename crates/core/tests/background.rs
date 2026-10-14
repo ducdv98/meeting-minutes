@@ -1,7 +1,7 @@
 use meeting_minutes_core::background::{self, BackgroundControl, BackgroundTranscriber};
 use meeting_minutes_core::processing::{
-    background_draft, transcribe_meeting, transcribe_meeting_resuming, ProcessingError,
-    SpeechEngine, TranscribeRequest,
+    background_draft, transcribe_meeting, transcribe_meeting_resuming, EngineChain,
+    ProcessingError, SpeechEngine, TranscribeRequest,
 };
 use meeting_minutes_core::transcript::{Language, RawSegment, RawWord, Speaker, Transcript};
 use meeting_minutes_core::{capture::Source, finalize_recording, recording::ChunkWriter, Library};
@@ -17,23 +17,19 @@ use tempfile::TempDir;
 fn cloud_recording_starts_on_battery_without_a_discrete_gpu() {
     use background::BackgroundStart;
     assert_eq!(
-        background::start_decision(true, true, false, false),
+        background::start_decision(true, false, false),
         BackgroundStart::Cloud
     );
     assert_eq!(
-        background::start_decision(true, false, false, false),
-        BackgroundStart::Waiting
-    );
-    assert_eq!(
-        background::start_decision(false, true, false, false),
+        background::start_decision(false, false, false),
         BackgroundStart::Disabled
     );
     assert_eq!(
-        background::start_decision(false, false, true, true),
+        background::start_decision(false, true, true),
         BackgroundStart::Local
     );
     assert_eq!(
-        background::start_decision(false, true, true, false),
+        background::start_decision(false, true, false),
         BackgroundStart::Waiting
     );
 }
@@ -62,7 +58,7 @@ impl SpeechEngine for WordEngine {
     fn thread_count(&self) -> usize {
         1
     }
-    fn detect_language(&mut self, _: &[f32]) -> Result<Language, String> {
+    fn detect_language(&mut self, _: &[f32], _: &AtomicBool) -> Result<Language, String> {
         Ok(Language::En)
     }
     fn transcribe(
@@ -217,10 +213,17 @@ fn background_run(
         transcriber,
         &mut || {
             engine.loads.set(engine.loads.get() + 1);
-            Some(WordEngine {
-                heard: Rc::clone(&engine.heard),
-                ..WordEngine::default()
-            })
+            let heard = Rc::clone(&engine.heard);
+            Some(EngineChain::new(
+                vec![],
+                "small",
+                Box::new(move || {
+                    Ok(Box::new(WordEngine {
+                        heard: Rc::clone(&heard),
+                        ..WordEngine::default()
+                    }))
+                }),
+            ))
         },
         chunk_dir,
         BackgroundControl {
@@ -276,7 +279,7 @@ fn chunks_are_transcribed_in_order_and_a_sentence_across_an_edge_stays_whole() {
     let (_temp, meeting_dir) = recording.stop();
     let full = transcribe_meeting(
         &request(&meeting_dir),
-        &mut WordEngine::default(),
+        &mut EngineChain::borrow_local("small", &mut WordEngine::default()),
         &mut |_| {},
         &AtomicBool::new(false),
     )
@@ -324,7 +327,7 @@ fn stop_transcribes_only_the_remainder_and_matches_transcription_after_stop() {
     let mut after_stop_only = WordEngine::default();
     let expected = transcribe_meeting(
         &request(&meeting_dir),
-        &mut after_stop_only,
+        &mut EngineChain::borrow_local("small", &mut after_stop_only),
         &mut |_| {},
         &AtomicBool::new(false),
     )
@@ -337,7 +340,7 @@ fn stop_transcribes_only_the_remainder_and_matches_transcription_after_stop() {
     let mut first_progress = None;
     let transcript = transcribe_meeting_resuming(
         &request(&meeting_dir),
-        &mut resuming,
+        &mut EngineChain::borrow_local("small", &mut resuming),
         &mut |fraction| {
             first_progress.get_or_insert(fraction);
         },
@@ -429,7 +432,7 @@ fn a_cache_from_another_model_is_ignored() {
     let mut plain = WordEngine::default();
     transcribe_meeting(
         &request(&meeting_dir),
-        &mut plain,
+        &mut EngineChain::borrow_local("small", &mut plain),
         &mut |_| {},
         &AtomicBool::new(false),
     )
@@ -437,7 +440,7 @@ fn a_cache_from_another_model_is_ignored() {
     let mut resuming = WordEngine::default();
     transcribe_meeting_resuming(
         &request(&meeting_dir),
-        &mut resuming,
+        &mut EngineChain::borrow_local("small", &mut resuming),
         &mut |_| {},
         &AtomicBool::new(false),
         None,
@@ -477,7 +480,7 @@ fn background_work_writes_nothing_so_a_crash_leaves_only_the_chunks() {
     let (_temp, meeting_dir) = recording.stop();
     let transcript = transcribe_meeting(
         &request(&meeting_dir),
-        &mut WordEngine::default(),
+        &mut EngineChain::borrow_local("small", &mut WordEngine::default()),
         &mut |_| {},
         &AtomicBool::new(false),
     )
@@ -519,7 +522,10 @@ fn audio_without_a_sentence_end_waits_for_more_instead_of_transcribing_again() {
     let mut engine = WordEngine::default();
     assert!(transcriber.span_ready());
     transcriber
-        .transcribe_ready(&mut engine, &AtomicBool::new(false))
+        .transcribe_ready(
+            &mut EngineChain::borrow_local("small", &mut engine),
+            &AtomicBool::new(false),
+        )
         .unwrap();
     let after_one_span = engine.transcribed_samples;
     assert!(after_one_span > 0);
@@ -537,7 +543,10 @@ fn silence_before_the_language_is_known_is_skipped_not_rescanned() {
     transcriber.push(Source::Microphone, &vec![0.0; 40 * RATE]);
     let mut engine = WordEngine::default();
     transcriber
-        .transcribe_ready(&mut engine, &AtomicBool::new(false))
+        .transcribe_ready(
+            &mut EngineChain::borrow_local("small", &mut engine),
+            &AtomicBool::new(false),
+        )
         .unwrap();
     assert!(!transcriber.span_ready());
     assert_eq!(transcriber.finish().sources[0].committed_ms, 40_000);

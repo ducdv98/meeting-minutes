@@ -13,7 +13,7 @@ fn old_meeting_transcript_model_loads_as_one_engine() {
     let path = meeting_dir.path().join("transcript.r1.json");
     std::fs::write(&path, old).unwrap();
     let transcript: Transcript = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
-    assert_eq!(transcript.model, vec!["small"]);
+    assert_eq!(transcript.model, vec!["small".into()]);
     assert!(serde_json::to_string(&transcript)
         .unwrap()
         .contains("\"model\":[\"small\"]"));

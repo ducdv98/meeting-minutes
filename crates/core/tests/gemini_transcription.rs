@@ -126,7 +126,7 @@ fn invalid_output_or_audio_claim_beyond_span_falls_back() {
                 None,
                 &AtomicBool::new(false)
             ),
-            Err(EngineError::Other)
+            Err(EngineError::InvalidResponse)
         );
     }
 }
@@ -161,6 +161,24 @@ fn maps_quota_rate_auth_and_network_errors() {
             Err(AiError::Unreachable("offline".into())),
             EngineError::Offline,
         ),
+    ] {
+        let mut engine = engine(FakeHttp::new(vec![response]));
+        assert_eq!(
+            engine.transcribe_span(&[0.1; 160], Language::En, None, &AtomicBool::new(false)),
+            Err(expected)
+        );
+    }
+}
+
+#[test]
+fn preserves_http_transport_and_malformed_response_error_kinds() {
+    for (response, expected) in [
+        (reply(503, &[], "{}"), EngineError::HttpStatus(503)),
+        (
+            Err(AiError::Io(std::io::Error::other("private detail"))),
+            EngineError::Transport,
+        ),
+        (reply(200, &[], "not json"), EngineError::InvalidResponse),
     ] {
         let mut engine = engine(FakeHttp::new(vec![response]));
         assert_eq!(

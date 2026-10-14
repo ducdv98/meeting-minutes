@@ -7,8 +7,8 @@ use crate::{
     diagnostics::{log_event, LogEvent, TranscriptionEnvironment},
     meeting_file::{MeetingFile, RecordingEntry, RecordingFile},
     transcript::{
-        assign_ids, place_segments, segment_sentences, Language, PlacedSegment, RawSegment,
-        Speaker, Transcript,
+        assign_ids, place_segments, segment_sentences, shift_segment_times, EngineName,
+        FallbackReason, Language, PlacedSegment, RawSegment, Speaker, Transcript,
     },
 };
 use serde::{Serialize, Serializer};
@@ -39,31 +39,13 @@ pub trait SpeechEngine {
     fn audio_after_vad_ms(&self) -> Option<u64> {
         None
     }
-    fn engines_used(&self) -> Vec<String> {
-        vec![]
-    }
-    fn fallback_reason(&self) -> Option<&str> {
-        None
-    }
-    fn engine_audio_ms(&self) -> Option<(u64, u64, u64)> {
-        None
-    }
-    fn detect_language(&mut self, samples_16k: &[f32]) -> Result<Language, String>;
-    fn detect_language_with_cancel(
+    fn detect_language(
         &mut self,
         samples_16k: &[f32],
-        _cancel: &AtomicBool,
-    ) -> Result<Language, String> {
-        self.detect_language(samples_16k)
-    }
+        cancel: &AtomicBool,
+    ) -> Result<Language, String>;
     fn has_speech(&mut self, samples_16k: &[f32]) -> bool {
         samples_16k.iter().any(|sample| sample.abs() > 0.01)
-    }
-    fn is_offline(&self) -> bool {
-        false
-    }
-    fn is_deferred(&self) -> bool {
-        false
     }
     fn transcribe(
         &mut self,
@@ -120,8 +102,18 @@ pub fn cloud_span_bounds(samples: &[f32], target: usize, search: usize) -> Vec<R
     spans.push(start..samples.len());
     spans
 }
-type LocalFactory<'a> = Box<dyn FnMut() -> Result<Box<dyn SpeechEngine>, ProcessingError> + 'a>;
+type LocalFactory<'a> =
+    Box<dyn FnMut() -> Result<Box<dyn SpeechEngine + 'a>, ProcessingError> + 'a>;
 type RetrySleeper<'a> = Box<dyn FnMut(Duration, &AtomicBool) -> bool + 'a>;
+
+#[derive(Clone, Debug, Default)]
+pub struct ChainReport {
+    pub engines_used: Vec<EngineName>,
+    pub fallback_reason: Option<FallbackReason>,
+    pub engine_audio_ms: Option<std::collections::BTreeMap<EngineName, u64>>,
+    pub offline: bool,
+    pub deferred: bool,
+}
 
 /// An ordered list of cloud engines followed by a local model that is loaded on demand.
 pub struct EngineChain<'a> {
@@ -129,17 +121,101 @@ pub struct EngineChain<'a> {
     unavailable: Vec<bool>,
     local_name: String,
     local_factory: LocalFactory<'a>,
-    local: Option<Box<dyn SpeechEngine>>,
+    local: Option<Box<dyn SpeechEngine + 'a>>,
     background_local_allowed: Option<Box<dyn FnMut() -> bool + 'a>>,
     offline: bool,
     deferred: bool,
     sleeper: RetrySleeper<'a>,
-    used: Vec<String>,
-    fallback: Option<String>,
-    audio_ms: Vec<(String, u64)>,
+    used: Vec<EngineName>,
+    fallback: Option<FallbackReason>,
+    audio_ms: std::collections::BTreeMap<EngineName, u64>,
+}
+
+struct BorrowedEngine<'a>(&'a mut dyn SpeechEngine);
+impl SpeechEngine for BorrowedEngine<'_> {
+    fn backend(&self) -> &str {
+        self.0.backend()
+    }
+    fn thread_count(&self) -> usize {
+        self.0.thread_count()
+    }
+    fn device(&self) -> Option<&str> {
+        self.0.device()
+    }
+    fn power_state(&self) -> PowerState {
+        self.0.power_state()
+    }
+    fn audio_after_vad_ms(&self) -> Option<u64> {
+        self.0.audio_after_vad_ms()
+    }
+    fn detect_language(
+        &mut self,
+        samples: &[f32],
+        cancel: &AtomicBool,
+    ) -> Result<Language, String> {
+        self.0.detect_language(samples, cancel)
+    }
+    fn has_speech(&mut self, samples: &[f32]) -> bool {
+        self.0.has_speech(samples)
+    }
+    fn transcribe(
+        &mut self,
+        samples: &[f32],
+        language: Language,
+        prompt: Option<&str>,
+        progress: &mut dyn FnMut(f32),
+        cancel: &AtomicBool,
+    ) -> Result<Vec<RawSegment>, ProcessingError> {
+        self.0
+            .transcribe(samples, language, prompt, progress, cancel)
+    }
+    fn transcribe_streams(
+        &mut self,
+        streams: &[&[f32]],
+        language: Language,
+        prompt: Option<&str>,
+        progress: &mut dyn FnMut(f32),
+        cancel: &AtomicBool,
+    ) -> Result<Vec<StreamTranscription>, ProcessingError> {
+        self.0
+            .transcribe_streams(streams, language, prompt, progress, cancel)
+    }
 }
 
 impl<'a> EngineChain<'a> {
+    pub fn borrow_local(name: &str, engine: &'a mut dyn SpeechEngine) -> Self {
+        let mut engine = Some(engine);
+        let mut chain = Self::new(
+            vec![],
+            name,
+            Box::new(move || match engine.take() {
+                Some(engine) => Ok(Box::new(BorrowedEngine(engine))),
+                None => Err(ProcessingError::Engine(
+                    "Local engine was already loaded".into(),
+                )),
+            }),
+        );
+        chain.local().expect("borrowed local engine is available");
+        chain
+    }
+    pub fn chain_report(&self) -> ChainReport {
+        ChainReport {
+            engines_used: self.used.clone(),
+            fallback_reason: self.fallback.clone(),
+            engine_audio_ms: (!self.cloud.is_empty()).then(|| self.audio_ms.clone()),
+            offline: self.offline,
+            deferred: self.deferred,
+        }
+    }
+
+    pub fn engines_used(&self) -> Vec<EngineName> {
+        self.used.clone()
+    }
+
+    pub fn fallback_reason(&self) -> Option<&FallbackReason> {
+        self.fallback.as_ref()
+    }
+
     pub fn new(
         cloud: Vec<Box<dyn CloudEngine>>,
         local_name: &str,
@@ -169,7 +245,7 @@ impl<'a> EngineChain<'a> {
             }),
             used: Vec::new(),
             fallback: None,
-            audio_ms: Vec::new(),
+            audio_ms: std::collections::BTreeMap::new(),
         }
     }
 
@@ -201,18 +277,15 @@ impl<'a> EngineChain<'a> {
     }
 
     fn remember(&mut self, name: &str) {
-        if !self.used.iter().any(|used| used == name) {
-            self.used.push(name.into());
+        let name = EngineName::from(name);
+        if !self.used.contains(&name) {
+            self.used.push(name);
         }
     }
 
     fn count_audio(&mut self, name: &str, samples: &[f32]) {
         let audio_ms = samples.len() as u64 / 16;
-        if let Some((_, total)) = self.audio_ms.iter_mut().find(|(engine, _)| engine == name) {
-            *total += audio_ms;
-        } else {
-            self.audio_ms.push((name.into(), audio_ms));
-        }
+        *self.audio_ms.entry(EngineName::from(name)).or_default() += audio_ms;
     }
 
     fn transcribe_span(
@@ -256,6 +329,7 @@ impl<'a> EngineChain<'a> {
                     }
                     Err(EngineError::Cancelled) => return Err(ProcessingError::Cancelled),
                     Err(EngineError::Offline) if self.background_local_allowed.is_some() => {
+                        log_event(LogEvent::engine_failure(&name, &EngineError::Offline));
                         self.offline = true;
                         return Err(ProcessingError::Offline);
                     }
@@ -271,18 +345,28 @@ impl<'a> EngineChain<'a> {
                         }
                     }
                     Err(error) => {
-                        if error == EngineError::Other && other_retries == 0 {
+                        if matches!(
+                            error,
+                            EngineError::Other
+                                | EngineError::InvalidResponse
+                                | EngineError::HttpStatus(_)
+                                | EngineError::Transport
+                        ) && other_retries == 0
+                        {
                             other_retries += 1;
                             continue;
                         }
+                        log_event(LogEvent::engine_failure(&name, &error));
+                        let engine_name = EngineName::from(name.as_str());
                         let reason = match error {
-                            EngineError::QuotaExhausted => "daily limit reached",
-                            EngineError::Unauthorized => "API key rejected",
-                            EngineError::Offline => "unavailable",
-                            EngineError::RateLimited { .. } => "rate limit reached",
-                            _ => "transcription failed",
+                            EngineError::QuotaExhausted => FallbackReason::Quota(engine_name),
+                            EngineError::Unauthorized => FallbackReason::Unauthorized(engine_name),
+                            EngineError::Offline => FallbackReason::Offline(engine_name),
+                            EngineError::RateLimited { .. } => {
+                                FallbackReason::RateLimit(engine_name)
+                            }
+                            _ => FallbackReason::Other(engine_name),
                         };
-                        let reason = format!("{name} {reason}");
                         if matches!(
                             error,
                             EngineError::QuotaExhausted
@@ -321,12 +405,6 @@ impl<'a> EngineChain<'a> {
 }
 
 impl SpeechEngine for EngineChain<'_> {
-    fn is_offline(&self) -> bool {
-        self.offline
-    }
-    fn is_deferred(&self) -> bool {
-        self.deferred
-    }
     fn backend(&self) -> &str {
         self.local
             .as_ref()
@@ -350,26 +428,6 @@ impl SpeechEngine for EngineChain<'_> {
             .as_ref()
             .and_then(|engine| engine.audio_after_vad_ms())
     }
-    fn engines_used(&self) -> Vec<String> {
-        self.used.clone()
-    }
-    fn fallback_reason(&self) -> Option<&str> {
-        self.fallback.as_deref()
-    }
-    fn engine_audio_ms(&self) -> Option<(u64, u64, u64)> {
-        (!self.cloud.is_empty()).then(|| {
-            self.audio_ms
-                .iter()
-                .fold((0, 0, 0), |mut totals, (name, audio)| {
-                    match name.as_str() {
-                        "Groq" => totals.0 += audio,
-                        "Gemini" => totals.1 += audio,
-                        _ => totals.2 += audio,
-                    }
-                    totals
-                })
-        })
-    }
     fn has_speech(&mut self, samples: &[f32]) -> bool {
         if self.cloud.is_empty() {
             return self.local().map_or_else(
@@ -379,10 +437,7 @@ impl SpeechEngine for EngineChain<'_> {
         }
         samples.iter().any(|sample| sample.abs() > 0.01)
     }
-    fn detect_language(&mut self, samples: &[f32]) -> Result<Language, String> {
-        self.detect_language_with_cancel(samples, &AtomicBool::new(false))
-    }
-    fn detect_language_with_cancel(
+    fn detect_language(
         &mut self,
         samples: &[f32],
         cancel: &AtomicBool,
@@ -398,10 +453,15 @@ impl SpeechEngine for EngineChain<'_> {
                 Ok(None) => continue,
                 Err(EngineError::Cancelled) => return Err("Processing cancelled".into()),
                 Err(EngineError::Offline) if self.background_local_allowed.is_some() => {
+                    log_event(LogEvent::engine_failure(
+                        engine.name(),
+                        &EngineError::Offline,
+                    ));
                     self.offline = true;
                     return Err("Provider unavailable".into());
                 }
                 Err(error) => {
+                    log_event(LogEvent::engine_failure(engine.name(), &error));
                     if matches!(
                         error,
                         EngineError::QuotaExhausted
@@ -409,20 +469,20 @@ impl SpeechEngine for EngineChain<'_> {
                             | EngineError::Offline
                     ) {
                         self.unavailable[index] = true;
+                        let name = EngineName::from(engine.name());
                         let reason = match error {
-                            EngineError::QuotaExhausted => "daily limit reached",
-                            EngineError::Unauthorized => "API key rejected",
-                            _ => "unavailable",
+                            EngineError::QuotaExhausted => FallbackReason::Quota(name),
+                            EngineError::Unauthorized => FallbackReason::Unauthorized(name),
+                            _ => FallbackReason::Offline(name),
                         };
-                        self.fallback
-                            .get_or_insert_with(|| format!("{} {reason}", engine.name()));
+                        self.fallback.get_or_insert(reason);
                     }
                 }
             }
         }
         self.local()
             .map_err(|error| error.to_string())?
-            .detect_language(samples)
+            .detect_language(samples, cancel)
     }
     fn transcribe(
         &mut self,
@@ -450,12 +510,12 @@ impl SpeechEngine for EngineChain<'_> {
             let end = span.end;
             let mut segments = self.transcribe_span(&samples[span], language, prompt, cancel)?;
             for segment in &mut segments {
-                segment.start_ms += offset;
-                segment.end_ms += offset;
-                for word in &mut segment.words {
-                    word.start_ms += offset;
-                    word.end_ms += offset;
-                }
+                shift_segment_times(
+                    &mut segment.start_ms,
+                    &mut segment.end_ms,
+                    &mut segment.words,
+                    offset,
+                );
             }
             all.extend(segments);
             progress(end as f32 / samples.len().max(1) as f32);
@@ -725,12 +785,12 @@ fn shifted(segments: &[PlacedSegment], timeline_start_ms: u64) -> Vec<PlacedSegm
         .iter()
         .cloned()
         .map(|mut segment| {
-            segment.start_ms += timeline_start_ms;
-            segment.end_ms += timeline_start_ms;
-            for word in &mut segment.words {
-                word.start_ms += timeline_start_ms;
-                word.end_ms += timeline_start_ms;
-            }
+            shift_segment_times(
+                &mut segment.start_ms,
+                &mut segment.end_ms,
+                &mut segment.words,
+                timeline_start_ms,
+            );
             segment
         })
         .collect()
@@ -738,7 +798,7 @@ fn shifted(segments: &[PlacedSegment], timeline_start_ms: u64) -> Vec<PlacedSegm
 
 pub fn transcribe_meeting(
     request: &TranscribeRequest,
-    engine: &mut dyn SpeechEngine,
+    engine: &mut EngineChain<'_>,
     progress: &mut dyn FnMut(f32),
     cancel: &AtomicBool,
 ) -> Result<Transcript, ProcessingError> {
@@ -747,7 +807,7 @@ pub fn transcribe_meeting(
 
 pub fn transcribe_meeting_named(
     request: &TranscribeRequest,
-    engine: &mut dyn SpeechEngine,
+    engine: &mut EngineChain<'_>,
     progress: &mut dyn FnMut(f32),
     cancel: &AtomicBool,
     your_name: Option<&str>,
@@ -768,7 +828,7 @@ pub fn transcribe_meeting_named(
 
 pub fn transcribe_meeting_named_with_draft(
     request: &TranscribeRequest,
-    engine: &mut dyn SpeechEngine,
+    engine: &mut EngineChain<'_>,
     progress: &mut dyn FnMut(f32),
     cancel: &AtomicBool,
     your_name: Option<&str>,
@@ -781,7 +841,7 @@ pub fn transcribe_meeting_named_with_draft(
 /// (ADR 0010): their Segments are shown as the Draft at once, and only later audio is transcribed.
 pub fn transcribe_meeting_resuming(
     request: &TranscribeRequest,
-    engine: &mut dyn SpeechEngine,
+    engine: &mut EngineChain<'_>,
     progress: &mut dyn FnMut(f32),
     cancel: &AtomicBool,
     your_name: Option<&str>,
@@ -816,7 +876,7 @@ pub struct TranscriptionContext<'a> {
 
 pub fn transcribe_meeting_resuming_with_correction(
     request: &TranscribeRequest,
-    engine: &mut dyn SpeechEngine,
+    engine: &mut EngineChain<'_>,
     progress: &mut dyn FnMut(f32),
     cancel: &AtomicBool,
     your_name: Option<&str>,
@@ -836,7 +896,7 @@ pub fn transcribe_meeting_resuming_with_correction(
 
 fn transcribe_meeting_with_draft(
     request: &TranscribeRequest,
-    engine: &mut dyn SpeechEngine,
+    engine: &mut EngineChain<'_>,
     progress: &mut dyn FnMut(f32),
     cancel: &AtomicBool,
     your_name: Option<&str>,
@@ -889,7 +949,7 @@ struct Resume<'a, 'd> {
 
 fn transcribe_meeting_inner(
     request: &TranscribeRequest,
-    engine: &mut dyn SpeechEngine,
+    engine: &mut EngineChain<'_>,
     progress: &mut dyn FnMut(f32),
     cancel: &AtomicBool,
     resume: Resume<'_, '_>,
@@ -972,19 +1032,17 @@ fn transcribe_meeting_inner(
                 .iter()
                 .find(|stream| engine.has_speech(&stream.samples_16k))
             {
-                language = Some(
-                    match engine.detect_language_with_cancel(&stream.samples_16k, cancel) {
-                        Ok(language) => language,
-                        Err(error) => {
-                            telemetry.whisper += whisper_started.elapsed();
-                            return Err(if cancel.load(Ordering::SeqCst) {
-                                ProcessingError::Cancelled
-                            } else {
-                                ProcessingError::Engine(error)
-                            });
-                        }
-                    },
-                );
+                language = Some(match engine.detect_language(&stream.samples_16k, cancel) {
+                    Ok(language) => language,
+                    Err(error) => {
+                        telemetry.whisper += whisper_started.elapsed();
+                        return Err(if cancel.load(Ordering::SeqCst) {
+                            ProcessingError::Cancelled
+                        } else {
+                            ProcessingError::Engine(error)
+                        });
+                    }
+                });
             }
         }
         let group_ms: u64 = prepared
@@ -1115,7 +1173,7 @@ fn transcribe_meeting_inner(
         created_at: chrono::Local::now().to_rfc3339(),
         model: {
             let mut used = Vec::new();
-            let processing_used = engine.engines_used();
+            let processing_used = engine.chain_report().engines_used;
             for name in background
                 .iter()
                 .flat_map(|cache| cache.engines_used.iter())
@@ -1127,7 +1185,7 @@ fn transcribe_meeting_inner(
             }
             if cached_local
                 && background.iter().any(|cache| cache.engines_used.is_empty())
-                && !used.iter().any(|name| name == request.model)
+                && !used.iter().any(|name| name.label() == request.model)
             {
                 used.insert(0, request.model.into());
             }
@@ -1140,7 +1198,7 @@ fn transcribe_meeting_inner(
         fallback_reason: background
             .iter()
             .find_map(|cache| cache.fallback_reason.clone())
-            .or_else(|| engine.fallback_reason().map(str::to_owned)),
+            .or_else(|| engine.chain_report().fallback_reason),
         language: language.unwrap_or(Language::En),
         language_detected: detected && language.is_some(),
         duration_ms: metadata.duration_ms,
@@ -1193,9 +1251,10 @@ fn transcribe_meeting_inner(
                 });
             }
             Err(_) if cancel.load(Ordering::SeqCst) => return Err(ProcessingError::Cancelled),
-            Err(_) => {
+            Err(error) => {
                 correction_notice =
                     Some("Correction was unavailable; this Revision has uncorrected text.");
+                log_event(LogEvent::correction_failure(&error));
                 log_event(LogEvent::CorrectionResult {
                     outcome: "failed",
                     changed_segments: 0,
@@ -1328,23 +1387,38 @@ fn transcribe_meeting_inner(
         preparation_wall_time,
         whisper_wall_time,
     ));
-    let cached_audio = background
+    let engine_audio = engine.chain_report().engine_audio_ms;
+    let mut audio_totals = engine_audio.clone().unwrap_or_default();
+    for (name, duration) in background
         .iter()
-        .filter_map(|cache| cache.engine_audio_ms)
-        .fold((0, 0, 0), |totals, audio| {
-            (totals.0 + audio.0, totals.1 + audio.1, totals.2 + audio.2)
-        });
-    if engine.engine_audio_ms().is_some()
+        .filter_map(|cache| cache.engine_audio_ms.as_ref())
+        .flat_map(|usage| usage.iter())
+    {
+        *audio_totals.entry(name.clone()).or_default() += duration;
+    }
+    if engine_audio.is_some()
         || background
             .iter()
             .any(|cache| cache.engine_audio_ms.is_some())
     {
-        let (groq_ms, gemini_ms, local_ms) = engine.engine_audio_ms().unwrap_or((0, 0, 0));
+        let groq_ms = audio_totals
+            .get(&EngineName::Groq)
+            .copied()
+            .unwrap_or_default();
+        let gemini_ms = audio_totals
+            .get(&EngineName::Gemini)
+            .copied()
+            .unwrap_or_default();
+        let local_ms = audio_totals
+            .iter()
+            .filter(|(name, _)| matches!(name, EngineName::Local(_)))
+            .map(|(_, duration)| duration)
+            .sum();
         log_event(LogEvent::engine_usage(
-            groq_ms + cached_audio.0,
-            gemini_ms + cached_audio.1,
-            local_ms + cached_audio.2,
-            transcript.fallback_reason.as_deref(),
+            groq_ms,
+            gemini_ms,
+            local_ms,
+            transcript.fallback_reason.as_ref(),
         ));
     }
     Ok(transcript)

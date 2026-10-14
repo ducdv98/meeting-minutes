@@ -17,6 +17,9 @@ pub enum EngineError {
     Unauthorized,
     Offline,
     Cancelled,
+    InvalidResponse,
+    HttpStatus(u16),
+    Transport,
     Other,
 }
 impl fmt::Display for EngineError {
@@ -27,8 +30,26 @@ impl fmt::Display for EngineError {
             Self::Unauthorized => "API key rejected",
             Self::Offline => "Provider unavailable",
             Self::Cancelled => "Processing cancelled",
+            Self::InvalidResponse => "Invalid provider response",
+            Self::HttpStatus(_) => "Provider HTTP error",
+            Self::Transport => "Provider transport error",
             Self::Other => "Transcription failed",
         })
+    }
+}
+impl EngineError {
+    pub fn diagnostic_kind(&self) -> &'static str {
+        match self {
+            Self::RateLimited { .. } => "rate_limit",
+            Self::QuotaExhausted => "quota",
+            Self::Unauthorized => "unauthorized",
+            Self::Offline => "offline",
+            Self::Cancelled => "cancelled",
+            Self::InvalidResponse => "invalid_response",
+            Self::HttpStatus(_) => "http_status",
+            Self::Transport => "transport",
+            Self::Other => "other",
+        }
     }
 }
 impl std::error::Error for EngineError {}

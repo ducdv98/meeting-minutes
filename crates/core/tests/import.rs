@@ -182,6 +182,7 @@ impl meeting_minutes_core::processing::SpeechEngine for FakeEngine {
     fn detect_language(
         &mut self,
         _: &[f32],
+        _: &AtomicBool,
     ) -> Result<meeting_minutes_core::transcript::Language, String> {
         Ok(meeting_minutes_core::transcript::Language::En)
     }
@@ -207,7 +208,7 @@ impl meeting_minutes_core::processing::SpeechEngine for FakeEngine {
 
 #[test]
 fn imported_audio_transcribes_with_unknown_speaker() {
-    use meeting_minutes_core::processing::{transcribe_meeting, TranscribeRequest};
+    use meeting_minutes_core::processing::{transcribe_meeting, EngineChain, TranscribeRequest};
     use meeting_minutes_core::transcript::Speaker;
     let temp = TempDir::new().unwrap();
     let source = temp.path().join("Sound.wav");
@@ -229,7 +230,7 @@ fn imported_audio_transcribes_with_unknown_speaker() {
             vocabulary: &[],
             default_language: None,
         },
-        &mut FakeEngine,
+        &mut EngineChain::borrow_local("small", &mut FakeEngine),
         &mut |_| {},
         &AtomicBool::new(false),
     )

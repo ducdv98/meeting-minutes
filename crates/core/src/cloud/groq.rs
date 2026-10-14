@@ -1,8 +1,7 @@
 use crate::{
-    ai::{AiError, ApiKey, HttpBody, HttpClient, HttpRequest, HttpResponse, Method, UreqClient},
+    ai::{AiError, ApiKey, HttpBody, HttpClient, HttpRequest, HttpResponse, Method},
     cloud::{encode_flac, CloudEngine},
-    processing::{ProcessingError, SpeechEngine},
-    transcript::{Language, RawSegment, RawWord},
+    transcript::{shift_segment_times, Language, RawSegment, RawWord},
 };
 use serde_json::Value;
 use std::{
@@ -76,12 +75,12 @@ impl GroqEngine {
             let (mut segments, found) = self.upload(piece, language, vocabulary, cancel)?;
             detected = detected.or(found);
             for segment in &mut segments {
-                segment.start_ms += offset_ms;
-                segment.end_ms += offset_ms;
-                for word in &mut segment.words {
-                    word.start_ms += offset_ms;
-                    word.end_ms += offset_ms;
-                }
+                shift_segment_times(
+                    &mut segment.start_ms,
+                    &mut segment.end_ms,
+                    &mut segment.words,
+                    offset_ms,
+                );
             }
             all.extend(segments);
         }
@@ -110,12 +109,12 @@ impl GroqEngine {
                 self.upload(&samples[half..], language, vocabulary, cancel)?;
             let offset = half as u64 * 1000 / 16_000;
             for segment in &mut second {
-                segment.start_ms += offset;
-                segment.end_ms += offset;
-                for word in &mut segment.words {
-                    word.start_ms += offset;
-                    word.end_ms += offset;
-                }
+                shift_segment_times(
+                    &mut segment.start_ms,
+                    &mut segment.end_ms,
+                    &mut segment.words,
+                    offset,
+                );
             }
             first.extend(second);
             return Ok((first, first_lang.or(second_lang)));
@@ -140,6 +139,8 @@ impl GroqEngine {
         .map_err(|error| match error {
             AiError::Unreachable(_) => EngineError::Offline,
             AiError::Cancelled => EngineError::Cancelled,
+            AiError::Io(_) => EngineError::Transport,
+            AiError::Http { status, .. } => EngineError::HttpStatus(status),
             _ => EngineError::Other,
         })?;
         if !(200..300).contains(&response.status) {
@@ -156,7 +157,7 @@ impl GroqEngine {
                 .body
                 .take(64 * 1024)
                 .read_to_string(&mut raw)
-                .map_err(|_| EngineError::Other)?;
+                .map_err(|_| EngineError::Transport)?;
             let value: Value = serde_json::from_str(&raw).unwrap_or(Value::Null);
             let message = value
                 .pointer("/error/message")
@@ -176,20 +177,22 @@ impl GroqEngine {
                 429 => EngineError::RateLimited {
                     retry_after: Duration::from_secs(retry_after.unwrap_or(60)),
                 },
-                _ => EngineError::Other,
+                _ => EngineError::HttpStatus(status),
             });
         }
         if cancel.load(Ordering::SeqCst) {
             return Err(EngineError::Cancelled);
         }
         let value: Value =
-            serde_json::from_reader(response.body).map_err(|_| EngineError::Other)?;
+            serde_json::from_reader(response.body).map_err(|_| EngineError::InvalidResponse)?;
         let found = value["language"].as_str().and_then(language_from_groq);
         let top_words = value["words"]
             .as_array()
             .map(|words| words.iter().map(parse_word).collect::<Result<Vec<_>, _>>())
             .transpose()?;
-        let segments = value["segments"].as_array().ok_or(EngineError::Other)?;
+        let segments = value["segments"]
+            .as_array()
+            .ok_or(EngineError::InvalidResponse)?;
         let segments = segments
             .iter()
             .map(|segment| {
@@ -214,7 +217,10 @@ impl GroqEngine {
                 Ok(RawSegment {
                     start_ms,
                     end_ms,
-                    text: segment["text"].as_str().ok_or(EngineError::Other)?.into(),
+                    text: segment["text"]
+                        .as_str()
+                        .ok_or(EngineError::InvalidResponse)?
+                        .into(),
                     words,
                 })
             })
@@ -254,42 +260,6 @@ fn send_cancellable(
     }
 }
 
-impl SpeechEngine for GroqEngine {
-    fn backend(&self) -> &str {
-        "Groq"
-    }
-    fn thread_count(&self) -> usize {
-        0
-    }
-    fn device(&self) -> Option<&str> {
-        Some(MODEL)
-    }
-    fn detect_language(&mut self, samples_16k: &[f32]) -> Result<Language, String> {
-        let opening = &samples_16k[..samples_16k.len().min(30 * 16_000)];
-        let (_, language) = self
-            .transcribe_with_language(opening, None, None, &AtomicBool::new(false))
-            .map_err(|error| error.to_string())?;
-        language.ok_or_else(|| "Groq did not return a supported Meeting language".into())
-    }
-    fn transcribe(
-        &mut self,
-        samples_16k: &[f32],
-        language: Language,
-        initial_prompt: Option<&str>,
-        progress: &mut dyn FnMut(f32),
-        cancel: &AtomicBool,
-    ) -> Result<Vec<RawSegment>, ProcessingError> {
-        let result = self
-            .transcribe_typed(samples_16k, Some(language), initial_prompt, cancel)
-            .map_err(|error| match error {
-                EngineError::Cancelled => ProcessingError::Cancelled,
-                _ => ProcessingError::Engine(error.to_string()),
-            })?;
-        progress(1.0);
-        Ok(result)
-    }
-}
-
 impl CloudEngine for GroqEngine {
     fn name(&self) -> &str {
         "Groq"
@@ -323,9 +293,9 @@ fn language_from_groq(code: &str) -> Option<Language> {
 }
 
 fn millis(value: &Value) -> Result<u64, EngineError> {
-    let seconds = value.as_f64().ok_or(EngineError::Other)?;
+    let seconds = value.as_f64().ok_or(EngineError::InvalidResponse)?;
     if !seconds.is_finite() || seconds < 0.0 {
-        return Err(EngineError::Other);
+        return Err(EngineError::InvalidResponse);
     }
     Ok((seconds * 1000.0).round() as u64)
 }
@@ -334,7 +304,10 @@ fn parse_word(word: &Value) -> Result<RawWord, EngineError> {
     Ok(RawWord {
         start_ms: millis(&word["start"])?,
         end_ms: millis(&word["end"])?,
-        text: word["word"].as_str().ok_or(EngineError::Other)?.into(),
+        text: word["word"]
+            .as_str()
+            .ok_or(EngineError::InvalidResponse)?
+            .into(),
     })
 }
 
@@ -390,10 +363,6 @@ fn trim_prompt(prompt: &str) -> String {
     }
     kept.reverse();
     kept.join(", ")
-}
-
-pub fn with_default_http(key: ApiKey) -> GroqEngine {
-    GroqEngine::new(Arc::new(UreqClient), key)
 }
 
 #[cfg(test)]

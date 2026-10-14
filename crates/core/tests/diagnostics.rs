@@ -1,10 +1,45 @@
 use meeting_minutes_core::ai::{AiError, ProviderKind};
 use meeting_minutes_core::ask::AnswerState;
+use meeting_minutes_core::cloud::EngineError;
 use meeting_minutes_core::diagnostics::{
     build_diagnostics, DiagnosticsInput, LogEvent, TranscriptionEnvironment,
 };
 use meeting_minutes_core::processing::{PowerState, ProcessingError, ProcessingStage};
+use meeting_minutes_core::transcript::{EngineName, FallbackReason};
 use std::time::Duration;
+
+#[test]
+fn diagnostics_count_failure_kinds_without_provider_content() {
+    let engine = LogEvent::engine_failure("Groq", &EngineError::InvalidResponse);
+    let correction =
+        LogEvent::correction_failure(&AiError::InvalidOutput("private Meeting text".into()));
+    assert_eq!(
+        engine.to_string(),
+        "engine_failure engine=groq kind=invalid_response"
+    );
+    assert_eq!(
+        correction.to_string(),
+        "correction_failure kind=invalid_output"
+    );
+    let report = build_diagnostics(&DiagnosticsInput {
+        version: "0.1.0".into(),
+        windows_version: "Windows".into(),
+        cpu: "CPU".into(),
+        ram_mb: 1024,
+        audio_devices: Ok(vec![]),
+        selected_model: None,
+        provider: None,
+        whisper_system_info: None,
+        transcription_backend: None,
+        recent_log_lines: [engine, correction]
+            .iter()
+            .map(|event| format!("[2026-10-13][10:47:02][meeting_minutes_events][INFO] {event}"))
+            .collect(),
+    });
+    assert!(report.contains("engine_failure engine=groq kind=invalid_response"));
+    assert!(report.contains("correction_failure kind=invalid_output"));
+    assert!(!report.contains("private Meeting text"));
+}
 
 #[test]
 fn diagnostics_keeps_cloud_audio_time_and_fallback_without_content() {
@@ -12,7 +47,7 @@ fn diagnostics_keeps_cloud_audio_time_and_fallback_without_content() {
         "Groq",
         30_000,
         Duration::from_millis(420),
-        Some("Groq daily limit reached"),
+        Some(&FallbackReason::Quota(EngineName::Groq)),
     );
     assert_eq!(
         event.to_string(),
@@ -36,17 +71,25 @@ fn diagnostics_keeps_cloud_audio_time_and_fallback_without_content() {
         report.contains("cloud_span engine=groq audio_ms=30000 round_trip_ms=420 fallback=quota")
     );
     assert!(!report.contains("private words"));
-    assert!(
-        !LogEvent::cloud_span("Groq", 0, Duration::ZERO, Some("private words"))
-            .to_string()
-            .contains("private words")
-    );
+    assert!(!LogEvent::cloud_span(
+        "Groq",
+        0,
+        Duration::ZERO,
+        Some(&FallbackReason::Legacy("private words".into()))
+    )
+    .to_string()
+    .contains("private words"));
 }
 
 #[test]
 fn diagnostics_keeps_engine_totals_after_many_spans() {
     let span = LogEvent::cloud_span("Groq", 30_000, Duration::from_millis(420), None);
-    let summary = LogEvent::engine_usage(2_400_000, 0, 1_200_000, Some("Groq daily limit reached"));
+    let summary = LogEvent::engine_usage(
+        2_400_000,
+        0,
+        1_200_000,
+        Some(&FallbackReason::Quota(EngineName::Groq)),
+    );
     let mut lines =
         vec![format!("[2026-10-13][10:47:02][meeting_minutes_events][INFO] {span}"); 120];
     lines.push(format!(

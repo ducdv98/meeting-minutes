@@ -8,7 +8,7 @@ use meeting_minutes_core::{
         TranscribeRequest,
     },
     recording::ChunkWriter,
-    transcript::{Language, RawSegment, RawWord, Speaker},
+    transcript::{EngineName, Language, RawSegment, RawWord, Speaker},
     Library,
 };
 use std::{
@@ -77,7 +77,7 @@ impl SpeechEngine for Local {
     fn thread_count(&self) -> usize {
         1
     }
-    fn detect_language(&mut self, _: &[f32]) -> Result<Language, String> {
+    fn detect_language(&mut self, _: &[f32], _: &AtomicBool) -> Result<Language, String> {
         Ok(Language::En)
     }
     fn transcribe(
@@ -223,6 +223,59 @@ fn offline_during_meeting_language_detection_also_resumes() {
 }
 
 #[test]
+fn stop_during_language_detection_ends_like_stop_during_span_transcription() {
+    struct StopCloud(Arc<AtomicBool>);
+    impl CloudEngine for StopCloud {
+        fn name(&self) -> &str {
+            "Groq"
+        }
+        fn transcribe_span(
+            &mut self,
+            _: &[f32],
+            _: Language,
+            _: Option<&str>,
+            _: &AtomicBool,
+        ) -> Result<Vec<RawSegment>, EngineError> {
+            self.0.store(true, Ordering::SeqCst);
+            Err(EngineError::Cancelled)
+        }
+        fn detect_language(
+            &mut self,
+            _: &[f32],
+            _: &AtomicBool,
+        ) -> Result<Option<Language>, EngineError> {
+            self.0.store(true, Ordering::SeqCst);
+            Err(EngineError::Cancelled)
+        }
+    }
+    for language in [None, Some(Language::En)] {
+        let stop = Arc::new(AtomicBool::new(false));
+        let mut transcriber = BackgroundTranscriber::new(1, "small", language, None);
+        transcriber.push(Source::Microphone, &vec![0.1; 35 * 48_000]);
+        let mut engine = Some(EngineChain::new(
+            vec![Box::new(StopCloud(stop.clone()))],
+            "small",
+            Box::new(|| Ok(Box::new(Local))),
+        ));
+        let directory = tempfile::tempdir().unwrap();
+        let result = background::run(
+            &mut transcriber,
+            &mut || engine.take(),
+            directory.path(),
+            BackgroundControl {
+                stop: &stop,
+                allowed: &mut || true,
+                now: &mut || Duration::ZERO,
+                wait: &mut || {},
+            },
+            &mut |_| {},
+        );
+        assert!(result.is_ok(), "stop during {language:?}: {result:?}");
+        assert_eq!(transcriber.finish().sources[0].committed_ms, 0);
+    }
+}
+
+#[test]
 fn stop_reuses_cloud_segments_and_transcribes_only_the_remainder() {
     let temp = tempfile::tempdir().unwrap();
     let mut library = Library::open(
@@ -289,7 +342,7 @@ fn stop_reuses_cloud_segments_and_transcribes_only_the_remainder() {
     )
     .unwrap();
     assert!(!transcript.segments.is_empty());
-    assert_eq!(transcript.model, vec!["Groq"]);
+    assert_eq!(transcript.model, vec![EngineName::Groq]);
     let after_stop_samples = samples.load(Ordering::SeqCst);
     assert!(after_stop_samples >= 68 * 16_000, "{after_stop_samples}");
     assert!(after_stop_samples <= 72 * 16_000, "{after_stop_samples}");

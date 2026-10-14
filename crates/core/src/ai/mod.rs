@@ -35,6 +35,9 @@ pub enum ProviderKind {
     Gemini,
 }
 impl ProviderKind {
+    pub fn supports_text(self) -> bool {
+        self != Self::Groq
+    }
     pub fn is_cloud(self) -> bool {
         self != Self::Ollama
     }
@@ -141,6 +144,27 @@ impl fmt::Display for AiError {
             Self::Unsupported(message) => f.write_str(message),
             Self::Cancelled => f.write_str("Cancelled"),
             Self::Io(error) => write!(f, "AI I/O error: {error}"),
+        }
+    }
+}
+impl AiError {
+    pub fn unsupported_for_text(kind: ProviderKind) -> Self {
+        Self::Unsupported(format!(
+            "{} is not supported for Summary or Ask yet",
+            kind.label()
+        ))
+    }
+    pub fn diagnostic_kind(&self) -> &'static str {
+        match self {
+            Self::MissingKey(_) | Self::KeyStore(_) => "key_store",
+            Self::Unreachable(_) | Self::Io(_) => "transport",
+            Self::Auth(_) => "unauthorized",
+            Self::GeminiLimit => "quota",
+            Self::RateLimited { .. } => "rate_limit",
+            Self::Http { .. } => "http_status",
+            Self::InvalidOutput(_) => "invalid_output",
+            Self::Cancelled => "cancelled",
+            _ => "other",
         }
     }
 }
@@ -277,11 +301,8 @@ pub fn configured_provider(
     http: Arc<dyn HttpClient>,
 ) -> Result<HttpProvider, AiError> {
     let kind = settings.provider.ok_or(AiError::NotConfigured)?;
-    if kind == ProviderKind::Groq {
-        return Err(AiError::Unsupported(format!(
-            "{} is not supported for Summary or Ask yet",
-            kind.label()
-        )));
+    if !kind.supports_text() {
+        return Err(AiError::unsupported_for_text(kind));
     }
     let model = settings
         .model_for(kind)
@@ -302,12 +323,7 @@ pub fn configured_provider(
         ProviderKind::Openai => HttpProvider::openai(http, model, key.expect("cloud key")),
         ProviderKind::Anthropic => HttpProvider::anthropic(http, model, key.expect("cloud key")),
         ProviderKind::Gemini => HttpProvider::gemini(http, model, key.expect("cloud key")),
-        ProviderKind::Groq => {
-            return Err(AiError::Unsupported(format!(
-                "{} is not supported for Summary or Ask yet",
-                kind.label()
-            )))
-        }
+        ProviderKind::Groq => unreachable!("text capability was checked"),
     })
 }
 
@@ -326,7 +342,7 @@ pub fn correction_provider(
     let model = settings
         .model_for(ProviderKind::Gemini)
         .filter(|model| !model.trim().is_empty())
-        .unwrap_or("gemini-2.5-flash");
+        .unwrap_or(crate::settings::DEFAULT_GEMINI_MODEL);
     Ok(Some(HttpProvider::gemini(http, model, key)))
 }
 #[derive(Clone, Debug, PartialEq, Serialize)]

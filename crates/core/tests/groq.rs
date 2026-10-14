@@ -1,7 +1,9 @@
 use meeting_minutes_core::{
     ai::{AiError, ApiKey, HttpClient, HttpRequest, HttpResponse},
-    cloud::groq::{EngineError, GroqEngine},
-    processing::SpeechEngine,
+    cloud::{
+        groq::{EngineError, GroqEngine},
+        CloudEngine,
+    },
     transcript::Language,
 };
 use std::{
@@ -86,8 +88,6 @@ fn sends_meeting_language_vocabulary_and_maps_word_times() {
     assert_eq!(segments[0].end_ms, 1500);
     assert_eq!(segments[0].words[1].start_ms, 700);
     assert_eq!(segments[0].words[1].text, " world.");
-    assert_eq!(engine.backend(), "Groq");
-    assert_eq!(engine.device(), Some("whisper-large-v3"));
 }
 
 #[test]
@@ -132,7 +132,7 @@ fn classifies_auth_offline_and_other_errors() {
     for (status, expected) in [
         (401, EngineError::Unauthorized),
         (403, EngineError::Unauthorized),
-        (500, EngineError::Other),
+        (500, EngineError::HttpStatus(500)),
     ] {
         let http = FakeHttp::reply(status, &[], "{}");
         let engine = GroqEngine::with_boundary(http, ApiKey::new("secret").unwrap(), "test");
@@ -164,6 +164,26 @@ fn classifies_auth_offline_and_other_errors() {
             .unwrap_err(),
         EngineError::Offline
     );
+}
+
+#[test]
+fn malformed_provider_response_keeps_a_safe_error_kind() {
+    let http = FakeHttp::reply(
+        200,
+        &[],
+        r#"{"segments":[{"text":"private Meeting text"}]}"#,
+    );
+    let engine = GroqEngine::with_boundary(http, ApiKey::new("secret").unwrap(), "test");
+    let error = engine
+        .transcribe_typed(
+            &[0.1; 160],
+            Some(Language::En),
+            None,
+            &AtomicBool::new(false),
+        )
+        .unwrap_err();
+    assert_eq!(error, EngineError::InvalidResponse);
+    assert!(!error.to_string().contains("private Meeting text"));
 }
 
 #[test]
@@ -224,7 +244,12 @@ fn detects_meeting_language_without_sending_language_field() {
     let http = FakeHttp::reply(200, &[], r#"{"language":"vietnamese","segments":[]}"#);
     let mut engine =
         GroqEngine::with_boundary(http.clone(), ApiKey::new("secret").unwrap(), "test");
-    assert_eq!(engine.detect_language(&[0.1; 160]).unwrap(), Language::Vi);
+    assert_eq!(
+        engine
+            .detect_language(&[0.1; 160], &AtomicBool::new(false))
+            .unwrap(),
+        Some(Language::Vi)
+    );
     let request = http.request.lock().unwrap().take().unwrap();
     assert!(
         !String::from_utf8_lossy(request.body.unwrap().multipart_bytes().unwrap())
@@ -276,7 +301,7 @@ fn transcribes_live_fleurs_clip() {
         .samples()
         .map(|sample| sample.unwrap() as f32 / 32768.0)
         .collect();
-    let engine = meeting_minutes_core::cloud::groq::with_default_http(key);
+    let engine = GroqEngine::new(Arc::new(meeting_minutes_core::ai::UreqClient), key);
     let segments = engine
         .transcribe_typed(&samples, None, None, &AtomicBool::new(false))
         .unwrap();

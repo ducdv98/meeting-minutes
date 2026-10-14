@@ -1268,7 +1268,7 @@ fn meeting_vocabulary(
 fn transcription_chain<'a>(
     app: &AppHandle,
     model: &str,
-    local: Box<dyn FnMut() -> Result<Box<dyn SpeechEngine>, processing::ProcessingError> + 'a>,
+    local: Box<dyn FnMut() -> Result<Box<dyn SpeechEngine + 'a>, processing::ProcessingError> + 'a>,
 ) -> Result<processing::EngineChain<'a>, processing::ProcessingError> {
     let mut cloud: Vec<Box<dyn CloudEngine>> = Vec::new();
     let settings = Settings::load(&app.state::<SettingsPath>().0);
@@ -1280,7 +1280,7 @@ fn transcription_chain<'a>(
         cloud.push(Box::new(GroqEngine::new(app.state::<Http>().0.clone(), key)));
     }
     if let Some(key) = app.state::<Secrets>().0.get(ProviderKind::Gemini).map_err(processing::ProcessingError::Engine)? {
-        let gemini_model = settings.ai.model_for(ProviderKind::Gemini).unwrap_or("gemini-2.5-flash");
+        let gemini_model = settings.ai.model_for(ProviderKind::Gemini).expect("Gemini always has a default model");
         cloud.push(Box::new(GeminiEngine::new(app.state::<Http>().0.clone(), key, gemini_model)));
     }
     Ok(processing::EngineChain::new(cloud, model, local))
@@ -1294,7 +1294,7 @@ fn start_background(app: &AppHandle) {
     let discrete_gpu = WhisperEngine::discrete_gpu_available();
     let on_ac = processing::PowerState::current() != processing::PowerState::Battery;
     // Cloud availability is learned from Offline errors; the worker retries after its backoff.
-    if background::start_decision(has_groq_key, true, discrete_gpu, on_ac)
+    if background::start_decision(has_groq_key, discrete_gpu, on_ac)
         == background::BackgroundStart::Disabled
     {
         return;
@@ -1372,7 +1372,6 @@ fn start_background(app: &AppHandle) {
                     allowed: &mut || matches!(
                         background::start_decision(
                             has_groq_key,
-                            true,
                             discrete_gpu,
                             processing::PowerState::current() != processing::PowerState::Battery,
                         ),
@@ -1583,7 +1582,10 @@ fn processing_worker(app: AppHandle) {
                 _ if !settings.cloud_notice_acknowledged => processing::CorrectionProvider::Disabled,
                 Ok(Some(provider)) => processing::CorrectionProvider::Ready(provider),
                 Ok(None) => processing::CorrectionProvider::Disabled,
-                Err(_) => processing::CorrectionProvider::Unavailable,
+                Err(error) => {
+                    log_event(LogEvent::correction_failure(error));
+                    processing::CorrectionProvider::Unavailable
+                }
             };
             let mut last = 0u32;
             transcription_started = true;

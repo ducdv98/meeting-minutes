@@ -198,7 +198,7 @@ mod tests {
             ProviderKind::Gemini
         }
         fn model(&self) -> &str {
-            "gemini-2.5-flash"
+            crate::settings::DEFAULT_GEMINI_MODEL
         }
         fn generate(
             &self,

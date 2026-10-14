@@ -5,7 +5,7 @@ use crate::{
     },
     cloud::{encode_flac, CloudEngine, EngineError},
     processing::cloud_span_bounds,
-    transcript::{Language, RawSegment},
+    transcript::{shift_segment_times, Language, RawSegment},
 };
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde::Deserialize;
@@ -86,7 +86,7 @@ impl GeminiEngine {
                 || sentence.start_s > duration_s + 1.0
                 || sentence.end_s > duration_s + 1.0
             {
-                return Err(EngineError::Other);
+                return Err(EngineError::InvalidResponse);
             }
             let start_ms = ((sentence.start_s * 1000.0).round() as u64)
                 .min(duration_ms)
@@ -119,6 +119,11 @@ fn map_error(error: AiError) -> EngineError {
         AiError::Http { status: 429, .. } => EngineError::RateLimited {
             retry_after: Duration::from_secs(60),
         },
+        AiError::Http { status, .. } => EngineError::HttpStatus(status),
+        AiError::Io(_) => EngineError::Transport,
+        AiError::InvalidOutput(_) | AiError::Refused | AiError::Truncated => {
+            EngineError::InvalidResponse
+        }
         _ => EngineError::Other,
     }
 }
@@ -140,8 +145,12 @@ impl CloudEngine for GeminiEngine {
                 self.transcribe_piece(&samples_16k[piece.clone()], language, vocabulary, cancel)?;
             let offset_ms = piece.start as u64 / 16;
             for segment in &mut segments {
-                segment.start_ms += offset_ms;
-                segment.end_ms += offset_ms;
+                shift_segment_times(
+                    &mut segment.start_ms,
+                    &mut segment.end_ms,
+                    &mut segment.words,
+                    offset_ms,
+                );
             }
             result.extend(segments);
         }

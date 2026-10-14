@@ -628,7 +628,11 @@ impl SpeechEngine for WhisperEngine {
         self.audio_after_vad_ms
     }
 
-    fn detect_language(&mut self, samples_16k: &[f32]) -> Result<Language, String> {
+    fn detect_language(
+        &mut self,
+        samples_16k: &[f32],
+        _cancel: &AtomicBool,
+    ) -> Result<Language, String> {
         let mut state = self.context.create_state().map_err(|e| e.to_string())?;
         // Detect from the first speech, so a Meeting that opens with a long pause still detects.
         let opening = &samples_16k[..samples_16k.len().min(LANGUAGE_SCAN_SAMPLES)];
