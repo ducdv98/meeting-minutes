@@ -164,6 +164,7 @@ it("shows a red Recording indicator and opens the Recording card from the sideba
 });
 afterEach(() => {
   cleanup();
+  vi.unstubAllGlobals();
   vi.resetAllMocks();
 });
 
@@ -247,6 +248,11 @@ it("reports malformed folders while listing valid Meetings", async () => {
   expect(await screen.findByText("Planning")).toBeTruthy();
   expect(screen.getByRole("status").textContent).toContain("1 folder could not be read");
   expect(screen.getByRole("status").textContent).toContain("Broken folder: missing meeting.json");
+  const notifications = screen.getByRole("region", { name: "Notifications" });
+  expect(notifications.previousElementSibling?.tagName).toBe("HEADER");
+  expect(within(notifications).getByRole("status").textContent).toContain("Broken folder");
+  fireEvent.click(within(notifications).getByRole("button", { name: "Dismiss unreadable folders" }));
+  expect(screen.queryByRole("region", { name: "Notifications" })).toBeNull();
 });
 
 it("rescans the Library when the Rescan button is clicked", async () => {
@@ -324,4 +330,52 @@ it("groups Meetings, marks the selected row, and opens Settings and Help in the 
   expect(screen.getByRole("button", { name: "Settings" }).getAttribute("aria-current")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Yesterday meeting" }));
   expect(screen.queryByRole("heading", { name: "Help pane" })).toBeNull();
+});
+
+it("uses the same page header for Library, Search, Settings and Help", async () => {
+  vi.mocked(rescanLibrary).mockResolvedValue({ meetings: [], malformed: [] });
+  render(<App />);
+  const headings = ["Library", "Search", "Settings", "Help"];
+  const header = (title: string) => screen.getByRole("heading", { name: title, level: 1 }).closest("header");
+  const headerClass = header(headings[0])?.className;
+  expect(headerClass).toContain("px-7 py-5");
+  fireEvent.focus(screen.getByRole("searchbox", { name: "Search transcripts" }));
+  expect(header(headings[1])?.textContent).toContain("Segment");
+  fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+  expect(header(headings[2])?.textContent).toContain("Meetings");
+  fireEvent.click(screen.getByRole("button", { name: "Help" }));
+  expect(header(headings[3])?.textContent).toContain("diagnostics");
+  expect(header(headings[3])?.className).toBe(headerClass);
+});
+
+it("cross-fades main views with the panel token and skips motion when requested", async () => {
+  vi.mocked(rescanLibrary).mockResolvedValue({ meetings: [], malformed: [] });
+  render(<App />);
+  fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+  const entering = screen.getByRole("heading", { name: "Settings", level: 1 }).closest("header")?.parentElement;
+  expect(entering?.getAttribute("style")).toContain("var(--duration-panel) var(--ease-functional)");
+  expect(entering?.previousElementSibling?.getAttribute("aria-hidden")).toBe("true");
+  expect(entering?.previousElementSibling?.hasAttribute("inert")).toBe(true);
+  await waitFor(() => expect(entering?.previousElementSibling).toBeNull());
+  vi.stubGlobal("matchMedia", () => ({ matches: true }));
+  fireEvent.click(screen.getByRole("button", { name: "Help" }));
+  const reduced = screen.getByRole("heading", { name: "Help", level: 1 }).closest("header")?.parentElement;
+  expect(reduced?.previousElementSibling).toBeNull();
+  expect(reduced?.getAttribute("style")).toContain("opacity: 1");
+});
+
+it("moves a list deletion error into Notifications after the dialog closes", async () => {
+  vi.mocked(rescanLibrary).mockResolvedValue({ meetings: [{ id: "one", title: "Planning", started_at: "2026-10-12T09:00:00Z", duration_ms: 0 }], malformed: [] });
+  vi.mocked(deleteMeeting).mockRejectedValue("Folder is busy");
+  render(<App />);
+  await screen.findByRole("button", { name: "Planning" });
+  openRowMenu("Planning");
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Delete Planning" }));
+  fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Delete" }));
+  await screen.findByRole("alert");
+  fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Cancel" }));
+  const notifications = screen.getByRole("region", { name: "Notifications" });
+  expect(within(notifications).getByRole("alert").textContent).toContain("Folder is busy");
+  fireEvent.click(within(notifications).getByRole("button", { name: "Dismiss delete error" }));
+  expect(screen.queryByRole("region", { name: "Notifications" })).toBeNull();
 });

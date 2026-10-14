@@ -60,7 +60,6 @@ export default function HelpView({ onOpenGuide }: { onOpenGuide?: () => void }) 
   const linkClass = "w-fit rounded-sm text-left text-accent underline-offset-2 hover:underline";
   return <section aria-label="Help" className="min-h-0 flex-1 overflow-y-auto">
     <div className="grid max-w-[680px] gap-8 px-7 pb-12 pt-7">
-      <h2 className="sr-only">Help</h2>
       <section aria-label="About" className="grid gap-5">
         <div className="flex items-center gap-3"><Wordmark className="h-10 w-[210px]" />{info && <Badge variant="beta">{info.channel}</Badge>}</div>
         <dl className="m-0 grid grid-cols-[180px_1fr] gap-x-4 gap-y-2 text-sm tabular-nums">

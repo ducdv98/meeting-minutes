@@ -1,7 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { CircleHelp, Ellipsis, Import, Pencil, Search, Settings, Trash2, RefreshCw } from "lucide-react";
 import { dismissImportErrors, importStatus, onImportHover, onImportStatus, pickAudioFiles, type ImportStatus } from "./importing";
 import { Wordmark } from "./components/Brand";
+import { PageHeader } from "./components/PageHeader";
+import { NotificationArea } from "./components/NotificationArea";
 import { deleteMeeting, meetingDetail, renameMeeting, rescanLibrary, type MalformedFolder, type MeetingSummary, type SearchHit } from "./library";
 import { Button } from "./components/ui/Button";
 import { Input } from "./components/ui/Input";
@@ -44,6 +46,31 @@ function durationLabel(ms: number) {
   const totalMinutes = Math.floor(ms / 60_000);
   if (totalMinutes < 60) return `${totalMinutes} min`;
   return `${Math.floor(totalMinutes / 60)} h ${String(totalMinutes % 60).padStart(2, "0")} min`;
+}
+
+function MainViewTransition({ viewKey, children }: { viewKey: string; children: ReactNode }) {
+  const current = useRef({ key: viewKey, content: children });
+  const [views, setViews] = useState([{ key: viewKey, content: children }]);
+  const [entered, setEntered] = useState(true);
+  if (current.current.key === viewKey) current.current.content = children;
+
+  useLayoutEffect(() => {
+    if (current.current.key === viewKey) return;
+    const outgoing = current.current;
+    current.current = { key: viewKey, content: children };
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) { setViews([{ key: viewKey, content: children }]); setEntered(true); return; }
+    setViews([outgoing, { key: viewKey, content: children }]);
+    setEntered(false);
+    const frame = window.requestAnimationFrame(() => setEntered(true));
+    const timer = window.setTimeout(() => setViews([{ key: viewKey, content: children }]), 180);
+    return () => { window.cancelAnimationFrame(frame); window.clearTimeout(timer); };
+  }, [viewKey]);
+
+  const transition = "opacity var(--duration-panel) var(--ease-functional)";
+  return <div className="relative flex min-h-0 flex-1 flex-col">
+    {views.map((view) => view.key === viewKey ? <div key={view.key} className="flex min-h-0 flex-1 flex-col overflow-y-auto" style={{ opacity: entered ? 1 : 0, transition }}>{children}</div>
+      : <div key={view.key} aria-hidden="true" inert className="pointer-events-none absolute inset-0 flex flex-col overflow-hidden" style={{ opacity: entered ? 0 : 1, transition }}>{view.content}</div>)}
+  </div>;
 }
 
 export default function App() {
@@ -201,6 +228,16 @@ export default function App() {
   const sorted = [...(meetings ?? [])].sort((a, b) => b.started_at.localeCompare(a.started_at));
   let previousGroup = "";
   const busyRecording = recorder?.phase !== "idle" && recorder?.phase != null;
+  const notifications = <NotificationArea importing={imports.current} queued={imports.queued} importErrors={imports.errors} deleteError={deleting ? null : deleteError} malformed={malformed}
+    onDismissImportErrors={() => void dismissErrors()} onDismissDeleteError={() => setDeleteError(null)} onDismissMalformed={() => setMalformed([])} />;
+  const viewKey = panel ?? (showSearch ? "search" : selectedId ? `meeting:${selectedId}` : showRecording && busyRecording ? "recording" : "library");
+  const pageHeader = panel === "settings" ? <PageHeader title="Settings" context="Choose how Meetings are recorded and processed." />
+    : panel === "help" ? <PageHeader title="Help" context="App information, shortcuts and diagnostics." />
+    : showSearch ? <PageHeader title="Search" context="Find a Segment across Transcripts in your Library." />
+    : <PageHeader title="Library" context="Your Meetings, kept on this PC." actions={<Button variant="secondary" onClick={() => void pickFiles()}><Import size={16} strokeWidth={1.5} />Import a file</Button>} />;
+  const view = panel === "settings" ? <><SettingsView /></> : panel === "help" ? <HelpView /> : showSearch ? <LibrarySearch query={query} onQueryChange={setQuery} onOpen={openHit} /> : selectedId ? <MeetingView key={selectedId} id={selectedId} recordingMeetingId={busyRecording ? recorder?.meeting_id : null} openAt={openAt} onOpened={() => setOpenAt(null)} onDeleted={() => { setSelectedId(null); setOpenAt(null); setScan((value) => value + 1); }} onRenamed={() => setScan((value) => value + 1)} onOpenSettings={() => setPanel("settings")} onBack={() => { setSelectedId(null); setOpenAt(null); setScan((value) => value + 1); }} notifications={notifications} /> : showRecording && busyRecording && recorder ? <RecordingScreen status={recorder} title={meetings?.find((meeting) => meeting.id === recorder.meeting_id)?.title} onRenamed={() => setScan((value) => value + 1)} /> : <section className="flex min-h-0 flex-1 flex-col" aria-label="Library home">
+    {failed ? <div className="grid flex-1 place-items-center p-10"><ErrorState title="Couldn't load the Library" guidance="Try rescanning the Library." onRetry={() => setScan((value) => value + 1)} /></div> : meetings === null ? <div className="grid flex-1 place-items-center p-10"><Loading message="Loading the Library…" /></div> : meetings.length === 0 ? <div className="grid flex-1 place-items-center p-10"><div className="grid justify-items-center gap-3"><EmptyState title="Your Library is empty" description={<>Record a call from any app, or import an audio file. Meetings are saved to <span className="text-ink">Documents\Meeting Minutes</span>.</>} action={<><Button variant="recordSoft" disabled={!recorder || busyRecording} onClick={requestRecording}><span aria-hidden="true" className="size-2 rounded-full bg-current shadow-[0_0_0_3px_color-mix(in_srgb,currentColor_25%,transparent)]" />Record</Button><Button variant="secondary" onClick={() => void pickFiles()}><Import size={16} strokeWidth={1.5} />Import a file</Button></>} /><p className="m-0 text-center text-xs text-ink-muted">Or press <KeyCombo keys={recordHotkey} className="mx-0.5 align-middle" /> from any app.</p></div></div> : <div className="grid flex-1 place-items-center p-10"><EmptyState title="Choose a Meeting" description="Choose a Meeting from the sidebar or search the Library." /></div>}
+  </section>;
 
   return <main className="grid h-screen min-h-[480px] grid-cols-[248px_minmax(0,1fr)] bg-canvas text-ink">
     <aside aria-label="Library sidebar" className="flex min-h-0 flex-col border-r border-line bg-panel">
@@ -260,17 +297,11 @@ export default function App() {
         <DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" className="w-full justify-start gap-2.5 px-2"><Ellipsis size={16} strokeWidth={1.5} />More</Button></DropdownMenuTrigger><DropdownMenuContent align="start"><DropdownMenuItem onSelect={() => setScan((value) => value + 1)}><RefreshCw size={16} strokeWidth={1.5} />Rescan Library</DropdownMenuItem></DropdownMenuContent></DropdownMenu>
       </div>
     </aside>
-    <div className="flex min-h-0 min-w-0 flex-col overflow-y-auto bg-canvas">
+    <div className="flex min-h-0 min-w-0 flex-col overflow-hidden bg-canvas">
       <RecordingBar recordRequest={recordRequest} hideIdleButton />
-      {imports.current && <div className="mx-7 mt-4 rounded-md bg-panel px-3 py-2 text-sm text-ink-muted"><Loading message={`Importing ${imports.current}…${imports.queued > 0 ? ` (+${imports.queued} queued)` : ""}`} rows={1} /><p aria-hidden="true" className="m-0">Importing {imports.current}…{imports.queued > 0 ? ` (+${imports.queued} queued)` : ""}</p></div>}
-      {imports.errors.length > 0 && <div className="mx-7"><ErrorState title="Some files couldn't be imported" guidance={`${imports.errors.join(" · ")}. Choose an mp3, m4a, wav or flac file and try again.`} /><Button variant="secondary" onClick={() => void dismissErrors()}>Dismiss import errors</Button></div>}
-      {deleteError && !deleting && <div className="mx-7"><ErrorState title="Couldn't delete the Meeting" guidance={`${deleteError}. Try again or Rescan the Library.`} /></div>}
-      {malformed.length > 0 && <div role="status" className="mx-7 mt-4 rounded-md bg-panel px-3 py-2 text-sm text-ink-muted"><p className="m-0">{malformed.length} {malformed.length === 1 ? "folder" : "folders"} could not be read</p><ul className="m-0 pl-5">{malformed.map((item) => <li key={item.folder}>{item.folder}: {item.reason}</li>)}</ul></div>}
-      {panel === "settings" ? <SettingsView /> : panel === "help" ? <HelpView /> : showSearch ? <LibrarySearch query={query} onQueryChange={setQuery} onOpen={openHit} /> : selectedId ? <MeetingView key={selectedId} id={selectedId} recordingMeetingId={busyRecording ? recorder?.meeting_id : null} openAt={openAt} onOpened={() => setOpenAt(null)} onDeleted={() => { setSelectedId(null); setOpenAt(null); setScan((value) => value + 1); }} onRenamed={() => setScan((value) => value + 1)} onOpenSettings={() => setPanel("settings")} onBack={() => { setSelectedId(null); setOpenAt(null); setScan((value) => value + 1); }} /> : showRecording && busyRecording && recorder ? <RecordingScreen status={recorder} title={meetings?.find((meeting) => meeting.id === recorder.meeting_id)?.title} onRenamed={() => setScan((value) => value + 1)} /> : <section className="flex min-h-0 flex-1 flex-col" aria-label="Library home">
-        {failed ? <div className="grid flex-1 place-items-center p-10"><ErrorState title="Couldn't load the Library" guidance="Try rescanning the Library." onRetry={() => setScan((value) => value + 1)} /></div> : meetings === null ? <div className="grid flex-1 place-items-center p-10"><Loading message="Loading the Library…" /></div> : meetings.length === 0 ? <div className="grid flex-1 place-items-center p-10"><div className="grid justify-items-center gap-3"><EmptyState title="Your Library is empty" description={<>Record a call from any app, or import an audio file. Meetings are saved to <span className="text-ink">Documents\Meeting Minutes</span>.</>} action={<><Button variant="recordSoft" disabled={!recorder || busyRecording} onClick={requestRecording}><span aria-hidden="true" className="size-2 rounded-full bg-current shadow-[0_0_0_3px_color-mix(in_srgb,currentColor_25%,transparent)]" />Record</Button><Button variant="secondary" onClick={() => void pickFiles()}><Import size={16} strokeWidth={1.5} />Import a file</Button></>} /><p className="m-0 text-center text-xs text-ink-muted">Or press <KeyCombo keys={recordHotkey} className="mx-0.5 align-middle" /> from any app.</p></div></div> : <div className="grid flex-1 place-items-center p-10"><EmptyState title="Library" description="Choose a Meeting from the sidebar or search the Library." /></div>}
-      </section>}
+      <MainViewTransition viewKey={viewKey}>{!panel && !showSearch && (selectedId || showRecording && busyRecording) ? view : <>{pageHeader}{notifications}{view}</>}</MainViewTransition>
     </div>
-    {deleting && <ConfirmDelete title={deleting.title} busy={deleteBusy} onConfirm={() => void confirmDelete()} onCancel={() => { setDeleting(null); setDeleteError(null); }} error={deleteError} />}
+    {deleting && <ConfirmDelete title={deleting.title} busy={deleteBusy} onConfirm={() => void confirmDelete()} onCancel={() => setDeleting(null)} error={deleteError} />}
     {importHover && <div role="status" className="pointer-events-none fixed inset-0 z-50 grid place-items-center border-4 border-dashed border-accent bg-canvas/95 p-10 text-center text-heading-md text-ink">Drop audio to import (mp3, m4a, wav, flac)</div>}
   </main>;
 }
