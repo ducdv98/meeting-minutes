@@ -10,6 +10,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { EmptyState } from "./components/states/EmptyState";
 import { ErrorState } from "./components/states/ErrorState";
 import { Loading } from "./components/states/Loading";
+import { MeetingRowMotion } from "./components/ui/MeetingRowMotion";
 import MeetingView from "./MeetingView";
 import LibrarySearch from "./LibrarySearch";
 import ConfirmDelete from "./ConfirmDelete";
@@ -227,7 +228,7 @@ export default function App() {
           const job = jobs.find((item) => item.meeting_id === meeting.id);
           const detail = details[meeting.id];
           const language = detail?.language === "vi" ? "Tiếng Việt" : detail?.language === "en" ? "English" : detail?.imported ? "Imported" : null;
-          return <div key={meeting.id}>
+          return <MeetingRowMotion key={meeting.id} animate={scan > 0}>
             {showGroup && <h2 className="px-2 pb-1.5 pt-3.5 text-xs font-medium text-ink-faint">{group}</h2>}
             {renaming?.id === meeting.id ? <div className="grid gap-1 px-1 py-1">
               <Input autoFocus aria-label={`Title for ${meeting.title}`} className="h-8 text-[13px] font-medium" value={renaming.title} disabled={renaming.saving} onFocus={(event) => event.target.select()} onChange={(event) => setRenaming({ ...renaming, title: event.target.value })} onBlur={() => { if (!renaming.saving && !renaming.error) setRenaming(null); }} onKeyDown={(event) => {
@@ -251,7 +252,7 @@ export default function App() {
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>}
-          </div>;
+          </MeetingRowMotion>;
         })}
       </nav>
       <div className="grid gap-0.5 border-t border-line p-2">
