@@ -3,7 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import SettingsView, { type SettingsTabId } from "./SettingsView";
 import type { AiSettings } from "./ai";
 import { acknowledgeCloudNotice, getSettings, installedModels, updateSettings, type Settings } from "./processing";
-import { aiStatus, listAiModels, managedConnect, managedDisconnect, managedStatus, saveApiKey, testAiProvider, testCloudApiKey, updateAiSettings, type AiStatus } from "./ai";
+import { aiStatus, deleteApiKey, listAiModels, managedConnect, managedDisconnect, managedStatus, saveApiKey, testAiProvider, testCloudApiKey, updateAiSettings, type AiStatus } from "./ai";
 import { openLink } from "./app-info";
 
 vi.mock("./processing", async (importOriginal) => ({ ...(await importOriginal<typeof import("./processing")>()), getSettings: vi.fn(), updateSettings: vi.fn(), installedModels: vi.fn(), acknowledgeCloudNotice: vi.fn() }));
@@ -132,39 +132,47 @@ it("explains when Managed transcription was revoked", async () => {
   expect(within(section).getByLabelText("Invite code")).toBeTruthy();
 });
 
-it("opens provider key pages, tests saved keys, and shows the cloud notice once", async () => {
+it("saves, tests and removes Groq and OpenAI keys on Keys, and shows the cloud notice once", async () => {
   vi.mocked(getSettings).mockResolvedValue(base);
   vi.mocked(aiStatus).mockResolvedValue(empty);
-  vi.mocked(saveApiKey).mockResolvedValueOnce({ ...empty, has_groq_key: true }).mockResolvedValueOnce({ ...empty, has_groq_key: true, has_gemini_key: true });
+  vi.mocked(saveApiKey).mockResolvedValueOnce({ ...empty, has_groq_key: true }).mockResolvedValueOnce({ ...empty, has_groq_key: true, has_openai_key: true });
+  vi.mocked(deleteApiKey).mockResolvedValueOnce({ ...empty, has_openai_key: true }).mockResolvedValueOnce(empty);
   vi.mocked(acknowledgeCloudNotice).mockResolvedValue({ ...base, cloud_notice_acknowledged: true });
-  vi.mocked(testCloudApiKey).mockResolvedValueOnce().mockRejectedValueOnce("Gemini quota exceeded");
+  vi.mocked(testCloudApiKey).mockResolvedValue();
+  vi.mocked(listAiModels).mockResolvedValue(["gpt-4o-mini"]);
+  vi.mocked(openLink).mockResolvedValue();
   render(<SettingsView initialTab="general" />);
-  await openTab("Speech-to-text");
-  const cloud = await screen.findByRole("region", { name: "Cloud transcription" });
-  fireEvent.click(within(cloud).getByRole("button", { name: "Get a free Groq key" }));
-  fireEvent.click(within(cloud).getByRole("button", { name: "Get a free Gemini key" }));
+  await openTab("Keys");
+  const keys = await screen.findByRole("tabpanel", { name: "Keys" });
+  fireEvent.click(within(keys).getByRole("button", { name: "Get a free Groq key" }));
+  fireEvent.click(within(keys).getByRole("button", { name: "Get a free Gemini key" }));
   expect(openLink).toHaveBeenCalledWith("groq");
   expect(openLink).toHaveBeenCalledWith("gemini");
-  fireEvent.change(within(cloud).getByLabelText("Groq API key"), { target: { value: "secret" } });
-  fireEvent.click(within(cloud).getByRole("button", { name: "Save Groq key" }));
+  fireEvent.change(within(keys).getByLabelText("Groq API key"), { target: { value: "secret" } });
+  fireEvent.click(within(keys).getByRole("button", { name: "Save Groq key" }));
   await waitFor(() => expect(saveApiKey).toHaveBeenCalledWith("groq", "secret"));
-  expect(await screen.findByText(/Gemini's free tier may use content for training/)).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "Got it" }));
+  expect(await within(keys).findByText(/Gemini's free tier may use content for training/)).toBeTruthy();
+  fireEvent.click(within(keys).getByRole("button", { name: "Got it" }));
   await waitFor(() => expect(acknowledgeCloudNotice).toHaveBeenCalledTimes(1));
-  fireEvent.change(within(cloud).getByLabelText("Gemini API key"), { target: { value: "gemini-secret" } });
-  fireEvent.click(within(cloud).getByRole("button", { name: "Save Gemini key" }));
-  await waitFor(() => expect(saveApiKey).toHaveBeenCalledWith("gemini", "gemini-secret"));
-  fireEvent.click(within(cloud).getByRole("button", { name: "Test Groq key" }));
-  expect(await within(cloud).findByText("Groq key: OK")).toBeTruthy();
-  fireEvent.click(within(cloud).getByRole("button", { name: "Test Gemini key" }));
-  expect(await within(cloud).findByText(/Gemini quota exceeded/)).toBeTruthy();
-  expect(screen.queryByText(/Gemini's free tier may use content for training/)).toBeNull();
+  fireEvent.click(within(keys).getByRole("button", { name: "Test Groq key" }));
+  expect(await within(keys).findByText("Groq key: OK")).toBeTruthy();
+  fireEvent.change(within(keys).getByLabelText("OpenAI API key"), { target: { value: "openai-secret" } });
+  fireEvent.click(within(keys).getByRole("button", { name: "Save OpenAI key" }));
+  await waitFor(() => expect(saveApiKey).toHaveBeenCalledWith("openai", "openai-secret"));
+  fireEvent.click(within(keys).getByRole("button", { name: "Test OpenAI key" }));
+  await waitFor(() => expect(listAiModels).toHaveBeenCalledWith("openai"));
+  expect(await within(keys).findByText("OpenAI key: OK")).toBeTruthy();
+  fireEvent.click(within(keys).getByRole("button", { name: "Remove Groq key" }));
+  await waitFor(() => expect(deleteApiKey).toHaveBeenCalledWith("groq"));
+  fireEvent.click(within(keys).getByRole("button", { name: "Remove OpenAI key" }));
+  await waitFor(() => expect(deleteApiKey).toHaveBeenCalledWith("openai"));
+  expect(within(keys).queryByText(/Gemini's free tier may use content for training/)).toBeNull();
   cleanup();
   vi.mocked(getSettings).mockResolvedValue({ ...base, cloud_notice_acknowledged: true });
-  vi.mocked(aiStatus).mockResolvedValue({ ...empty, has_groq_key: true, has_gemini_key: true });
+  vi.mocked(aiStatus).mockResolvedValue({ ...empty, has_groq_key: true, has_openai_key: true });
   render(<SettingsView initialTab="general" />);
-  await openTab("Speech-to-text");
-  await screen.findByRole("region", { name: "Cloud transcription" });
+  await openTab("Keys");
+  await screen.findByRole("region", { name: "Provider keys" });
   expect(screen.queryByText(/Gemini's free tier may use content for training/)).toBeNull();
 });
 
@@ -307,23 +315,42 @@ it("offers Gemini for Summary and Ask with its saved key and model", async () =>
   await openTab("Language models");
   fireEvent.click(await screen.findByRole("radio", { name: /^Gemini/ }));
   await waitFor(() => expect(updateAiSettings).toHaveBeenCalledWith("gemini", null));
-  expect(await screen.findByText(/API key saved in Windows Credential Manager/)).toBeTruthy();
+  expect(await screen.findByText(/Key saved in Windows Credential Manager/)).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Manage keys" }));
+  expect(screen.getByRole("tab", { name: "Keys" }).getAttribute("aria-selected")).toBe("true");
+  expect(screen.getAllByLabelText("Gemini API key")).toHaveLength(1);
+  await openTab("Language models");
   expect((screen.getByRole("combobox", { name: "Model" }) as HTMLSelectElement).value).toBe("gemini-2.5-flash");
   fireEvent.click(screen.getByRole("button", { name: "Load models" }));
   await waitFor(() => expect(listAiModels).toHaveBeenCalledWith("gemini"));
 });
 
-it("clears a saved key and shows the stored key status", async () => {
+it("routes a Language model with no key to the Keys tab", async () => {
   vi.mocked(getSettings).mockResolvedValue({ ...base, vocabulary: [] });
   vi.mocked(aiStatus).mockResolvedValue({ ...empty, provider: "openai" });
-  vi.mocked(saveApiKey).mockResolvedValue({ ...empty, provider: "openai", has_openai_key: true });
   render(<SettingsView initialTab="general" />);
   await openTab("Language models");
-  fireEvent.change(await screen.findByLabelText("API key"), { target: { value: "secret" } });
-  fireEvent.click(screen.getByRole("button", { name: "Save key" }));
-  await waitFor(() => expect(saveApiKey).toHaveBeenCalledWith("openai", "secret"));
-  expect(screen.queryByLabelText("API key")).toBeNull();
-  expect(await screen.findByText(/API key saved in Windows Credential Manager/)).toBeTruthy();
+  const manage = screen.getByRole("button", { name: "Manage keys" });
+  expect(manage.parentElement?.textContent).toContain("No key");
+  expect(within(screen.getByRole("tabpanel", { name: "Language models" })).queryByLabelText("OpenAI API key")).toBeNull();
+  fireEvent.click(manage);
+  expect(screen.getByRole("tab", { name: "Keys" }).getAttribute("aria-selected")).toBe("true");
+  expect(screen.getByLabelText("OpenAI API key")).toBeTruthy();
+});
+
+it("shows cloud transcription key status and opens Keys without a second Gemini field", async () => {
+  vi.mocked(getSettings).mockResolvedValue(base);
+  vi.mocked(aiStatus).mockResolvedValue({ ...empty, has_gemini_key: true });
+  render(<SettingsView initialTab="speech-to-text" />);
+  const speech = await screen.findByRole("tabpanel", { name: "Speech-to-text" });
+  const cloud = within(speech).getByRole("region", { name: "Cloud transcription" });
+  expect(within(cloud).getByText("Gemini · Speech-to-text and Language models")).toBeTruthy();
+  expect(within(cloud).getByText("Key saved")).toBeTruthy();
+  expect(within(cloud).queryByLabelText("Gemini API key")).toBeNull();
+  fireEvent.click(within(cloud).getAllByRole("button", { name: "Manage keys" })[1]);
+  expect(screen.getByRole("tab", { name: "Keys" }).getAttribute("aria-selected")).toBe("true");
+  expect(screen.getAllByLabelText("Gemini API key")).toHaveLength(1);
+  expect(screen.getByText("http://localhost:11434")).toBeTruthy();
 });
 
 it("explains how to start Ollama when model discovery fails", async () => {
