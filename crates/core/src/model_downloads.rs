@@ -297,7 +297,7 @@ impl ModelDownloads {
                         format!("Local Whisper model {} download was cancelled", model.name)
                     }
                     _ => format!(
-                        "Local Whisper model {} is not downloaded and no download is running",
+                        "Local Whisper model {} isn't downloaded. Download it in Settings → Speech-to-text",
                         model.name
                     ),
                 };
@@ -408,7 +408,9 @@ mod tests {
         let error = downloads
             .wait_for(&FIXTURE, &cancel, &mut |_| {})
             .unwrap_err();
-        assert!(error.to_string().contains("no download is running"));
+        assert!(error
+            .to_string()
+            .contains("Download it in Settings → Speech-to-text"));
     }
 
     #[test]
