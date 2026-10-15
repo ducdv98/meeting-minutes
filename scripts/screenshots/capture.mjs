@@ -1,12 +1,18 @@
 // Captures website screenshots of the real UI running on demo data.
-// Usage: pnpm screenshots
+// Usage: pnpm screenshots            website screenshots, 1200 × 800 at 2×
+//        pnpm screenshots --gallery  Product Hunt gallery images, 1270 × 760
 import { createServer } from "vite";
 import { chromium } from "playwright";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { mkdir } from "node:fs/promises";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "../..");
-const out = join(root, "website/src/assets/screens");
+const gallery = process.argv.includes("--gallery");
+// Gallery images are launch material, not website assets.
+const out = join(root, gallery ? ".scratch/v1-launch/gallery" : "website/src/assets/screens");
+const viewport = gallery ? { width: 1270, height: 760 } : { width: 1200, height: 800 };
+const deviceScaleFactor = gallery ? 1 : 2;
 const DEMO = "Website launch sync";
 
 const server = await createServer({ root, configFile: join(root, "vite.config.ts"), server: { port: 0 }, logLevel: "error" });
@@ -53,13 +59,20 @@ const shots = {
     await page.getByLabel("Diagnostics preview").waitFor();
   },
   async library(page) {},
+  async "firstrun-model"(page) {
+    await page.getByRole("button", { name: "Help" }).click();
+    await page.getByRole("button", { name: "Open the setup guide" }).click();
+    await page.getByRole("button", { name: "I understand" }).click();
+    await page.getByRole("heading", { name: "Set up a local model" }).waitFor();
+  },
 };
 
+await mkdir(out, { recursive: true });
 const browser = await chromium.launch();
 const errors = [];
 for (const theme of ["light", "dark"]) {
   for (const [name, prepare] of Object.entries(shots)) {
-    const page = await browser.newPage({ viewport: { width: 1200, height: 800 }, deviceScaleFactor: 2, colorScheme: theme, reducedMotion: "reduce" });
+    const page = await browser.newPage({ viewport, deviceScaleFactor, colorScheme: theme, reducedMotion: "reduce" });
     page.on("console", (message) => { if (message.type() === "warning" || message.type() === "error") errors.push(`${name}: ${message.text()}`); });
     await page.route("http://asset.localhost/**", (route) => route.fulfill({ status: 404 }));
     await page.goto(url);

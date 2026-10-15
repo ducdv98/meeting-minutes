@@ -6,5 +6,5 @@
 
 Status: ready-for-agent
 
-- [ ] All twelve website screenshots exist
-- [ ] Gallery images are produced at 1270 × 760
+- [x] All twelve website screenshots exist
+- [x] Gallery images are produced at 1270 × 760

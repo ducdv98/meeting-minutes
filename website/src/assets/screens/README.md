@@ -10,6 +10,8 @@ Demo content is fictional: never real people, calls or device details, and only 
 - `search-*.png`: Library search for “pricing” with matches across several Meetings.
 - `diagnostics-*.png`: the Help view with Copy diagnostics and a fictional diagnostics preview.
 - `library-*.png`: the Library home table. It isn't on the website; it's for launch galleries.
-- `firstrun-model-*.png`: the first-run model recommendation. Not captured yet: the first-run setup step doesn't exist. The draft build shows a placeholder until it does.
+- `firstrun-model-*.png`: the first-run model recommendation, opened from Help's setup guide on a PC with a GPU.
+
+`pnpm screenshots --gallery` captures the same views at 1270 × 760 for the Product Hunt gallery into `.scratch/v1-launch/gallery/`, outside the website assets.
 
 The non-draft build fails until every website screenshot exists, once a Release is published.
