@@ -6,6 +6,6 @@
 
 Status: ready-for-human
 
-- [ ] The dependency check is recorded in `docs/research/`
+- [x] The dependency check is recorded in `docs/research/`
 - [ ] LICENSE is present and the manifests declare Apache-2.0
 - [ ] Site copy may say "open source" and links to the repo
