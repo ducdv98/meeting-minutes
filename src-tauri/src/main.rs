@@ -49,7 +49,7 @@ use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind};
 use tauri::{
     image::Image,
     menu::{Menu, MenuItem, PredefinedMenuItem},
-    tray::{TrayIcon, TrayIconBuilder},
+    tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent},
     AppHandle, DragDropEvent, Emitter, Manager, State, WindowEvent,
 };
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
@@ -2673,6 +2673,7 @@ fn quit(app: &AppHandle) {
 fn show_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
+        let _ = window.unminimize();
         let _ = window.set_focus();
     }
 }
@@ -3173,6 +3174,19 @@ fn main() {
                 .icon(idle_image.clone())
                 .tooltip("Meeting Minutes — Idle")
                 .menu(&menu)
+                .show_menu_on_left_click(false)
+                .on_tray_icon_event(|tray, event| match event {
+                    TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    }
+                    | TrayIconEvent::DoubleClick {
+                        button: MouseButton::Left,
+                        ..
+                    } => show_window(tray.app_handle()),
+                    _ => {}
+                })
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "open" => show_window(app),
                     "record" => request_start(app),
