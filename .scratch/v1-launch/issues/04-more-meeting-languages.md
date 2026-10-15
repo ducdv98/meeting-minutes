@@ -6,9 +6,9 @@
 
 Status: ready-for-agent
 
-- [ ] Every listed language can be chosen per Meeting, and Auto-detect is the default
-- [ ] Each Provider receives the right language code
-- [ ] Summary and Answers come back in the Meeting language
-- [ ] Search finds accented and unaccented spellings in every language
-- [ ] Existing en/vi Meetings and settings load unchanged
-- [ ] The website FAQ lists the supported languages
+- [x] Every listed language can be chosen per Meeting, and Auto-detect is the default
+- [x] Each Provider receives the right language code
+- [x] Summary and Answers come back in the Meeting language
+- [x] Search finds accented and unaccented spellings in every language
+- [x] Existing en/vi Meetings and settings load unchanged
+- [x] The website FAQ lists the supported languages

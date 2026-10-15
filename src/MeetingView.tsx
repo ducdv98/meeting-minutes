@@ -10,6 +10,7 @@ import TranscriptView from "./TranscriptView";
 import DraftView from "./DraftView";
 import { editSegment, labelParticipantName, participantList, speakerName } from "./transcript";
 import { aiStatus, type AiStatus, type LanguageModelSettings } from "./ai";
+import { MEETING_LANGUAGES, meetingLanguageName } from "./languages";
 import ConfirmDelete from "./ConfirmDelete";
 import SummaryPanel from "./SummaryPanel";
 import AskPanel from "./AskPanel";
@@ -37,12 +38,6 @@ interface Props {
   onDeleted?(): void;
   recordingMeetingId?: string | null;
   notifications?: ReactNode;
-}
-
-function languageName(code: string | null): string {
-  if (code === "en") return "English";
-  if (code === "vi") return "Vietnamese";
-  return code ?? "Not set";
 }
 
 function meetingDateTime(value: string): string {
@@ -312,7 +307,7 @@ export default function MeetingView({ id, onBack, onRenamed, onOpenSettings, ope
             : <button type="button" className="group flex min-w-0 items-center gap-2 justify-self-start text-left" aria-label={`Rename ${detail.title}`} onClick={() => { setTitle(detail.title); setError(null); setRenaming(true); }}><h1 className="m-0 truncate font-display text-heading-md">{detail.title}</h1><Pencil size={16} strokeWidth={1.5} className="shrink-0 text-ink-faint opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100" aria-hidden="true" /></button> : "Meeting"}
       context={detail ? <div className="flex flex-wrap items-center gap-x-3.5 gap-y-1.5">
             <span className="inline-flex items-center gap-1.5"><Clock3 size={14} strokeWidth={1.5} aria-hidden="true" /><time dateTime={detail.started_at}>{meetingDateTime(detail.started_at)}</time> · {durationMinutes} min</span>
-            <label className="inline-flex items-center gap-1.5"><Globe2 size={14} strokeWidth={1.5} aria-hidden="true" /><span className="sr-only">Language</span><select aria-label="Language" className="max-w-[130px] cursor-pointer border-0 bg-transparent text-xs text-ink-muted hover:text-ink" value={detail.language ?? ""} disabled={!!job && job.stage !== "failed"} onChange={(event) => void changeLanguage(event.target.value)}><option value="">Auto-detect</option><option value="en">English</option><option value="vi">Vietnamese</option></select></label>
+            <label className="inline-flex items-center gap-1.5"><Globe2 size={14} strokeWidth={1.5} aria-hidden="true" /><span className="sr-only">Language</span><select aria-label="Language" className="max-w-[130px] cursor-pointer border-0 bg-transparent text-xs text-ink-muted hover:text-ink" value={detail.language ?? ""} disabled={!!job && job.stage !== "failed"} onChange={(event) => void changeLanguage(event.target.value)}><option value="">Auto-detect</option>{MEETING_LANGUAGES.map((language) => <option key={language.code} value={language.code}>{language.name}</option>)}</select></label>
             <span className="inline-flex items-center gap-1.5"><Mic size={14} strokeWidth={1.5} aria-hidden="true" />{sources}</span>
             <button type="button" className="inline-flex items-center gap-1.5 hover:text-accent" onClick={() => void openMeetingFolder(id).catch((reason) => setError(String(reason)))}><FolderOpen size={14} strokeWidth={1.5} aria-hidden="true" />Open folder</button>
           </div> : "Opening Meeting…"}
@@ -336,7 +331,7 @@ export default function MeetingView({ id, onBack, onRenamed, onOpenSettings, ope
             {showingDraft ? <Badge className="rounded-full border border-line bg-transparent">Draft · Transcribing…</Badge> : transcript && <Badge className="rounded-full border border-line bg-transparent">Revision {transcript.revision} · {transcript.model.join(", ")}</Badge>}
             {transcript && !job && <Button variant="ghost" disabled={recordingMeetingId === id} onClick={() => setTranscribeOpen(true)}><RefreshCw size={16} strokeWidth={1.5} />Transcribe again with…</Button>}
           </div>
-          {transcript && !showingDraft && <p className="sr-only">Transcript revision {transcript.revision} · model {transcript.model.join(", ")} · {transcript.segments.length} segments · {languageName(transcript.language)}</p>}
+          {transcript && !showingDraft && <p className="sr-only">Transcript revision {transcript.revision} · model {transcript.model.join(", ")} · {transcript.segments.length} segments · {meetingLanguageName(transcript.language)}</p>}
           {transcript?.fallback_reason && !showingDraft && <p role="status" className="mb-3 text-sm text-ink-muted">Part of this Meeting was transcribed {transcript.model.every((engine) => engine === "Groq" || engine === "Gemini" || engine === "Managed transcription") ? `with ${transcript.model.at(-1)}` : "locally"}: {transcript.fallback_reason}.</p>}
           {transcript && !showingDraft && detail.correction_notice && <p role="status" className="mb-4 text-sm text-ink-muted">{detail.correction_notice}</p>}
           {transcript && !showingDraft && meetingParticipants.length > 0 && <div className="mb-4 grid gap-2 rounded-md border border-line bg-raised p-3"><h3 className="m-0 text-sm font-medium">Participants</h3><datalist id="participant-names">{suggestions.map((name) => <option key={name} value={name} />)}</datalist><div className="flex flex-wrap gap-3">{meetingParticipants.map((name) => { const labels = speakerLabels.filter((label) => labelParticipantName(label, detail.participants, yourName, isVoiceNote) === name); const removable = Object.values(detail.participants).includes(name) || Object.values(detail.segment_participants?.segments ?? {}).includes(name); return <div key={name} className="grid min-w-[130px] flex-1 gap-1 text-xs text-ink-muted"><label>{labels.length ? labels.map(speakerName).join(", ") : name} Participant<Input aria-label={`${labels.length === 1 ? speakerName(labels[0]) : name} Participant`} list="participant-names" value={participantDrafts[name] ?? name} onChange={(event) => setParticipantDrafts((current) => ({ ...current, [name]: event.target.value }))} onBlur={() => void saveParticipant(name)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); event.currentTarget.blur(); } }} /></label>{labels.length > 0 && <span className="text-ink-faint">Speaker labels: {labels.map(speakerName).join(", ")}</span>}{removable && <Button variant="ghost" className="justify-self-start px-0 text-xs" onClick={() => void removeName(name)}>Remove {name}</Button>}</div>; })}</div></div>}

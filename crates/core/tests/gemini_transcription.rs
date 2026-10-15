@@ -48,6 +48,29 @@ fn engine(http: Arc<FakeHttp>) -> GeminiEngine {
 }
 
 #[test]
+fn detects_a_supported_meeting_language_without_a_local_model() {
+    let http = FakeHttp::new(vec![reply(200, &[], &json!({"candidates":[{"content":{"parts":[{"text":"{\"language\":\"ja\"}"}]},"finishReason":"STOP"}]}).to_string())]);
+    let mut engine = engine(http.clone());
+    assert_eq!(
+        engine
+            .detect_language(&[0.1; 1600], &AtomicBool::new(false))
+            .unwrap(),
+        Some(Language::Ja)
+    );
+    let sent = http.requests.lock().unwrap().pop().unwrap();
+    let body = sent.body.unwrap();
+    let body = body.json().unwrap();
+    assert!(body["systemInstruction"]["parts"][0]["text"]
+        .as_str()
+        .unwrap()
+        .contains("Japanese"));
+    assert_eq!(
+        body["contents"][0]["parts"][1]["inline_data"]["mime_type"],
+        "audio/flac"
+    );
+}
+
+#[test]
 fn sends_inline_flac_and_repairs_sentence_times() {
     let http = FakeHttp::new(vec![answer(json!([
         {"start_s":0.2,"end_s":0.8,"text":" First sentence. "},

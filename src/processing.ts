@@ -1,8 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { AiSettings, LanguageModelSettings } from "./ai";
+import type { Language } from "./languages";
 
-export type Language = "en" | "vi";
+export type { Language } from "./languages";
 export type Speaker = "me" | "remote" | "unknown";
 export interface Segment { id: string; start_ms: number; end_ms: number; text: string; speaker: Speaker }
 export type DraftSegment = Omit<Segment, "id">;

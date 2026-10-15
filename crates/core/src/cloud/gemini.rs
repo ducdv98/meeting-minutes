@@ -27,6 +27,10 @@ struct Sentences {
     sentences: Vec<Sentence>,
 }
 #[derive(Deserialize)]
+struct DetectedLanguage {
+    language: String,
+}
+#[derive(Deserialize)]
 struct Sentence {
     start_s: f64,
     end_s: f64,
@@ -53,10 +57,7 @@ impl GeminiEngine {
         if cancel.load(Ordering::SeqCst) {
             return Err(EngineError::Cancelled);
         }
-        let language = match language {
-            Language::En => "English",
-            Language::Vi => "Vietnamese",
-        };
+        let language = language.name();
         let request = GenerateRequest {
             system: format!("Transcribe this Meeting audio verbatim in {language}. Use the Vocabulary and Participant names only to spell spoken words accurately: {}. Return sentences with start_s and end_s in seconds relative to this audio. Do not translate or summarise.", vocabulary.unwrap_or("")),
             messages: vec![Message { role: Role::User, content: "Transcribe the attached audio into timed sentences.".into() }],
@@ -131,6 +132,30 @@ fn map_error(error: AiError) -> EngineError {
 impl CloudEngine for GeminiEngine {
     fn name(&self) -> &str {
         "Gemini"
+    }
+    fn detect_language(
+        &mut self,
+        samples_16k: &[f32],
+        cancel: &AtomicBool,
+    ) -> Result<Option<Language>, EngineError> {
+        let opening = &samples_16k[..samples_16k.len().min(30 * SAMPLE_RATE)];
+        let languages = Language::ALL.map(|language| language.code());
+        let names = Language::ALL.map(|language| language.name()).join(", ");
+        let request = GenerateRequest {
+            system: format!("Identify the spoken Meeting language from this audio. Choose one of {names}. Return its two-letter language code only in the JSON object."),
+            messages: vec![Message { role: Role::User, content: "Identify the spoken language of the attached audio.".into() }],
+            schema: Some(OutputSchema {
+                name: "meeting_language".into(),
+                schema: json!({"type":"object","properties":{"language":{"type":"string","enum":languages}},"required":["language"]}),
+            }),
+            max_tokens: 256,
+            inline_audio: Some(InlineAudio { mime_type: "audio/flac".into(), data: STANDARD.encode(encode_flac(opening)?) }),
+        };
+        let response: DetectedLanguage =
+            generate_json(&self.provider, &request, &mut |_| {}, cancel).map_err(map_error)?;
+        Language::from_code(&response.language)
+            .map(Some)
+            .ok_or(EngineError::InvalidResponse)
     }
     fn transcribe_span(
         &mut self,

@@ -109,10 +109,7 @@ pub fn correct_with_budget(
     if segments.is_empty() {
         return Ok(Vec::new());
     }
-    let language = match language {
-        Language::En => "English",
-        Language::Vi => "Vietnamese",
-    };
+    let language = language.name();
     let system = format!(
         "Correct this {language} Meeting Transcript. Fix only misheard words, Participant names, Vocabulary terms, punctuation and diacritics. Never rephrase, summarise, translate, add, remove, merge or split Segments. Return one id and corrected text for each Segment. Vocabulary: {}. Participants: {}.",
         vocabulary.join(", "), participant_names.join(", ")

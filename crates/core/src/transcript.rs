@@ -139,15 +139,98 @@ pub enum Speaker {
 pub enum Language {
     En,
     Vi,
+    Es,
+    Fr,
+    De,
+    Pt,
+    It,
+    Ja,
+    Ko,
+    Zh,
+    Hi,
 }
 
 impl Language {
+    pub const ALL: [Self; 11] = [
+        Self::En,
+        Self::Vi,
+        Self::Es,
+        Self::Fr,
+        Self::De,
+        Self::Pt,
+        Self::It,
+        Self::Ja,
+        Self::Ko,
+        Self::Zh,
+        Self::Hi,
+    ];
+
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::En => "en",
+            Self::Vi => "vi",
+            Self::Es => "es",
+            Self::Fr => "fr",
+            Self::De => "de",
+            Self::Pt => "pt",
+            Self::It => "it",
+            Self::Ja => "ja",
+            Self::Ko => "ko",
+            Self::Zh => "zh",
+            Self::Hi => "hi",
+        }
+    }
+
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::En => "English",
+            Self::Vi => "Vietnamese",
+            Self::Es => "Spanish",
+            Self::Fr => "French",
+            Self::De => "German",
+            Self::Pt => "Portuguese",
+            Self::It => "Italian",
+            Self::Ja => "Japanese",
+            Self::Ko => "Korean",
+            Self::Zh => "Chinese",
+            Self::Hi => "Hindi",
+        }
+    }
+
     /// The language a Meeting's `language` code names, if it is one the app transcribes.
     pub fn from_code(code: &str) -> Option<Self> {
-        match code {
-            "en" => Some(Self::En),
-            "vi" => Some(Self::Vi),
-            _ => None,
+        Self::ALL
+            .into_iter()
+            .find(|language| language.code() == code)
+    }
+}
+
+#[cfg(test)]
+mod language_tests {
+    use super::Language;
+
+    #[test]
+    fn supported_meeting_languages_keep_their_serialized_codes() {
+        for (code, name) in [
+            ("en", "English"),
+            ("vi", "Vietnamese"),
+            ("es", "Spanish"),
+            ("fr", "French"),
+            ("de", "German"),
+            ("pt", "Portuguese"),
+            ("it", "Italian"),
+            ("ja", "Japanese"),
+            ("ko", "Korean"),
+            ("zh", "Chinese"),
+            ("hi", "Hindi"),
+        ] {
+            let language = Language::from_code(code).unwrap();
+            assert_eq!(language.code(), code);
+            assert_eq!(language.name(), name);
+            assert_eq!(
+                serde_json::to_string(&language).unwrap(),
+                format!("\"{code}\"")
+            );
         }
     }
 }
@@ -485,10 +568,7 @@ pub fn render_markdown_named(
     transcript: &Transcript,
     participants: &Participants,
 ) -> String {
-    let language = match transcript.language {
-        Language::En => "English",
-        Language::Vi => "Vietnamese",
-    };
+    let language = transcript.language.name();
     let mut result = format!(
         "# {title}\n\nTranscript revision {} · model {} · {language}\n",
         transcript.revision,

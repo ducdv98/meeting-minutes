@@ -1070,3 +1070,42 @@ fn meeting_detail_reports_markers_language_and_only_existing_audio() {
         Some(audio)
     );
 }
+
+#[test]
+fn search_folds_accents_and_non_decomposing_letters() {
+    let temp = TempDir::new().unwrap();
+    let mut library = Library::open(
+        temp.path().join("Library"),
+        temp.path().join("index.sqlite3"),
+    )
+    .unwrap();
+    let meeting = library
+        .create_meeting("Languages", at("2026-10-12T09:30:00Z"))
+        .unwrap();
+    write_transcript(
+        &library,
+        &meeting.id,
+        1,
+        "Español français português Straße Łódź Đà Nẵng",
+    );
+    library.rescan().unwrap();
+    for query in [
+        "Espanol",
+        "francais",
+        "portugues",
+        "Strasse",
+        "Lodz",
+        "Da",
+        "Đà",
+    ] {
+        assert_eq!(
+            library.search(query).unwrap()[0].meeting_id,
+            meeting.id,
+            "{query}"
+        );
+    }
+    assert_eq!(
+        library.search("franc\u{327}ais").unwrap()[0].meeting_id,
+        meeting.id
+    );
+}

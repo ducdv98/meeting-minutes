@@ -1,4 +1,5 @@
 import { type Language, type Settings } from "../processing";
+import { MEETING_LANGUAGES } from "../languages";
 import { Input } from "../components/ui/Input";
 import { Switch } from "../components/ui/Switch";
 import { FormSection } from "../components/FormSection";
@@ -13,8 +14,7 @@ export function GeneralTab({ settings, save }: { settings: Settings; save: (next
         <label htmlFor="default-language" className="text-sm font-medium">Default language</label>
         <select id="default-language" className={selectClass} value={settings.language ?? ""} onChange={(event) => save({ ...settings, language: (event.target.value || null) as Language | null })}>
           <option value="">Detect automatically</option>
-          <option value="en">English</option>
-          <option value="vi">Tiếng Việt</option>
+          {MEETING_LANGUAGES.map((language) => <option key={language.code} value={language.code}>{language.label}</option>)}
         </select>
       </div>
       <div className="grid gap-1.5">

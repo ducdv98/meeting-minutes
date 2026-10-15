@@ -305,6 +305,14 @@ it("shows transcript metadata and changes the Meeting language", async () => {
   await waitFor(() => expect(setMeetingLanguage).toHaveBeenCalledWith("old", "en"));
 });
 
+it("offers every supported language in the Meeting header", async () => {
+  render(<MeetingView id="old" onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
+  const picker = await screen.findByRole("combobox", { name: "Language" });
+  expect(within(picker).getAllByRole("option").map((option) => option.getAttribute("value"))).toEqual(["", "en", "vi", "es", "fr", "de", "pt", "it", "ja", "ko", "zh", "hi"]);
+  fireEvent.change(picker, { target: { value: "hi" } });
+  await waitFor(() => expect(setMeetingLanguage).toHaveBeenCalledWith("old", "hi"));
+});
+
 it("re-transcribes with the chosen model and edits the current Revision", async () => {
   const original = { schema_version: 1, revision: 2, created_at: "2026-10-12T10:00:00Z", model: ["small"], language: "en" as const, language_detected: false, duration_ms: 125000, segments: [{ id: "s00001", start_ms: 0, end_ms: 1000, text: "Hello", speaker: "me" as const }] };
   vi.mocked(meetingTranscript).mockResolvedValue(original);

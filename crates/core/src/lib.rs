@@ -4,6 +4,7 @@ mod meeting_file;
 mod metadata;
 mod naming;
 pub mod participant;
+mod search_folding;
 
 pub use library::{Library, LibraryError, MalformedFolder, OrphanRecording, ScanReport};
 pub use meeting_file::{MeetingDetail, MeetingSummary, SearchHit};

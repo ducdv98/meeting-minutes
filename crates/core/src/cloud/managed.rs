@@ -703,18 +703,34 @@ fn multipart(
     field("source", source);
     field("offset_ms", &offset_ms.to_string());
     field("duration_ms", &duration_ms.to_string());
-    field(
-        "language",
-        match language {
-            Language::En => "en",
-            Language::Vi => "vi",
-        },
-    );
+    field("language", language.code());
     field("model", "whisper-large-v3");
     body.extend_from_slice(format!("--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"span.flac\"\r\nContent-Type: audio/flac\r\n\r\n").as_bytes());
     body.extend_from_slice(audio);
     body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
     body
+}
+
+#[cfg(test)]
+mod language_tests {
+    use super::*;
+
+    #[test]
+    fn sends_supported_language_codes() {
+        for language in Language::ALL {
+            let body = multipart(
+                "test",
+                b"audio",
+                Uuid::nil(),
+                "microphone",
+                0,
+                1000,
+                language,
+            );
+            let text = String::from_utf8(body).unwrap();
+            assert!(text.contains(&format!("name=\"language\"\r\n\r\n{}\r\n", language.code())));
+        }
+    }
 }
 
 enum UploadFailure {

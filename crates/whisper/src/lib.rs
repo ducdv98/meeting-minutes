@@ -509,10 +509,7 @@ fn transcribe_with_state(
     }
     let whisper_samples = speech.as_ref().map_or(samples_16k, |audio| &audio.samples);
     let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
-    params.set_language(Some(match settings.language {
-        Language::En => "en",
-        Language::Vi => "vi",
-    }));
+    params.set_language(Some(settings.language.code()));
     params.set_translate(false);
     params.set_print_special(false);
     params.set_print_progress(false);
@@ -648,13 +645,18 @@ impl SpeechEngine for WhisperEngine {
         let (_, probabilities) = state
             .lang_detect(0, self.threads)
             .map_err(|e| e.to_string())?;
-        let en = get_lang_id("en").ok_or("English language id unavailable")? as usize;
-        let vi = get_lang_id("vi").ok_or("Vietnamese language id unavailable")? as usize;
-        if probabilities.get(vi).unwrap_or(&0.0) > probabilities.get(en).unwrap_or(&0.0) {
-            Ok(Language::Vi)
-        } else {
-            Ok(Language::En)
-        }
+        Language::ALL
+            .into_iter()
+            .filter_map(|language| {
+                get_lang_id(language.code()).and_then(|id| {
+                    probabilities
+                        .get(id as usize)
+                        .map(|probability| (language, *probability))
+                })
+            })
+            .max_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(language, _)| language)
+            .ok_or_else(|| "Supported language ids unavailable".to_owned())
     }
 
     fn has_speech(&mut self, samples_16k: &[f32]) -> bool {

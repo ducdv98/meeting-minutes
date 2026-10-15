@@ -23,6 +23,7 @@ import SettingsView, { type SettingsTabId } from "./SettingsView";
 import HelpView from "./HelpView";
 import { onLibraryChanged, onRecordingStatus, recordHotkey, recordingStatus, type RecorderStatus } from "./recording";
 import { cancelProcessing, onProcessingStatus, processingStageLabel, processingStatus, type ProcessingJob } from "./processing";
+import { meetingLanguageLabel } from "./languages";
 
 function groupName(value: string) {
   const date = new Date(value);
@@ -266,7 +267,7 @@ export default function App() {
           previousGroup = group;
           const job = jobs.find((item) => item.meeting_id === meeting.id);
           const detail = details[meeting.id];
-          const language = detail?.language === "vi" ? "Tiếng Việt" : detail?.language === "en" ? "English" : detail?.imported ? "Imported" : null;
+          const language = detail?.language ? meetingLanguageLabel(detail.language) : detail?.imported ? "Imported" : "Auto-detect";
           return <MeetingRowMotion key={meeting.id} animate={scan > 0}>
             {showGroup && <h2 className="px-2 pb-1.5 pt-3.5 text-xs font-medium text-ink-faint">{group}</h2>}
             {renaming?.id === meeting.id ? <div className="grid gap-1 px-1 py-1">

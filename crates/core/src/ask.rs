@@ -16,7 +16,7 @@ use crate::{
     },
     citation::{check_citations, estimate_tokens, evidence_line, evidence_text, Citation},
     participant::Participants,
-    transcript::{Segment, Speaker, Transcript},
+    transcript::{Language, Segment, Speaker, Transcript},
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -82,6 +82,11 @@ pub fn write_asks(meeting_dir: &Path, history: &AskHistory) -> io::Result<()> {
 #[cfg(test)]
 mod compatibility_tests {
     use super::*;
+
+    #[test]
+    fn ask_uses_the_meeting_language_even_for_an_english_question() {
+        assert!(system(crate::transcript::Language::Es, "Ana").contains("Answer in Spanish"));
+    }
 
     #[test]
     fn reads_asks_without_provider_or_model() {
@@ -270,8 +275,8 @@ pub struct AskRequest {
     pub request: GenerateRequest,
     pub allowed: HashSet<String>,
 }
-fn system(user_name: &str) -> String {
-    format!("Answer questions about one meeting only from the transcript segments given as [segment-id] Participant: text. {user_name} is the user. Put supporting segment ids in citations exactly as written; never write times or ids in the answer text. If the segments do not contain the answer, set insufficient_evidence true, citations [], and say briefly that the transcript does not cover it. If the input is not a question or request about this meeting (a greeting, general knowledge, coding, etc.), set off_topic true, citations [], and politely suggest asking something about the meeting. Answer in the language of the question. Return only the JSON object.")
+fn system(language: Language, user_name: &str) -> String {
+    format!("Answer questions about one meeting only from the transcript segments given as [segment-id] Participant: text. {user_name} is the user. Put supporting segment ids in citations exactly as written; never write times or ids in the answer text. If the segments do not contain the answer, set insufficient_evidence true, citations [], and say briefly that the transcript does not cover it. If the input is not a question or request about this meeting (a greeting, general knowledge, coding, etc.), set off_topic true, citations [], and politely suggest asking something about the meeting. Answer in {} regardless of the question's language. Return only the JSON object.", language.name())
 }
 fn schema() -> OutputSchema {
     OutputSchema {
@@ -291,7 +296,7 @@ pub fn build_ask(
     question: &str,
     options: &AskOptions,
 ) -> AskRequest {
-    let system = system(&participants.label_name(Speaker::Me));
+    let system = system(transcript.language, &participants.label_name(Speaker::Me));
     let eligible: Vec<_> = history
         .asks
         .iter()
@@ -363,22 +368,8 @@ pub fn build_ask(
         allowed,
     }
 }
-fn fold_vietnamese(c: char) -> char {
-    match c.to_lowercase().next().unwrap_or(c) {
-        'à' | 'á' | 'ạ' | 'ả' | 'ã' | 'â' | 'ầ' | 'ấ' | 'ậ' | 'ẩ' | 'ẫ' | 'ă' | 'ằ' | 'ắ' | 'ặ'
-        | 'ẳ' | 'ẵ' => 'a',
-        'è' | 'é' | 'ẹ' | 'ẻ' | 'ẽ' | 'ê' | 'ề' | 'ế' | 'ệ' | 'ể' | 'ễ' => 'e',
-        'ì' | 'í' | 'ị' | 'ỉ' | 'ĩ' => 'i',
-        'ò' | 'ó' | 'ọ' | 'ỏ' | 'õ' | 'ô' | 'ồ' | 'ố' | 'ộ' | 'ổ' | 'ỗ' | 'ơ' | 'ờ' | 'ớ' | 'ợ'
-        | 'ở' | 'ỡ' => 'o',
-        'ù' | 'ú' | 'ụ' | 'ủ' | 'ũ' | 'ư' | 'ừ' | 'ứ' | 'ự' | 'ử' | 'ữ' => 'u',
-        'ỳ' | 'ý' | 'ỵ' | 'ỷ' | 'ỹ' => 'y',
-        'đ' => 'd',
-        other => other,
-    }
-}
 fn words(input: &str) -> HashSet<String> {
-    let folded: String = input.chars().map(fold_vietnamese).collect();
+    let folded = crate::search_folding::fold(input);
     folded
         .split(|c: char| !c.is_alphanumeric())
         .filter(|term| term.chars().count() >= 2)

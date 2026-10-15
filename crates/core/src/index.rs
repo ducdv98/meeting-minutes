@@ -7,7 +7,7 @@ use crate::{
     SearchHit,
 };
 
-const SCHEMA_VERSION: i64 = 4;
+const SCHEMA_VERSION: i64 = 5;
 
 pub(crate) struct Index {
     connection: Connection,
@@ -47,11 +47,11 @@ impl Index {
                      duration_ms INTEGER NOT NULL
                  );
                  CREATE VIRTUAL TABLE segments USING fts5(
-                     text, participant,
+                     text, participant, folded,
                      meeting_id UNINDEXED, revision UNINDEXED, segment_id UNINDEXED, start_ms UNINDEXED, end_ms UNINDEXED,
                      tokenize = 'unicode61 remove_diacritics 2'
                  );
-                 PRAGMA user_version = 4;
+                 PRAGMA user_version = 5;
                  COMMIT;",
             )?;
         }
@@ -117,7 +117,7 @@ impl Index {
     }
 
     pub(crate) fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchHit>, LibraryError> {
-        let Some(query) = fts_query(query) else {
+        let Some(query) = fts_query(&crate::search_folding::fold(query)) else {
             return Ok(Vec::new());
         };
         let mut statement = self.connection.prepare(
@@ -170,8 +170,8 @@ fn insert_segments(
 ) -> Result<(), LibraryError> {
     for segment in &transcript.segments {
         transaction.execute(
-            "INSERT INTO segments (text, participant, meeting_id, revision, segment_id, start_ms, end_ms) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![segment.text, participants.name(segment, transcript.revision), meeting_id, transcript.revision, segment.id, segment.start_ms, segment.end_ms],
+            "INSERT INTO segments (text, participant, folded, meeting_id, revision, segment_id, start_ms, end_ms) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![segment.text, participants.name(segment, transcript.revision), crate::search_folding::fold(&format!("{} {}", segment.text, participants.name(segment, transcript.revision))), meeting_id, transcript.revision, segment.id, segment.start_ms, segment.end_ms],
         )?;
     }
     Ok(())

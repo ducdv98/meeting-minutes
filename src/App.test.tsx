@@ -236,6 +236,13 @@ it("shows the Meeting language with its duration", async () => {
   await waitFor(() => expect(sidebar().getByRole("button", { name: "Planning" }).textContent).toContain("30 min · English"));
 });
 
+it("shows newly supported Meeting languages in the sidebar", async () => {
+  vi.mocked(rescanLibrary).mockResolvedValue({ meetings: [{ id: "one", title: "Planning", started_at: "2026-10-12T09:00:00Z", duration_ms: 600_000 }], malformed: [] });
+  vi.mocked(meetingDetail).mockResolvedValue({ id: "one", title: "Planning", started_at: "2026-10-12T09:00:00Z", duration_ms: 600_000, language: "ko", audio_path: null, markers: [], imported: false, voice_note: false, participants: {} });
+  render(<App />);
+  await waitFor(() => expect(sidebar().getByRole("button", { name: "Planning" }).textContent).toContain("Korean"));
+});
+
 it("shows an error when the Library cannot be loaded", async () => {
   vi.mocked(rescanLibrary).mockRejectedValue(new Error("boom"));
 

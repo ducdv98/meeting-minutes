@@ -166,11 +166,8 @@ fn run_clip(
     let meeting = library
         .import_audio(&root.join(&clip.path), at, &cancel)
         .map_err(|e| e.to_string())?;
-    let language = match clip.language.as_str() {
-        "en" => Language::En,
-        "vi" => Language::Vi,
-        other => return Err(format!("Unknown language {other}")),
-    };
+    let language = Language::from_code(&clip.language)
+        .ok_or_else(|| format!("Unknown language {}", clip.language))?;
     let mut measured = MeasuredEngine {
         inner: engine,
         whisper_time: Duration::ZERO,

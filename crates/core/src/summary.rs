@@ -243,15 +243,23 @@ fn schema() -> OutputSchema {
     }
 }
 fn system(language: Language, reduce: bool, user_name: &str) -> String {
-    let language = match language {
-        Language::En => "English",
-        Language::Vi => "Vietnamese",
-    };
+    let language = language.name();
     let mut s = format!("Summarise one meeting from its transcript in {language}. Transcript lines are [segment-id] Participant: text. {user_name} is the user. overview: 1–3 short sentences about the meeting; key_points: main points discussed; decisions: only decisions actually made; action_items: tasks committed to or requested, owner who is responsible as stated else empty string, due deadline exactly as stated else empty string. Every item must list supporting segment ids in citations exactly as written (e.g. s00012). Never invent ids. Never write times or ids inside text. Leave a section empty when unsupported. Return only the JSON object.");
     if reduce {
         s.push_str(" You are given partial summaries of consecutive parts of one meeting, in order, as JSON. Merge them into one summary of the whole meeting: combine duplicates, keep each merged item's citations (union of the ones it came from), and use only citation ids that appear in the input.");
     }
     s
+}
+
+#[cfg(test)]
+mod language_tests {
+    use super::*;
+
+    #[test]
+    fn summary_and_reduction_use_the_meeting_language() {
+        assert!(system(Language::Pt, false, "Ana").contains("transcript in Portuguese"));
+        assert!(system(Language::Pt, true, "Ana").contains("transcript in Portuguese"));
+    }
 }
 fn map_request(
     language: Language,

@@ -309,11 +309,9 @@ impl CloudEngine for GroqEngine {
 }
 
 fn language_from_groq(code: &str) -> Option<Language> {
-    match code.to_ascii_lowercase().as_str() {
-        "en" | "english" => Some(Language::En),
-        "vi" | "vietnamese" => Some(Language::Vi),
-        _ => None,
-    }
+    Language::ALL.into_iter().find(|language| {
+        code.eq_ignore_ascii_case(language.code()) || code.eq_ignore_ascii_case(language.name())
+    })
 }
 
 fn millis(value: &Value) -> Result<u64, EngineError> {
@@ -351,13 +349,7 @@ fn multipart(
     field("timestamp_granularities[]", "word");
     field("timestamp_granularities[]", "segment");
     if let Some(language) = language {
-        field(
-            "language",
-            match language {
-                Language::En => "en",
-                Language::Vi => "vi",
-            },
-        );
+        field("language", language.code());
     }
     if let Some(prompt) = vocabulary {
         let trimmed = trim_prompt(prompt);
@@ -395,6 +387,16 @@ mod tests {
     use super::*;
     use crate::ai::{HttpRequest, HttpResponse};
     use std::{io::Cursor, sync::Mutex};
+
+    #[test]
+    fn sends_supported_language_codes_and_reads_detected_names() {
+        for language in Language::ALL {
+            let body = multipart("test", "whisper-large-v3", b"audio", Some(language), None);
+            let text = String::from_utf8(body).unwrap();
+            assert!(text.contains(&format!("name=\"language\"\r\n\r\n{}\r\n", language.code())));
+            assert_eq!(language_from_groq(language.name()), Some(language));
+        }
+    }
 
     struct CaptureHttp(Mutex<Option<HttpRequest>>);
     impl HttpClient for CaptureHttp {

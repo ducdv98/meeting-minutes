@@ -74,6 +74,13 @@ it("updates row data and shows processing, failure and completed Summary states"
   expect(within(row("Review")).getByText("Failed")).toBeTruthy();
 });
 
+it("labels every Meeting language and auto-detect in the Library", () => {
+  renderTable({ details: { one: { language: "es", imported: false }, two: { language: "ja", imported: false }, three: { language: null, imported: false } } });
+  expect(within(row("Planning")).getByText("Spanish")).toBeTruthy();
+  expect(within(row("Review")).getByText("Japanese")).toBeTruthy();
+  expect(within(row("Budget")).getByText("Auto-detect")).toBeTruthy();
+});
+
 it("refreshes Summary made when a Summary status event arrives", async () => {
   vi.mocked(meetingSummary).mockResolvedValue(null);
   renderTable({ meetings: [meetings[0]] });

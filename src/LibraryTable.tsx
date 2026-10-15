@@ -3,6 +3,7 @@ import { Ellipsis, Pencil, Trash2 } from "lucide-react";
 import type { MeetingSummary } from "./library";
 import type { ProcessingJob } from "./processing";
 import { processingStageLabel } from "./processing";
+import { meetingLanguageLabel } from "./languages";
 import { meetingSummary, onSummaryStatus } from "./summary";
 import { Button } from "./components/ui/Button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "./components/ui/DropdownMenu";
@@ -72,7 +73,7 @@ export default function LibraryTable({ meetings, details, jobs, recordingMeeting
       </tr></thead>
       <tbody>{ordered.map((meeting) => {
         const job = jobs.find((item) => item.meeting_id === meeting.id);
-        const language = details[meeting.id]?.language === "en" ? "English" : details[meeting.id]?.language === "vi" ? "Tiếng Việt" : "";
+        const language = meetingLanguageLabel(details[meeting.id]?.language ?? null);
         const status = job?.stage === "failed" ? "Failed" : job ? processingStageLabel(job).replace(/ (\d+%)/, " · $1") : summaries[meeting.id] ? "Summary made" : "";
         return <tr key={meeting.id} onClick={(event) => { if (!(event.target instanceof Element && event.target.closest("button"))) onOpen(meeting.id); }} className="group border-b border-line transition-colors duration-fast ease-functional hover:bg-hover">
           <th scope="row" className="max-w-0 px-4 py-3 text-left font-medium"><button type="button" onClick={() => onOpen(meeting.id)} className="block max-w-full truncate rounded-sm text-left hover:text-accent">{meeting.title}</button></th>
