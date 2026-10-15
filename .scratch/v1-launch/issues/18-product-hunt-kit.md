@@ -6,5 +6,5 @@
 
 Status: ready-for-agent
 
-- [ ] The kit is in `.scratch/v1-launch/product-hunt.md`
+- [x] The kit is in `.scratch/v1-launch/product-hunt.md`
 - [ ] The launch date is chosen
