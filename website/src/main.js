@@ -47,4 +47,17 @@ if ('IntersectionObserver' in window && !window.matchMedia('(prefers-reduced-mot
     section.classList.add('reveal-pending');
     observer.observe(section);
   }
+
+  const screenshotObserver = new IntersectionObserver(entries => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue;
+      entry.target.classList.add('fly-visible');
+      screenshotObserver.unobserve(entry.target);
+    }
+  }, { threshold: 0.15 });
+  for (const screenshot of document.querySelectorAll('.three > div, .split .screenshot, .support-shot .screenshot')) {
+    if (screenshot.getBoundingClientRect().top < window.innerHeight) continue;
+    screenshot.classList.add('fly-pending');
+    screenshotObserver.observe(screenshot);
+  }
 }

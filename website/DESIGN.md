@@ -69,7 +69,7 @@ Built from the identity's tokens:
 
 ## Motion
 
-Use the identity's motion values. Hero content fades in once on load (opacity only, 300ms). Sections fade and rise 12px once on scroll. No parallax, pinning, marquees or scroll-linked animation. `prefers-reduced-motion` disables all of it.
+Hero heading, description and action fly in with short staggered delays. The main product screenshot rises into place, then floats by 18px. Feature screenshots fly in from alternating sides once they enter the viewport; feature text blocks and support screenshots rise in once. Sections still fade and rise 12px on scroll. No parallax, pinning, marquees or scroll-linked animation. `prefers-reduced-motion` disables all of it.
 
 ## Responsive
 

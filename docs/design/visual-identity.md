@@ -73,7 +73,7 @@ Sentence case everywhere: headings, buttons, menus. No all-caps except `--text-x
 
 ## Motion
 
-Fast and functional: 120ms for hover and press, 180ms for popovers and panels, 240ms for dialogs, easing `cubic-bezier(.2, .8, .2, 1)`. Nothing animates on its own except progress, live audio levels and the recording pulse (a 2s opacity pulse on the red dot). Website sections may fade in once on scroll (opacity and 12px rise, 400ms). `prefers-reduced-motion` turns off all non-essential motion, including the recording pulse.
+Fast and functional: 120ms for hover and press, 180ms for popovers and panels, 240ms for dialogs, easing `cubic-bezier(.2, .8, .2, 1)`. Nothing in the app animates on its own except progress, live audio levels and the recording pulse (a 2s opacity pulse on the red dot). Website sections may fade in once on scroll (opacity and 12px rise, 400ms); product screenshots may enter once and the hero screenshot may float gently. `prefers-reduced-motion` turns off all non-essential motion, including the recording pulse.
 
 Where the app uses motion. Every transition uses `--ease` and a duration token; nothing else moves.
 
@@ -89,7 +89,7 @@ Where the app uses motion. Every transition uses `--ease` and a duration token; 
 | New Meeting in the Library | fade + 8px rise, once | 180ms |
 | Draft → Revision | Transcript cross-fade, scroll kept on the nearest Segment | 180ms |
 
-No looping or self-starting motion beyond the three above, no page slides, bounces, springs or parallax.
+The website hero screenshot's subtle float is the only additional looping motion. No page slides, bounces, springs or parallax.
 
 ## Iconography
 
