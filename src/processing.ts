@@ -13,7 +13,7 @@ export interface ProcessingStatus { jobs: ProcessingJob[] }
 export function processingStageLabel(job: ProcessingJob): string {
   switch (job.stage) {
     case "queued": return "Waiting to transcribe";
-    case "downloading": return `Downloading model ${Math.round(job.progress * 100)}%`;
+    case "downloading": return `Waiting for model download (${Math.round(job.progress * 100)}%)`;
     case "transcribing": return `Transcribing ${Math.round(job.progress * 100)}%`;
     case "failed": return "Transcription failed";
   }
@@ -45,5 +45,11 @@ export const acknowledgeCloudNotice = () => invoke<Settings>("acknowledge_cloud_
 export const updateSettings = (autoProcess: boolean, model: string, vocabulary: string[], language: Language | null, yourName: string | null, speech?: SpeechSettings) => invoke<Settings>("update_settings", { autoProcess, model, vocabulary, language, yourName, speech: speech ?? null });
 export const testSpeechModel = (provider: SpeechProvider, model: string) => invoke<void>("test_speech_model", { provider, model });
 export const installedModels = () => invoke<string[]>("installed_models");
+export interface ModelDownloadStatus { model_id: string; state: "not_downloaded" | "downloading" | "downloaded" | "failed" | "cancelled"; progress: number; error: string | null }
+export const modelDownloadStatus = () => invoke<ModelDownloadStatus[]>("model_download_status");
+export const startModelDownload = (modelId: string) => invoke<ModelDownloadStatus[]>("start_model_download", { modelId });
+export const cancelModelDownload = (modelId: string) => invoke<ModelDownloadStatus[]>("cancel_model_download", { modelId });
+export const deleteModelDownload = (modelId: string) => invoke<ModelDownloadStatus[]>("delete_model_download", { modelId });
+export const onModelDownloadStatus = (handler: (status: ModelDownloadStatus) => void): Promise<UnlistenFn> => listen<ModelDownloadStatus>("model-download-status", (event) => handler(event.payload));
 export const onProcessingStatus = (handler: (status: ProcessingStatus) => void): Promise<UnlistenFn> => listen<ProcessingStatus>("processing-status", (event) => handler(event.payload));
 export const onTranscriptDraft = (handler: (draft: TranscriptDraftEvent) => void): Promise<UnlistenFn> => listen<TranscriptDraftEvent>("transcript-draft", (event) => handler(event.payload));

@@ -6,8 +6,8 @@
 
 Status: ready-for-agent
 
-- [ ] Each model shows Download / progress % / Cancel / Delete
-- [ ] The VAD model is fetched with the first Whisper model, with no separate prompt
-- [ ] Processing shows "Waiting for model download (x%)" and continues when the download finishes
-- [ ] A failed or cancelled download leaves no partial model file
-- [ ] No UI text says "Downloads when first used"
+- [x] Each model shows Download / progress % / Cancel / Delete
+- [x] The VAD model is fetched with the first Whisper model, with no separate prompt
+- [x] Processing shows "Waiting for model download (x%)" and continues when the download finishes
+- [x] A failed or cancelled download leaves no partial model file
+- [x] No UI text says "Downloads when first used"

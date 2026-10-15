@@ -284,7 +284,7 @@ it("shows download progress, failure actions, and a ready revision", async () =>
   const downloading: ProcessingStatus = { jobs: [{ meeting_id: "old", model: null, stage: "downloading", progress: 0.34, error: null }] };
   vi.mocked(processingStatus).mockResolvedValue(downloading);
   const { rerender } = render(<MeetingView id="old" onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
-  expect(await screen.findByText("Downloading model 34%")).toBeTruthy();
+  expect(await screen.findByText("Waiting for model download (34%)")).toBeTruthy();
   vi.mocked(processingStatus).mockResolvedValue({ jobs: [{ meeting_id: "old", model: null, stage: "failed", progress: 0.34, error: "Model unavailable" }] });
   rerender(<MeetingView id="new" onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
   rerender(<MeetingView id="old" onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);

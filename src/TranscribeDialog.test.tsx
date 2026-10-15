@@ -27,7 +27,7 @@ it("defaults to the Transcription order and groups local and cloud choices", asy
   expect(within(gemini).getByText("No key")).toBeTruthy();
   expect(within(screen.getByRole("menuitem", { name: "Groq · whisper-large-v3" })).getByText("Ready · sends audio to Groq")).toBeTruthy();
   fireEvent.click(screen.getByRole("menuitem", { name: "Local Whisper · Large v3 turbo" }));
-  expect(screen.getByText("Downloads when first used (574 MB)")).toBeTruthy();
+  expect(screen.getByText("Download in Settings (574 MB)")).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Transcribe" }));
   expect(onTranscribe).toHaveBeenCalledWith("local:large-v3-turbo-q5_0");
 });

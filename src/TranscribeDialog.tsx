@@ -28,7 +28,7 @@ export default function TranscribeDialog({ again, onClose, onTranscribe, onOpenS
     return () => { active = false; };
   }, []);
   const options: ModelOption[] = [
-    ...MODELS.map((model) => ({ id: `local:${model.name}`, provider: "Local Whisper", model: model.name, label: `Local Whisper · ${model.label}`, group: "local" as const, ready: true, description: installed?.includes(model.name) ? "Downloaded" : `Downloads when first used (${modelSizeLabel(model.size_mb)})` })),
+    ...MODELS.map((model) => ({ id: `local:${model.name}`, provider: "Local Whisper", model: model.name, label: `Local Whisper · ${model.label}`, group: "local" as const, ready: true, description: installed?.includes(model.name) ? "Downloaded" : `Download in Settings (${modelSizeLabel(model.size_mb)})` })),
     { id: "managed", provider: "Managed transcription", model: "Fixed model", label: "Managed transcription · Fixed model", group: "cloud", ready: !!managed?.connected && !managed.revoked, sendsTo: "Managed transcription", description: managed?.connected && !managed.revoked ? "Ready · sends audio to Managed transcription" : "Not connected" },
     ...(settings?.speech?.models ?? []).map((model) => { const provider = model.provider === "groq" ? "Groq" : "Gemini"; const ready = !!status?.[`has_${model.provider}_key`]; return { id: `${model.provider}:${model.model}`, provider, model: model.model, label: `${provider} · ${model.model}`, group: "cloud" as const, ready, sendsTo: provider, description: ready ? `Ready · sends audio to ${provider}` : "No key" }; }),
   ];

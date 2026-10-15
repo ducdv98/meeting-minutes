@@ -183,7 +183,7 @@ it("shows each Meeting's live processing state and cancels its job", async () =>
   render(<App />);
   const table = await screen.findByRole("table", { name: "Meetings in the Library" });
   expect(within(table).getByText("Waiting to transcribe")).toBeTruthy();
-  expect(within(table).getByText("Downloading model · 34%")).toBeTruthy();
+  expect(within(table).getByText("Waiting for model download (34%)")).toBeTruthy();
   const handler = vi.mocked(onProcessingStatus).mock.calls[0][0];
   const live: ProcessingStatus = { jobs: [
     { meeting_id: "one", model: null, stage: "transcribing", progress: 0.61, error: null },

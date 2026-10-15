@@ -1,5 +1,5 @@
-import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
-import { GROQ_SPEECH_MODELS, MODELS, modelSizeLabel, testSpeechModel, type Settings, type SpeechProvider, type SpeechSettings } from "../processing";
+import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { cancelModelDownload, deleteModelDownload, GROQ_SPEECH_MODELS, modelDownloadStatus, MODELS, modelSizeLabel, onModelDownloadStatus, startModelDownload, testSpeechModel, type ModelDownloadStatus, type Settings, type SpeechProvider, type SpeechSettings } from "../processing";
 import { listAiModels, managedConnect, managedDisconnect, managedStatus, PROVIDER_NAMES, type AiStatus, type ManagedStatus } from "../ai";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
@@ -35,6 +35,27 @@ export function SpeechToTextTab({ settings, save, installed, vocabulary, setVoca
   const [tested, setTested] = useState(false);
   const [modelBusy, setModelBusy] = useState(false);
   const [modelError, setModelError] = useState<string | null>(null);
+  const [downloads, setDownloads] = useState<Record<string, ModelDownloadStatus>>({});
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+  const downloadEvents = useRef<Record<string, number>>({});
+  useEffect(() => {
+    let active = true;
+    const seen = new Set<string>();
+    let unlisten: (() => void) | undefined;
+    void onModelDownloadStatus((status) => {
+      if (!active) return;
+      seen.add(status.model_id);
+      downloadEvents.current[status.model_id] = (downloadEvents.current[status.model_id] ?? 0) + 1;
+      setDownloads((current) => ({ ...current, [status.model_id]: status }));
+    }).then((stop) => {
+      if (!active) { stop(); return; }
+      unlisten = stop;
+      return modelDownloadStatus().then((statuses) => {
+        if (active) setDownloads((current) => ({ ...current, ...Object.fromEntries(statuses.filter((status) => !seen.has(status.model_id)).map((status) => [status.model_id, status])) }));
+      });
+    }).catch((reason) => { if (active) setDownloadError(String(reason)); });
+    return () => { active = false; unlisten?.(); };
+  }, []);
   useEffect(() => {
     let active = true;
     managedStatus().then((next) => { if (active) setManaged(next); }, (reason) => { if (active) setManagedError(String(reason)); });
@@ -71,6 +92,18 @@ export function SpeechToTextTab({ settings, save, installed, vocabulary, setVoca
   const groqReady = !!providerStatus?.has_groq_key && !!speech.automatic_groq;
   const geminiReady = !!providerStatus?.has_gemini_key && !!speech.automatic_gemini;
   const first = managed?.connected ? "Managed transcription" : groqReady ? `Groq · ${speech.automatic_groq}` : geminiReady ? `Gemini · ${speech.automatic_gemini}` : `Local Whisper · ${speech.automatic_whisper}`;
+  function localStatus(name: string) {
+    return downloads[name] ?? { model_id: name, state: installed?.includes(name) ? "downloaded" as const : "not_downloaded" as const, progress: 0, error: null };
+  }
+  async function changeDownload(name: string, action: "start" | "cancel" | "delete") {
+    setDownloadError(null);
+    const version = downloadEvents.current[name] ?? 0;
+    try {
+      const statuses = await (action === "start" ? startModelDownload(name) : action === "cancel" ? cancelModelDownload(name) : deleteModelDownload(name));
+      const status = statuses.find((entry) => entry.model_id === name);
+      if (status && (downloadEvents.current[name] ?? 0) === version) setDownloads((current) => ({ ...current, [name]: status }));
+    } catch (reason) { setDownloadError(String(reason)); }
+  }
   async function connectManaged() {
     setManagedBusy(true); setManagedError(null);
     try { setManaged(await managedConnect(inviteCode)); setInviteCode(""); }
@@ -89,7 +122,7 @@ export function SpeechToTextTab({ settings, save, installed, vocabulary, setVoca
         <li className="flex justify-between gap-3"><span>Managed transcription</span><span className="text-ink-muted">{managed?.connected ? "Ready" : "Not connected"}</span></li>
         <li className="flex justify-between gap-3"><span>Groq · {speech.automatic_groq ?? "No automatic model"}</span><span className="text-ink-muted">{providerStatus?.has_groq_key ? speech.automatic_groq ? "Ready" : "No model" : "No key"}</span></li>
         <li className="flex justify-between gap-3"><span>Gemini · {speech.automatic_gemini ?? "No automatic model"}</span><span className="text-ink-muted">{providerStatus?.has_gemini_key ? speech.automatic_gemini ? "Ready" : "No model" : "No key"}</span></li>
-        <li className="flex justify-between gap-3"><span>Local Whisper · {speech.automatic_whisper}</span><span className="text-ink-muted">{installed?.includes(speech.automatic_whisper) ? "Ready" : "Downloads when first used"}</span></li>
+        <li className="flex justify-between gap-3"><span>Local Whisper · {speech.automatic_whisper}</span><span className="text-ink-muted">{localStatus(speech.automatic_whisper).state === "downloaded" ? "Ready" : "Download required"}</span></li>
       </ol>
       <p className="m-0 text-sm font-medium">New Meetings use: {first}</p>
     </FormSection>
@@ -124,13 +157,13 @@ export function SpeechToTextTab({ settings, save, installed, vocabulary, setVoca
     </FormSection>
     <FormSection title="Local Whisper" hint="Runs on this PC after cloud Providers, or when no cloud Provider is ready. Larger models are more accurate and slower.">
       <RadioGroup aria-label="Transcription model" value={speech.automatic_whisper} onValueChange={(model) => save({ ...settings, model, ...(settings.speech ? { speech: { ...speech, automatic_whisper: model } } : {}) })}>
-        {MODELS.map((model) => <RadioGroupItem key={model.name} value={model.name} description={model.description} sideNote={<span className="grid justify-items-end tabular-nums">
-          <span>{modelSizeLabel(model.size_mb)}</span>
-          {installed && (installed.includes(model.name) ? <span className="text-ok">Downloaded</span> : <span>Downloads when first used</span>)}
-        </span>}>
+        {MODELS.map((model) => { const status = localStatus(model.name); return <div key={model.name} className="border-b border-line last:border-b-0"><RadioGroupItem value={model.name} description={model.description} className="border-b-0" sideNote={<span className="grid justify-items-end tabular-nums"><span>{modelSizeLabel(model.size_mb)}</span><span>{status.state === "downloaded" ? "Downloaded" : status.state === "downloading" ? `${status.progress}%` : "Download required"}</span></span>}>
           <span className="inline-flex flex-wrap items-center gap-2">{model.label}{model.name === "small" && <Badge variant="beta">Default</Badge>}</span>
-        </RadioGroupItem>)}
+        </RadioGroupItem><div className="flex items-center justify-end gap-2 px-3.5 pb-3 text-xs">
+          {status.state === "downloading" ? <Button variant="ghost" onClick={() => void changeDownload(model.name, "cancel")}>Cancel {model.label}</Button> : status.state === "downloaded" ? <Button variant="ghost" onClick={() => void changeDownload(model.name, "delete")}>Delete {model.label}</Button> : <><span>{status.state === "failed" ? status.error : status.state === "cancelled" ? "Cancelled" : "Download required"}</span><Button variant="secondary" onClick={() => void changeDownload(model.name, "start")}>Download {model.label}</Button></>}
+        </div></div>; })}
       </RadioGroup>
+      {downloadError && <p role="alert" className="m-0 text-sm text-record">{downloadError}</p>}
     </FormSection>
     <FormSection title="Vocabulary">
       <div className="grid gap-1.5">

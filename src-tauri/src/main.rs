@@ -34,6 +34,7 @@ use meeting_minutes_core::{
     diagnostics::{build_diagnostics, log_event, DiagnosticsInput, LogEvent},
     import::import_extension,
     language_models::{LanguageModel, LanguageModelSettings},
+    model_downloads::{ModelDownloadStatus, ModelDownloads},
     models::{self, DEFAULT_MODEL, MODELS},
     processing::{self, JobStage, ProcessingStatus, Processor, SpeechEngine, TranscribeRequest},
     recorder::{Phase, Recorder, RecorderError, RecorderStatus, SaveJob, SaveState},
@@ -784,9 +785,63 @@ fn update_settings(
 fn installed_models(models_dir: State<'_, ModelsDir>) -> Vec<&'static str> {
     MODELS
         .iter()
-        .filter(|info| models::is_installed(&models_dir.0, info))
+        .filter(|info| {
+            models::is_installed(&models_dir.0, info)
+                && models::is_installed(&models_dir.0, &models::VAD_MODEL)
+        })
         .map(|info| info.name)
         .collect()
+}
+
+#[tauri::command]
+fn model_download_status(app: AppHandle) -> Vec<ModelDownloadStatus> {
+    app.state::<ModelDownloads>().status()
+}
+
+#[tauri::command]
+fn start_model_download(
+    app: AppHandle,
+    model_id: String,
+) -> Result<Vec<ModelDownloadStatus>, String> {
+    let downloads = ModelDownloads::clone(app.state::<ModelDownloads>().inner());
+    if downloads.start(&model_id)? {
+        let statuses = downloads.status();
+        if let Some(status) = statuses.iter().find(|status| status.model_id == model_id) {
+            let _ = app.emit("model-download-status", status);
+        }
+        let app_for_thread = app.clone();
+        thread::spawn(move || {
+            let _ = downloads.run(&model_id, &|status| {
+                let _ = app_for_thread.emit("model-download-status", status);
+            });
+        });
+        return Ok(statuses);
+    }
+    Ok(downloads.status())
+}
+
+#[tauri::command]
+fn cancel_model_download(
+    app: AppHandle,
+    model_id: String,
+) -> Result<Vec<ModelDownloadStatus>, String> {
+    let downloads = app.state::<ModelDownloads>();
+    downloads.cancel(&model_id)?;
+    Ok(downloads.status())
+}
+
+#[tauri::command]
+fn delete_model_download(
+    app: AppHandle,
+    model_id: String,
+) -> Result<Vec<ModelDownloadStatus>, String> {
+    let downloads = app.state::<ModelDownloads>();
+    downloads.delete(&model_id)?;
+    let statuses = downloads.status();
+    if let Some(status) = statuses.iter().find(|status| status.model_id == model_id) {
+        let _ = app.emit("model-download-status", status);
+    }
+    Ok(statuses)
 }
 
 fn current_ai_status(path: &SettingsPath, secrets: &Secrets) -> AiStatus {
@@ -1916,8 +1971,7 @@ fn processing_worker(app: AppHandle) {
                 .find(|m| Some(m.name) == local_choice)
                 .or_else(|| MODELS.iter().find(|m| m.name == settings.model))
                 .unwrap_or_else(|| MODELS.iter().find(|m| m.name == DEFAULT_MODEL).unwrap());
-            let models_state = app.state::<ModelsDir>();
-            let models_dir = &models_state.0;
+            let downloads = app.state::<ModelDownloads>();
             failure_stage = processing::ProcessingStage::Preparing;
             if cancel.load(std::sync::atomic::Ordering::SeqCst) {
                 return Err(processing::ProcessingError::Cancelled);
@@ -1947,72 +2001,26 @@ fn processing_worker(app: AppHandle) {
                 model.name,
                 job_model.as_deref(),
                 Box::new(|| {
-                    let needs_model_download = !models::is_installed(models_dir, model);
-                    let needs_vad_download = !models::is_installed(models_dir, &models::VAD_MODEL);
-                    if needs_model_download || needs_vad_download {
+                    if !models::is_installed(downloads.dir(), model)
+                        || !models::is_installed(downloads.dir(), &models::VAD_MODEL)
+                    {
                         failure_stage = processing::ProcessingStage::Downloading;
                         processing_stage(&app, &id, JobStage::Downloading, 0.0);
                     }
-                    let model_path = if !needs_model_download {
-                        models::model_path(models_dir, model)
-                    } else {
-                        let mut last = 0u32;
-                        models::download(
-                            models_dir,
-                            model,
-                            &mut |bytes| {
-                                let percent = (bytes.saturating_mul(100) / model.size) as u32;
-                                if percent > last {
-                                    last = percent;
-                                    processing_stage(
-                                        &app,
-                                        &id,
-                                        JobStage::Downloading,
-                                        bytes as f32 / model.size as f32
-                                            * if needs_vad_download { 0.9 } else { 1.0 },
-                                    );
-                                }
-                            },
-                            &cancel,
-                        )?
-                    };
-                    let vad_path = if needs_vad_download {
-                        let mut last = 0u32;
-                        match models::download_vad(
-                            models_dir,
-                            &mut |bytes| {
-                                let percent =
-                                    (bytes.saturating_mul(100) / models::VAD_MODEL.size) as u32;
-                                if percent > last {
-                                    last = percent;
-                                    processing_stage(
-                                        &app,
-                                        &id,
-                                        JobStage::Downloading,
-                                        if needs_model_download { 0.9 } else { 0.0 }
-                                            + bytes as f32 / models::VAD_MODEL.size as f32
-                                                * if needs_model_download { 0.1 } else { 1.0 },
-                                    );
-                                }
-                            },
-                            &cancel,
-                        ) {
-                            Ok(path) => Some(path),
-                            Err(processing::ProcessingError::Cancelled) => {
-                                return Err(processing::ProcessingError::Cancelled)
+                    let mut last = u32::MAX;
+                    let (model_path, vad_path) =
+                        downloads.wait_for(model, &cancel, &mut |percent| {
+                            if percent != last {
+                                last = percent;
+                                processing_stage(
+                                    &app,
+                                    &id,
+                                    JobStage::Downloading,
+                                    percent as f32 / 100.0,
+                                );
                             }
-                            Err(_) if cancel.load(std::sync::atomic::Ordering::SeqCst) => {
-                                return Err(processing::ProcessingError::Cancelled)
-                            }
-                            Err(_) => {
-                                log_event(LogEvent::VadUnavailable);
-                                None
-                            }
-                        }
-                    } else {
-                        Some(models::model_path(models_dir, &models::VAD_MODEL))
-                    };
-                    let engine = WhisperEngine::load_with_vad(&model_path, vad_path.as_deref())
+                        })?;
+                    let engine = WhisperEngine::load_with_vad(&model_path, Some(&vad_path))
                         .map_err(processing::ProcessingError::Engine)?;
                     Ok(Box::new(engine) as Box<dyn SpeechEngine>)
                 }),
@@ -3127,6 +3135,9 @@ fn main() {
             app.manage(Http(http));
             app.manage(Mutex::new(AiJobsInner::default()));
             app.manage(ModelsDir(app.path().app_data_dir()?.join("models")));
+            app.manage(ModelDownloads::new(
+                app.path().app_data_dir()?.join("models"),
+            ));
             app.manage(Quitting(AtomicBool::new(false)));
             app.manage(PromptingUpdate(AtomicBool::new(false)));
             app.manage(InstallingUpdate(AtomicBool::new(false)));
@@ -3292,6 +3303,10 @@ fn main() {
             get_settings,
             update_settings,
             installed_models,
+            model_download_status,
+            start_model_download,
+            cancel_model_download,
+            delete_model_download,
             ai_status,
             managed_status,
             managed_connect,

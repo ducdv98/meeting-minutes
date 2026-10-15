@@ -1,14 +1,18 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { SpeechToTextTab } from "./SpeechToTextTab";
 import { managedConnect, managedDisconnect, managedStatus } from "../ai";
-import { testSpeechModel } from "../processing";
+import { cancelModelDownload, deleteModelDownload, modelDownloadStatus, onModelDownloadStatus, startModelDownload, testSpeechModel, type ModelDownloadStatus } from "../processing";
 import { MANAGED_PRIVACY_STATEMENT, MANAGED_PRIVACY_SUMMARY } from "../privacy-text";
 import type { Settings } from "../processing";
 
 vi.mock("../ai", async (importOriginal) => ({ ...(await importOriginal<typeof import("../ai")>()), managedStatus: vi.fn(), managedConnect: vi.fn(), managedDisconnect: vi.fn() }));
-vi.mock("../processing", async (importOriginal) => ({ ...(await importOriginal<typeof import("../processing")>()), testSpeechModel: vi.fn() }));
+vi.mock("../processing", async (importOriginal) => ({ ...(await importOriginal<typeof import("../processing")>()), testSpeechModel: vi.fn(), modelDownloadStatus: vi.fn(), onModelDownloadStatus: vi.fn(), startModelDownload: vi.fn(), cancelModelDownload: vi.fn(), deleteModelDownload: vi.fn() }));
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
+beforeEach(() => {
+  vi.mocked(modelDownloadStatus).mockResolvedValue([]);
+  vi.mocked(onModelDownloadStatus).mockResolvedValue(() => {});
+});
 
 const settings: Settings = { recording_notice_acknowledged: true, cloud_notice_acknowledged: true, auto_process: true, model: "small", vocabulary: [], language: null, your_name: null, ai: { provider: null, ollama_model: null, openai_model: null, anthropic_model: null, gemini_model: null } };
 
@@ -74,7 +78,7 @@ it("updates the Transcription order when connection, key, and download state cha
   const view = render(<SpeechToTextTab {...props} installed={[]} providerStatus={status} />);
   expect(screen.getByText("New Meetings use: Local Whisper · small")).toBeTruthy();
   const order = screen.getByRole("region", { name: "Transcription order" });
-  expect(within(order).getByText("Downloads when first used")).toBeTruthy();
+  expect(within(order).getByText("Download required")).toBeTruthy();
   view.rerender(<SpeechToTextTab {...props} installed={["small"]} providerStatus={{ ...status, has_groq_key: true }} />);
   expect(screen.getByText("New Meetings use: Groq · whisper-large-v3")).toBeTruthy();
   expect(within(order).getAllByText("Ready")).toHaveLength(2);
@@ -89,4 +93,37 @@ it("updates the Transcription order when connection, key, and download state cha
   vi.mocked(managedDisconnect).mockResolvedValue({ connected: false, revoked: false });
   fireEvent.click(screen.getByRole("button", { name: "Disconnect" }));
   expect(await screen.findByText("New Meetings use: Local Whisper · small")).toBeTruthy();
+});
+
+it("downloads, cancels, and deletes a local model from Settings", async () => {
+  vi.mocked(managedStatus).mockResolvedValue({ connected: false, revoked: false });
+  const status = (state: ModelDownloadStatus["state"], progress: number): ModelDownloadStatus => ({ model_id: "base", state, progress, error: null });
+  vi.mocked(startModelDownload).mockResolvedValue([status("downloading", 0)]);
+  vi.mocked(cancelModelDownload).mockResolvedValue([status("cancelled", 0)]);
+  vi.mocked(deleteModelDownload).mockResolvedValue([status("not_downloaded", 0)]);
+  renderTab();
+  fireEvent.click(screen.getByRole("button", { name: "Download Base" }));
+  await waitFor(() => expect(startModelDownload).toHaveBeenCalledWith("base"));
+  const event = vi.mocked(onModelDownloadStatus).mock.calls[0][0];
+  event(status("downloading", 37));
+  expect(await screen.findByText("37%")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Cancel Base" }));
+  await waitFor(() => expect(cancelModelDownload).toHaveBeenCalledWith("base"));
+  event(status("downloaded", 100));
+  expect(await screen.findByRole("button", { name: "Delete Base" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Delete Base" }));
+  await waitFor(() => expect(deleteModelDownload).toHaveBeenCalledWith("base"));
+  expect(await screen.findByRole("button", { name: "Download Base" })).toBeTruthy();
+});
+
+it("keeps a completed download when its start response arrives late", async () => {
+  vi.mocked(managedStatus).mockResolvedValue({ connected: false, revoked: false });
+  let finish!: (statuses: ModelDownloadStatus[]) => void;
+  vi.mocked(startModelDownload).mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+  renderTab();
+  await waitFor(() => expect(onModelDownloadStatus).toHaveBeenCalled());
+  fireEvent.click(screen.getByRole("button", { name: "Download Base" }));
+  await act(async () => vi.mocked(onModelDownloadStatus).mock.calls[0][0]({ model_id: "base", state: "downloaded", progress: 100, error: null }));
+  await act(async () => finish([{ model_id: "base", state: "downloading", progress: 0, error: null }]));
+  expect(screen.getByRole("button", { name: "Delete Base" })).toBeTruthy();
 });

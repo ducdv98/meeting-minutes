@@ -294,7 +294,7 @@ export default function MeetingView({ id, onBack, onRenamed, onOpenSettings, ope
   const sources = detail?.imported ? "Imported audio" : detail?.sources?.length
     ? detail.sources.map((source) => source === "microphone" ? "Microphone" : "System audio").join(" + ")
     : "Recording";
-  const stageAnnouncement = job ? job.stage === "failed" ? "Processing failed" : job.stage === "queued" ? "Processing queued" : job.stage === "transcribing" ? "Transcribing" : job.stage === "downloading" ? "Downloading model" : null : transcriptLoaded && transcript ? "Processing done" : null;
+  const stageAnnouncement = job ? job.stage === "failed" ? "Processing failed" : job.stage === "queued" ? "Processing queued" : job.stage === "transcribing" ? "Transcribing" : job.stage === "downloading" ? "Waiting for model download" : null : transcriptLoaded && transcript ? "Processing done" : null;
   const durationMinutes = detail ? Math.max(1, Math.round(detail.duration_ms / 60_000)) : 0;
   const isVoiceNote = !!detail?.voice_note;
   const showingDraft = job?.stage === "transcribing" && draft.length > 0;

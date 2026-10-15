@@ -61,6 +61,14 @@ pub fn is_installed(models_dir: &Path, info: &ModelInfo) -> bool {
     fs::metadata(model_path(models_dir, info)).is_ok_and(|m| m.is_file() && m.len() == info.size)
 }
 
+pub fn delete(models_dir: &Path, info: &ModelInfo) -> Result<(), ProcessingError> {
+    match fs::remove_file(model_path(models_dir, info)) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+    }
+}
+
 pub fn install_from_reader(
     models_dir: &Path,
     info: &ModelInfo,
@@ -99,11 +107,17 @@ pub fn install_from_reader(
         if bytes != info.size || format!("{:x}", hash.finalize()) != info.sha256 {
             return Err(ProcessingError::Checksum);
         }
+        if cancel.load(Ordering::SeqCst) {
+            return Err(ProcessingError::Cancelled);
+        }
         file.sync_all()?;
+        drop(file);
         if target.exists() {
-            return Err(ProcessingError::Download(
-                "Model file already exists".into(),
-            ));
+            if is_installed(models_dir, info) {
+                fs::remove_file(&part)?;
+                return Ok(target);
+            }
+            fs::remove_file(&target)?;
         }
         fs::rename(&part, &target)?;
         Ok(target)
@@ -112,6 +126,83 @@ pub fn install_from_reader(
         let _ = fs::remove_file(&part);
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{self, Cursor};
+
+    const TEST_MODEL: ModelInfo = ModelInfo {
+        name: "fixture",
+        file: "fixture.bin",
+        size: 4,
+        sha256: "9f64a747e1b97f131fabb6b447296c9b6f0201e79fb3c5356e6c77e89b6a806a",
+    };
+
+    #[test]
+    fn install_is_atomic_and_delete_removes_the_model() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = install_from_reader(
+            dir.path(),
+            &TEST_MODEL,
+            Cursor::new([1, 2, 3, 4]),
+            &mut |_| {},
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        assert_eq!(fs::read(&path).unwrap(), [1, 2, 3, 4]);
+        assert!(!dir.path().join("fixture.bin.part").exists());
+        delete(dir.path(), &TEST_MODEL).unwrap();
+        assert!(!path.exists());
+    }
+
+    struct FailingReader;
+    impl Read for FailingReader {
+        fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+            Err(io::Error::other("network failed"))
+        }
+    }
+
+    #[test]
+    fn failed_and_cancelled_installs_leave_no_partial_file() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(install_from_reader(
+            dir.path(),
+            &TEST_MODEL,
+            FailingReader,
+            &mut |_| {},
+            &AtomicBool::new(false)
+        )
+        .is_err());
+        assert!(!dir.path().join("fixture.bin.part").exists());
+        let cancel_after_read = AtomicBool::new(false);
+        assert!(matches!(
+            install_from_reader(
+                dir.path(),
+                &TEST_MODEL,
+                Cursor::new([1, 2, 3, 4]),
+                &mut |_| cancel_after_read.store(true, Ordering::SeqCst),
+                &cancel_after_read
+            ),
+            Err(ProcessingError::Cancelled)
+        ));
+        assert!(!model_path(dir.path(), &TEST_MODEL).exists());
+        assert!(!dir.path().join("fixture.bin.part").exists());
+        let cancel = AtomicBool::new(true);
+        assert!(matches!(
+            install_from_reader(
+                dir.path(),
+                &TEST_MODEL,
+                Cursor::new([1, 2, 3, 4]),
+                &mut |_| {},
+                &cancel
+            ),
+            Err(ProcessingError::Cancelled)
+        ));
+        assert!(!model_path(dir.path(), &TEST_MODEL).exists());
+        assert!(!dir.path().join("fixture.bin.part").exists());
+    }
 }
 
 pub fn download(
