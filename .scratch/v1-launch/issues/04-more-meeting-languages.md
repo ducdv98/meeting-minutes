@@ -12,3 +12,4 @@ Status: ready-for-agent
 - [x] Search finds accented and unaccented spellings in every language
 - [x] Existing en/vi Meetings and settings load unchanged
 - [x] The website FAQ lists the supported languages
+- [x] Core, frontend, website FAQ, home copy and llms.txt stay consistent in tests

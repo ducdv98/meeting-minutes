@@ -9,3 +9,4 @@ Status: ready-for-agent
 - [x] No roadmap section or roadmap link on any page
 - [x] No target date on the site or in the README
 - [x] Website tests cover the no-Release and with-Release states
+- [x] The design mockup and website design policy have no dated roadmap or target release date

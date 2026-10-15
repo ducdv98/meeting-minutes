@@ -333,11 +333,6 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 20px; resize: ver
 .textlink { color: var(--accent); text-decoration: none; font-weight: 500; display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
 .textlink svg { transition: transform 120ms var(--ease); }
 .textlink:hover svg { transform: translateX(4px); }
-.roadmap { margin-top: 40px; border-top: 1px solid var(--line); }
-.rm-row { display: grid; grid-template-columns: 1fr 200px 140px; gap: 16px; padding: 18px 0; border-bottom: 1px solid var(--line); align-items: center; font-size: 15px; }
-.rm-row .when { color: var(--ink-muted); }
-.rm-status { justify-self: start; display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 500; }
-.rm-status.shipped { color: var(--ok); } .rm-status.progress { color: var(--accent); } .rm-status.target { color: var(--ink-muted); }
 .faq { margin-top: 40px; border-top: 1px solid var(--line); max-width: 760px; }
 .faq button { width: 100%; display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 18px 0; font-size: 16px; font-weight: 500; text-align: left; }
 .faq button span.plus { font-size: 20px; color: var(--ink-muted); transition: transform 180ms var(--ease); }
@@ -378,9 +373,6 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 20px; resize: ver
   .split.flip .copy { order: 0; }
   .sec { padding: 64px 0; }
   .hero { padding-top: 56px; }
-  .rm-row { grid-template-columns: 1fr auto; }
-  .rm-row .when { grid-column: 1; grid-row: 2; font-size: 13px; }
-  .rm-row .rm-status { grid-row: 1 / span 2; grid-column: 2; }
   .site-nav a.hide-sm { display: none; }
   .site-head .wordmark { width: 130px; }
   .hero .cta .btn { width: 100%; }
@@ -757,7 +749,7 @@ Model: small (downloaded) · Provider: ollama
           <div class="cta">
             <div class="rel-pub" style="display:grid;justify-items:center;gap:10px"><a class="btn btn-primary" style="height:44px;padding:0 20px;font-size:15px;color:var(--canvas)"><svg class="i"><use href="#i-download"/></svg> Download for Windows</a>
             <small class="num">Version 0.1.0 · 14 MB · Windows 11 · Free · unsigned, <a>see why</a></small></div>
-            <div class="rel-none" hidden><span class="status-line"><span class="dot" style="color:var(--accent)"></span><b>Free for Windows</b> December 2026 (target)</span><small><a>See the roadmap</a></small></div>
+            <div class="rel-none" hidden><span class="status-line"><span class="dot" style="color:var(--accent)"></span>The Windows app is coming.</span></div>
           </div>
         </div></section>
         <div class="shot" id="shot" role="img" aria-label="The Meeting view: Transcript on the left, Summary with Citations on the right"><div class="shot-inner" id="shotInner"></div></div>
@@ -766,7 +758,7 @@ Model: small (downloaded) · Provider: ollama
           <h2>Everything a meeting leaves behind, without taking notes</h2>
           <div class="three">
             <div><h3><svg class="i"><use href="#i-mic"/></svg> Record any call</h3><p>Zoom, Teams, Meet or a phone on speaker. It records your microphone and what your PC plays, so there's nothing to install in the meeting.</p></div>
-            <div><h3><svg class="i"><use href="#i-lock"/></svg> Transcribed on your PC</h3><p>English and Vietnamese, turned into text by a model running on your own computer. No upload, no account.</p></div>
+            <div><h3><svg class="i"><use href="#i-lock"/></svg> Transcribed on your PC</h3><p>Eleven Meeting languages with Auto-detect, turned into text by a model running on your own computer. No upload required.</p></div>
             <div><h3><svg class="i"><use href="#i-quote"/></svg> Answers you can check</h3><p>Every Summary item and every answer links to the moment it came from. Click it and hear it.</p></div>
           </div>
         </div></section>
@@ -802,23 +794,13 @@ Model: small (downloaded) · Provider: ollama
           <p class="lead">It records what your PC plays and what your microphone hears. Zoom, Microsoft Teams, Google Meet, Slack huddles and anything else that makes sound work without an integration.</p>
         </div></section>
 
-        <section class="sec" id="roadmap"><div class="wrap">
-          <h2>Where it's going</h2>
-          <p class="lead">Dates are month and year. Anything in the future is a target, not a promise.</p>
-          <div class="roadmap num">
-            <div class="rm-row"><span>Windows app, private testing</span><span class="when">October 2026</span><span class="rm-status shipped"><svg class="i"><use href="#i-check"/></svg> Done</span></div>
-            <div class="rm-row"><span>Mac app on the App Store</span><span class="when">December 2026 (target)</span><span class="rm-status target"><svg class="i"><use href="#i-clock"/></svg> Target</span></div>
-            <div class="rm-row"><span>Windows free release, public download</span><span class="when">December 2026 (target)</span><span class="rm-status progress"><span class="dot"></span> In progress</span></div>
-          </div>
-        </div></section>
-
         <section class="sec alt"><div class="wrap">
           <h2>Questions</h2>
           <div class="faq" id="faq">
             <div><button aria-expanded="true">Is it free?<span class="plus">+</span></button><div class="ans on">Yes. Transcription runs on your PC, so it costs nothing to use. If you add a cloud key, that provider bills you directly.</div></div>
             <div><button aria-expanded="false">Where are my meetings stored?<span class="plus">+</span></button><div class="ans">In Documents\Meeting Minutes, one folder per meeting, with the audio and the Transcript as normal files you can open, back up or delete.</div></div>
-            <div><button aria-expanded="false">Why does Windows warn me when I install it?<span class="plus">+</span></button><div class="ans">The installer isn't code-signed yet, so SmartScreen doesn't know it. Choose More info, then Run anyway. Signing is planned.</div></div>
-            <div><button aria-expanded="false">Which languages does it understand?<span class="plus">+</span></button><div class="ans">English and Vietnamese. You can set the language per meeting or let it detect.</div></div>
+            <div><button aria-expanded="false">Why does Windows warn me when I install it?<span class="plus">+</span></button><div class="ans">The installer is unsigned, so SmartScreen may warn you. You can verify its SHA-256 checksum and GitHub artifact attestation on the <a data-web="web-support">support page</a>, or build it yourself from the public source. After verifying, choose More info, then Run anyway.</div></div>
+            <div><button aria-expanded="false">Which languages does it understand?<span class="plus">+</span></button><div class="ans">English, Vietnamese, Spanish, French, German, Portuguese, Italian, Japanese, Korean, Chinese and Hindi. Choose one for a Meeting or let the app detect it automatically.</div></div>
             <div><button aria-expanded="false">Do I need a powerful PC?<span class="plus">+</span></button><div class="ans">Any Windows 11 PC from the last few years works. The setup guide picks a model that suits your hardware; faster PCs can use more accurate models.</div></div>
             <div><button aria-expanded="false">If I uninstall it, do I lose my meetings?<span class="plus">+</span></button><div class="ans">No. Uninstalling never touches Documents\Meeting Minutes. You can also remove the downloaded models if you want the space back.</div></div>
           </div>
@@ -828,7 +810,7 @@ Model: small (downloaded) · Provider: ollama
           <h2 style="font:600 28px/36px var(--font-display);letter-spacing:-.02em">Try it on your next call</h2>
           <div class="cta">
             <a class="btn btn-primary rel-pub" style="height:44px;padding:0 20px;font-size:15px;color:var(--canvas)"><svg class="i"><use href="#i-download"/></svg> Download for Windows</a>
-            <span class="status-line rel-none" hidden><b>Free for Windows</b> December 2026 (target)</span>
+            <span class="status-line rel-none" hidden>The Windows app is coming.</span>
           </div>
         </div></section>
       </div>
@@ -1033,8 +1015,6 @@ $$("[data-rel]").forEach(b => b.addEventListener("click", () => {
   $$("[data-rel]").forEach(x => x.setAttribute("aria-pressed", x === b));
   const pub = b.dataset.rel === "pub";
   $$(".rel-pub").forEach(x => x.hidden = !pub); $$(".rel-none").forEach(x => x.hidden = pub);
-  $$(".rm-row")[2].querySelector(".rm-status").innerHTML = pub ? '<svg class="i"><use href="#i-check"/></svg> Available' : '<span class="dot"></span> In progress';
-  $$(".rm-row")[2].querySelector(".rm-status").className = "rm-status " + (pub ? "shipped" : "progress");
 }));
 $$("#faq button").forEach(b => b.addEventListener("click", () => {
   const open = b.getAttribute("aria-expanded") !== "true";

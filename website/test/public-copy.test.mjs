@@ -11,6 +11,12 @@ const run = promisify(execFile);
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const installer = 'https://github.com/ducdv98/meeting-minutes/releases/download/v0.1.0/Meeting-Minutes.exe';
 
+function faqLanguageList(home) {
+  const answer = home.match(/id="faq-lang"[^>]*><div class="answer-inner">([^<]+)/)?.[1];
+  assert.ok(answer, 'home page has a language FAQ answer');
+  return answer.match(/^(.+?)\. Choose one for a Meeting or let the app detect it automatically\./)?.[1];
+}
+
 async function* publicFiles(dir) {
   for (const entry of await readdir(dir, { withFileTypes: true })) {
     const path = join(dir, entry.name);
@@ -54,6 +60,17 @@ test('Windows download is coming without a date before a published Release', asy
     const llms = await readFile(join(output, 'llms.txt'), 'utf8');
     assert.match(llms, /Windows app is coming/);
     assert.doesNotMatch(llms, /roadmap|December 2026|\(target\)/i);
+  });
+});
+
+test('home feature copy and llms.txt agree with the language FAQ', async () => {
+  await buildAndCheck(null, async output => {
+    const home = await readFile(join(output, 'index.html'), 'utf8');
+    const llms = await readFile(join(output, 'llms.txt'), 'utf8');
+    const languages = faqLanguageList(home);
+    assert.ok(languages);
+    assert.ok(home.includes(`Transcription your way</h3><p>${languages}. Auto-detect`));
+    assert.ok(llms.includes(`${languages}. Auto-detect`));
   });
 });
 

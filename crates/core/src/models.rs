@@ -4,9 +4,19 @@ use std::{
     fs::{self, OpenOptions},
     io::{Read, Write},
     path::{Path, PathBuf},
-    sync::atomic::{AtomicBool, Ordering},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Mutex,
+    },
     time::Duration,
 };
+
+static DOWNLOAD_FINALIZATION: Mutex<()> = Mutex::new(());
+
+pub fn cancel_download(cancel: &AtomicBool) {
+    let _finalization = DOWNLOAD_FINALIZATION.lock().unwrap();
+    cancel.store(true, Ordering::SeqCst);
+}
 
 pub struct ModelInfo {
     pub name: &'static str,
@@ -72,9 +82,20 @@ pub fn delete(models_dir: &Path, info: &ModelInfo) -> Result<(), ProcessingError
 pub fn install_from_reader(
     models_dir: &Path,
     info: &ModelInfo,
+    body: impl Read,
+    progress: &mut dyn FnMut(u64),
+    cancel: &AtomicBool,
+) -> Result<PathBuf, ProcessingError> {
+    install_from_reader_inner(models_dir, info, body, progress, cancel, || {})
+}
+
+fn install_from_reader_inner(
+    models_dir: &Path,
+    info: &ModelInfo,
     mut body: impl Read,
     progress: &mut dyn FnMut(u64),
     cancel: &AtomicBool,
+    before_finalization: impl FnOnce(),
 ) -> Result<PathBuf, ProcessingError> {
     fs::create_dir_all(models_dir)?;
     let target = model_path(models_dir, info);
@@ -112,6 +133,11 @@ pub fn install_from_reader(
         }
         file.sync_all()?;
         drop(file);
+        before_finalization();
+        let _finalization = DOWNLOAD_FINALIZATION.lock().unwrap();
+        if cancel.load(Ordering::SeqCst) {
+            return Err(ProcessingError::Cancelled);
+        }
         if target.exists() {
             if is_installed(models_dir, info) {
                 fs::remove_file(&part)?;
@@ -200,6 +226,23 @@ mod tests {
             ),
             Err(ProcessingError::Cancelled)
         ));
+        assert!(!model_path(dir.path(), &TEST_MODEL).exists());
+        assert!(!dir.path().join("fixture.bin.part").exists());
+    }
+
+    #[test]
+    fn cancellation_just_before_finalization_does_not_install_model() {
+        let dir = tempfile::tempdir().unwrap();
+        let cancel = AtomicBool::new(false);
+        let result = install_from_reader_inner(
+            dir.path(),
+            &TEST_MODEL,
+            Cursor::new([1, 2, 3, 4]),
+            &mut |_| {},
+            &cancel,
+            || cancel_download(&cancel),
+        );
+        assert!(matches!(result, Err(ProcessingError::Cancelled)));
         assert!(!model_path(dir.path(), &TEST_MODEL).exists());
         assert!(!dir.path().join("fixture.bin.part").exists());
     }

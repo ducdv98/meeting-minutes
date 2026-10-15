@@ -562,7 +562,10 @@ impl SpeechEngine for EngineChain<'_> {
             Err(ProcessingError::Deferred) if recording => {
                 Err("Language detection deferred".into())
             }
-            Err(_) => Ok(Language::En),
+            Err(error) => {
+                log::warn!(target: "meeting_minutes_events", "Local language detection unavailable ({error}); using English");
+                Ok(Language::En)
+            }
         }
     }
     fn transcribe(
@@ -1724,7 +1727,12 @@ impl Processor {
 #[cfg(test)]
 mod chosen_model_tests {
     use super::*;
-    use std::sync::atomic::AtomicUsize;
+    use crate::{
+        model_downloads::ModelDownloads,
+        models::{self, MODELS, VAD_MODEL},
+    };
+    use std::sync::{atomic::AtomicUsize, mpsc, Mutex};
+    use std::thread;
 
     struct Cloud {
         calls: Arc<AtomicUsize>,
@@ -1766,6 +1774,123 @@ mod chosen_model_tests {
         ) -> Result<Vec<RawSegment>, ProcessingError> {
             Ok(vec![])
         }
+    }
+
+    struct Managed {
+        language: Arc<Mutex<Option<Language>>>,
+    }
+    impl CloudEngine for Managed {
+        fn name(&self) -> &str {
+            "Managed"
+        }
+        fn needs_detected_language(&self) -> bool {
+            true
+        }
+        fn transcribe_span(
+            &mut self,
+            _: &[f32],
+            language: Language,
+            _: Option<&str>,
+            _: &AtomicBool,
+        ) -> Result<Vec<RawSegment>, EngineError> {
+            *self.language.lock().unwrap() = Some(language);
+            Ok(vec![])
+        }
+    }
+
+    struct DetectsVietnamese;
+    impl SpeechEngine for DetectsVietnamese {
+        fn backend(&self) -> &str {
+            "CPU"
+        }
+        fn thread_count(&self) -> usize {
+            1
+        }
+        fn detect_language(&mut self, _: &[f32], _: &AtomicBool) -> Result<Language, String> {
+            Ok(Language::Vi)
+        }
+        fn transcribe(
+            &mut self,
+            _: &[f32],
+            _: Language,
+            _: Option<&str>,
+            _: &mut dyn FnMut(f32),
+            _: &AtomicBool,
+        ) -> Result<Vec<RawSegment>, ProcessingError> {
+            Ok(vec![])
+        }
+    }
+
+    #[test]
+    fn managed_auto_without_local_download_uses_english() {
+        let dir = tempfile::tempdir().unwrap();
+        let downloads = ModelDownloads::new(dir.path().into());
+        let seen = Arc::new(Mutex::new(None));
+        let cancel = Arc::new(AtomicBool::new(false));
+        let (sent, received) = mpsc::channel();
+        let worker_cancel = cancel.clone();
+        let handle = thread::spawn(move || {
+            let mut chain = EngineChain::new(
+                vec![Box::new(Managed {
+                    language: seen.clone(),
+                })],
+                "base",
+                Box::new(move || {
+                    downloads.wait_for(&MODELS[0], &worker_cancel, &mut |_| {})?;
+                    Ok(Box::new(DetectsVietnamese))
+                }),
+            );
+            let language = chain.detect_language(&[0.5; 16], &cancel).unwrap();
+            chain
+                .transcribe(&[0.5; 16], language, None, &mut |_| {}, &cancel)
+                .unwrap();
+            sent.send((language, *seen.lock().unwrap())).unwrap();
+        });
+        assert_eq!(
+            received.recv_timeout(Duration::from_secs(2)).unwrap(),
+            (Language::En, Some(Language::En))
+        );
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn managed_auto_waits_for_active_local_download_then_detects() {
+        let dir = tempfile::tempdir().unwrap();
+        let downloads = ModelDownloads::new(dir.path().into());
+        downloads.start("base").unwrap();
+        let waiter = downloads.clone();
+        let (sent, received) = mpsc::channel();
+        let handle = thread::spawn(move || {
+            let mut chain = EngineChain::new(
+                vec![Box::new(Managed {
+                    language: Arc::new(Mutex::new(None)),
+                })],
+                "base",
+                Box::new(move || {
+                    waiter.wait_for(&MODELS[0], &AtomicBool::new(false), &mut |_| {})?;
+                    Ok(Box::new(DetectsVietnamese))
+                }),
+            );
+            sent.send(chain.detect_language(&[0.5; 16], &AtomicBool::new(false)))
+                .unwrap();
+        });
+        assert!(received.recv_timeout(Duration::from_millis(50)).is_err());
+        std::fs::File::create(models::model_path(dir.path(), &MODELS[0]))
+            .unwrap()
+            .set_len(MODELS[0].size)
+            .unwrap();
+        std::fs::File::create(models::model_path(dir.path(), &VAD_MODEL))
+            .unwrap()
+            .set_len(VAD_MODEL.size)
+            .unwrap();
+        assert_eq!(
+            received
+                .recv_timeout(Duration::from_secs(2))
+                .unwrap()
+                .unwrap(),
+            Language::Vi
+        );
+        handle.join().unwrap();
     }
 
     #[test]

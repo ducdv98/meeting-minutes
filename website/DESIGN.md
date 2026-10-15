@@ -2,7 +2,7 @@
 
 Design spec for `meeting-minutes.tech`. The website uses the app's identity: every colour, font, radius, motion value and voice rule comes from `docs/design/visual-identity.md`, and this file only adds what is specific to the website. If the two disagree, the identity file wins.
 
-Status and roadmap copy must be plain about what exists, dated, and never overstate availability.
+Status copy must be plain about what exists and never overstate availability. Do not publish a roadmap or target dates.
 
 ## Intent
 
@@ -27,16 +27,15 @@ In this order:
 1. **Hero.** Headline (`--display`, sentence case, at most two lines), one sentence beneath it (`--text-lg`, `--ink-muted`), the primary action, and a status line under the button.
    - Headline direction: "Your meetings, written down and on your PC." Final copy follows the voice rules.
    - Primary action, when a Release is published: "Download for Windows" (ink primary button) with the version and size under it, plus "Windows 11 · Free · unsigned, see why" linking to the SmartScreen note.
-   - With no published Release: no download button. Show "Free for Windows: December 2026 (target)" and a link to the roadmap.
+   - With no published Release: no download button. Say only that the Windows app is coming.
    - Below: a large real screenshot of the Meeting view (Transcript, Summary with Citations), `--radius-lg`, 1px `--line` edge, no device frame, light screenshot in light mode and dark in dark.
-2. **What it does.** Three short blocks in a row (stacked on mobile), each a `--heading-sm` title and one or two sentences, no icons in bubbles: Record any call (Microphone and System audio, any meeting app). Transcription your way (English and Vietnamese; local Whisper by default, or the user's own Groq or Gemini key). Answers with Citations (every Summary item and Answer points to the moment it came from).
+2. **What it does.** Three short blocks in a row (stacked on mobile), each a `--heading-sm` title and one or two sentences, no icons in bubbles: Record any call (Microphone and System audio, any meeting app). Transcription your way (the eleven Meeting languages with Auto-detect; local Whisper by default, or the user's own Groq or Gemini key). Answers with Citations (every Summary item and Answer points to the moment it came from).
 3. **Product sections.** Two or three 5/7 text-and-screenshot rows, each showing one real feature: Ask with cited Answers; the Transcript with Speaker labels and playback; Library search. Screenshots of real UI only.
 4. **Privacy, plainly.** A `--panel` section: what stays on the PC (the Library folder), what goes to a provider under the user's own key (audio to Groq or Gemini for transcription and Transcript text to Gemini for Correction once a key is added; Transcript text to Gemini, OpenAI or Anthropic for Summary and Ask only when the user clicks), that Gemini's free tier may use content for training, no telemetry, no account. Link to the privacy policy.
 5. **Works with any call app.** One sentence: it records what the PC plays and what the microphone hears, so Zoom, Teams, Google Meet and others work without an integration. Text only, no third-party logos.
-6. **Roadmap.** A dated list, one row per milestone, month and year, future items marked "target": Mac App Store, December 2026 (target); Windows app, December 2026 (target); later items only when dated. Each row shows its status (Shipped, In progress, Target) as text, not colour alone.
-7. **FAQ.** Full-width accordion rows with 1px `--line` dividers and a `+` that rotates to `×`. Questions: Is it free? Where are my meetings stored? Does anything get uploaded? Why does Windows warn me when I install it? Which languages does it understand? Do I need a powerful PC? How do I uninstall it, and do I keep my meetings?
-8. **Closing call to action.** Centred: one line in `--heading-lg` and the same primary action as the hero (or the target date when nothing is published).
-9. **Footer.** Wordmark, one sentence, links (Pricing, Privacy, Support, Changelog, GitHub), "Made by Duc Dao", `admin@meeting-minutes.tech`, and the year.
+6. **FAQ.** Full-width accordion rows with 1px `--line` dividers and a `+` that rotates to `×`. Questions: Is it free? Where are my meetings stored? Does anything get uploaded? Why does Windows warn me when I install it? Which languages does it understand? Do I need a powerful PC? How do I uninstall it, and do I keep my meetings?
+7. **Closing call to action.** Centred: one line in `--heading-lg` and the same primary action as the hero (or the Windows app is coming status when nothing is published).
+8. **Footer.** Wordmark, one sentence, links (Pricing, Privacy, Support, Changelog, GitHub), "Made by Duc Dao", `admin@meeting-minutes.tech`, and the year.
 
 Do not add customer logos, metrics, testimonials or use-case pages.
 
@@ -58,7 +57,7 @@ One entry per published Release, newest first: version, date and notes, generate
 
 ### `llms.txt`
 
-A plain-text summary of the product, its status and dates, the maker and the contact, with links to each page.
+A plain-text summary of the product and its availability, the maker and the contact, with links to each page.
 
 ## Components
 
@@ -67,7 +66,6 @@ Built from the identity's tokens:
 - **Buttons:** primary (ink fill, canvas text), secondary (transparent, `--line-strong` border, ink text), and text link with an arrow that moves 4px on hover. 40px tall (44px on touch), `--radius-sm`, weight 500.
 - **Screenshot frame:** image, `--radius-lg`, 1px `--line` edge, no shadow. Alt text describes what the screenshot shows.
 - **Accordion row:** button with `aria-expanded`, the whole row clickable, a 180ms height transition.
-- **Status row (roadmap):** milestone, month and year, status text.
 
 ## Motion
 
@@ -95,7 +93,7 @@ WCAG AA contrast (guaranteed by the identity tokens), semantic headings in order
 - [ ] Every colour, font, radius and motion value comes from the identity tokens.
 - [ ] Side by side with the app, the site reads as the same product.
 - [ ] Nothing on the site claims a download, user, metric or feature that does not exist.
-- [ ] The download area matches the latest published Release, or shows the target date when there is none.
-- [ ] Roadmap rows carry month, year and status text.
+- [ ] The download area matches the latest published Release, or says only that the Windows app is coming when there is none.
+- [ ] No roadmap or target date appears in public copy.
 - [ ] Works at all listed widths, in light and dark, with reduced motion, by keyboard.
 - [ ] No third-party requests in the browser's network panel.

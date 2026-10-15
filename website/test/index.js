@@ -4,3 +4,4 @@ import './changelog.test.mjs';
 import './public-copy.test.mjs';
 import './pricing.test.mjs';
 import './languages.test.mjs';
+import './language-consistency.test.mjs';

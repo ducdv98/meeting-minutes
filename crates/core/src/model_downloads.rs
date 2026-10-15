@@ -144,7 +144,7 @@ impl ModelDownloads {
             .lock()
             .map_err(|error| error.to_string())?;
         if let Some(entry) = entries.get(id) {
-            entry.cancel.store(true, Ordering::SeqCst);
+            models::cancel_download(&entry.cancel);
         }
         self.inner.changed.notify_all();
         Ok(())
@@ -286,6 +286,23 @@ impl ModelDownloads {
             }
             let status = self.status_for(model);
             progress(status.progress);
+            if status.state != DownloadState::Downloading {
+                let message = match status.state {
+                    DownloadState::Failed => format!(
+                        "Local Whisper model {} download failed: {}",
+                        model.name,
+                        status.error.unwrap_or_else(|| "unknown error".into())
+                    ),
+                    DownloadState::Cancelled => {
+                        format!("Local Whisper model {} download was cancelled", model.name)
+                    }
+                    _ => format!(
+                        "Local Whisper model {} is not downloaded and no download is running",
+                        model.name
+                    ),
+                };
+                return Err(ProcessingError::Download(message));
+            }
             let entries = self.inner.entries.lock().unwrap();
             let _ = self
                 .inner
@@ -357,6 +374,7 @@ mod tests {
     fn processing_waits_until_whisper_and_vad_are_ready() {
         let dir = tempfile::tempdir().unwrap();
         let downloads = ModelDownloads::new(dir.path().into());
+        assert!(downloads.start_info(&FIXTURE).unwrap());
         let waiter = downloads.clone();
         let (waiting, observed) = mpsc::channel();
         let handle = thread::spawn(move || {
@@ -365,7 +383,6 @@ mod tests {
             })
         });
         assert_eq!(observed.recv().unwrap(), 0);
-        assert!(downloads.start_info(&FIXTURE).unwrap());
         downloads
             .run_with(&FIXTURE, &|_| {}, |_, progress| {
                 progress(50);
@@ -381,6 +398,36 @@ mod tests {
         let (model, vad) = handle.join().unwrap().unwrap();
         assert!(model.exists());
         assert!(vad.exists());
+    }
+
+    #[test]
+    fn processing_does_not_wait_for_a_download_that_is_not_running() {
+        let dir = tempfile::tempdir().unwrap();
+        let downloads = ModelDownloads::new(dir.path().into());
+        let cancel = AtomicBool::new(false);
+        let error = downloads
+            .wait_for(&FIXTURE, &cancel, &mut |_| {})
+            .unwrap_err();
+        assert!(error.to_string().contains("no download is running"));
+    }
+
+    #[test]
+    fn processing_stops_waiting_after_failed_or_cancelled_download() {
+        for (result, expected) in [
+            (ProcessingError::Checksum, "failed: Model checksum mismatch"),
+            (ProcessingError::Cancelled, "was cancelled"),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let downloads = ModelDownloads::new(dir.path().into());
+            downloads.start_info(&FIXTURE).unwrap();
+            downloads
+                .run_with(&FIXTURE, &|_| {}, |_, _| Err(result))
+                .unwrap_err();
+            let error = downloads
+                .wait_for(&FIXTURE, &AtomicBool::new(false), &mut |_| {})
+                .unwrap_err();
+            assert!(error.to_string().contains(expected));
+        }
     }
 
     #[test]

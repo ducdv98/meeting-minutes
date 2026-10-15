@@ -11,3 +11,6 @@ Status: ready-for-agent
 - [x] Processing shows "Waiting for model download (x%)" and continues when the download finishes
 - [x] A failed or cancelled download leaves no partial model file
 - [x] No UI text says "Downloads when first used"
+- [x] Managed Auto-detect uses English when no local model download is active, and detects after an active download completes
+- [x] Processing stops waiting when a model download fails, is cancelled, or was never started
+- [x] Cancellation during finalization does not install the model file
