@@ -331,8 +331,8 @@ export default function MeetingView({ id, onBack, onRenamed, onOpenSettings, ope
       {transcribeOpen && <TranscribeDialog again={!!transcript} onClose={() => setTranscribeOpen(false)} onTranscribe={(chosen) => void runTranscription(chosen)} onOpenSettings={() => onOpenSettings("speech-to-text")} />}
       {detail.audio_path && audioOpen ? <Player ref={playerHandle} audio_path={detail.audio_path} duration_ms={detail.duration_ms} markers={detail.markers} highlight={highlight} onPlayerChange={onPlayerChange} onPosition={onPosition} /> : !detail.audio_path ? <p className="mx-7 mt-4 text-sm text-ink-muted">No audio yet</p> : null}
       <div className="mt-4 grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_380px] border-t border-line max-[900px]:grid-cols-[minmax(0,1fr)_minmax(300px,42%)] max-[680px]:grid-cols-1">
-        <section ref={transcriptScroll} aria-label="Transcript" className="min-h-0 min-w-0 overflow-y-auto px-7 pb-8 pt-2 max-[680px]:max-h-[50vh]">
-          <div className="sticky top-0 z-10 flex items-center gap-2 bg-canvas py-2.5"><h2 className="m-0 mr-auto font-display text-heading-sm">Transcript</h2>
+        <section ref={transcriptScroll} aria-label="Transcript" className="min-h-0 min-w-0 overflow-y-auto px-7 pb-8 max-[680px]:max-h-[50vh]">
+          <div className="sticky top-0 z-10 flex items-center gap-2 bg-canvas pb-2.5 pt-[18px]"><h2 className="m-0 mr-auto font-display text-heading-sm">Transcript</h2>
             {showingDraft ? <Badge className="rounded-full border border-line bg-transparent">Draft · Transcribing…</Badge> : transcript && <Badge className="rounded-full border border-line bg-transparent">Revision {transcript.revision} · {transcript.model.join(", ")}</Badge>}
             {transcript && !job && <Button variant="ghost" disabled={recordingMeetingId === id} onClick={() => setTranscribeOpen(true)}><RefreshCw size={16} strokeWidth={1.5} />Transcribe again with…</Button>}
           </div>
