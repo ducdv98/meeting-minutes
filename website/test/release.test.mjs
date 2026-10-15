@@ -68,3 +68,17 @@ test('notes escape HTML and render only safe paragraphs, lists and links', () =>
   assert.match(html, /<ul>\s*<li>Fixed <a href=/);
   assert.equal(escapeHtml('"<&'), '&quot;&lt;&amp;');
 });
+
+test('release notes link to a VirusTotal scan only for a SHA-256 file URL', () => {
+  const hash = 'a'.repeat(64);
+  const html = renderNotes(`[VirusTotal scan](https://www.virustotal.com/gui/file/${hash})\n\n[bad](https://www.virustotal.com/gui/file/not-a-hash)`);
+  assert.match(html, new RegExp(`<a href="https://www\\.virustotal\\.com/gui/file/${hash}">VirusTotal scan</a>`));
+  assert.doesNotMatch(html, /href="https:\/\/www\.virustotal\.com\/gui\/file\/not-a-hash"/);
+});
+
+test('generated verification notes render without workflow markers', () => {
+  const html = renderNotes('<!-- installer-verification -->\n## Verify the installer\nSHA-256: abc\n<!-- /installer-verification -->');
+  assert.match(html, /<h3>Verify the installer<\/h3>/);
+  assert.match(html, /SHA-256: abc/);
+  assert.doesNotMatch(html, /installer-verification/);
+});

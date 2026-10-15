@@ -43,7 +43,7 @@ test('pricing is reachable and describes current and planned access', async () =
 
     const plans = [...pricing.matchAll(/<article class="plan-card">([\s\S]*?)<\/article>/g)].map(match => match[1]);
     assert.equal(plans.length, 2, 'Free and Pro are the only plan cards');
-    assert.match(plans[0], /<h2>Free plan<\/h2>[\s\S]*?Windows release: December 2026 \(target\)/i);
+    assert.match(plans[0], /<h2>Free plan<\/h2>[\s\S]*?Windows app is coming/i);
     assert.doesNotMatch(plans[0], /Available now/i);
     assert.match(plans[0], /Account[\s\S]*?Managed transcription allowance[\s\S]*?Managed access: Planned/i);
     assert.match(plans[1], /<h2>Pro plan<\/h2>[\s\S]*?Coming soon/i);
@@ -91,7 +91,7 @@ test('Free plan is available when a Windows Release is published', async () => {
     assert.ok(free);
     assert.match(free, /<h2>Free plan<\/h2>[\s\S]*?<p class="plan-status">Available now<\/p>/);
     assert.match(free, /\$0 forever/);
-    assert.doesNotMatch(free, /Windows release: December 2026 \(target\)/);
+    assert.doesNotMatch(free, /Windows app is coming/);
   } finally {
     await rm(temp, { recursive: true, force: true });
   }

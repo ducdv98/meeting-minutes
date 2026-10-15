@@ -6,6 +6,6 @@
 
 Status: ready-for-agent
 
-- [ ] No roadmap section or roadmap link on any page
-- [ ] No target date on the site or in the README
-- [ ] Website tests cover the no-Release and with-Release states
+- [x] No roadmap section or roadmap link on any page
+- [x] No target date on the site or in the README
+- [x] Website tests cover the no-Release and with-Release states

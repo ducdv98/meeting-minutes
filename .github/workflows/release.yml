@@ -22,6 +22,9 @@ jobs:
       GGML_AVX512: "OFF"
     permissions:
       contents: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -79,3 +82,47 @@ jobs:
           releaseDraft: true
           includeUpdaterJson: true
           args: --bundles nsis --config src-tauri/tauri.release.conf.json --config src-tauri/tauri.vulkan.conf.json
+      - name: Locate NSIS installer
+        id: installer
+        shell: pwsh
+        run: |
+          $directory = Join-Path $env:CARGO_TARGET_DIR 'release/bundle/nsis'
+          $installers = @(Get-ChildItem -LiteralPath $directory -Filter '*.exe' -File)
+          if ($installers.Count -ne 1) { throw "Expected one NSIS installer, found $($installers.Count)" }
+          "path=$($installers[0].FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+      - name: Attest installer build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: ${{ steps.installer.outputs.path }}
+      - name: Upload checksum and add verification links to draft notes
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          INSTALLER_PATH: ${{ steps.installer.outputs.path }}
+        run: |
+          $installer = Get-Item -LiteralPath $env:INSTALLER_PATH
+          $hash = (Get-FileHash -LiteralPath $installer.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          $checksum = "$($installer.FullName).sha256"
+          "$hash  $($installer.Name)" | Set-Content -LiteralPath $checksum -Encoding utf8
+          gh release upload $env:RELEASE_TAG $checksum --clobber
+          if ($LASTEXITCODE -ne 0) { throw 'Could not upload installer checksum' }
+
+          $release = gh release view $env:RELEASE_TAG --json body | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'Could not read draft release notes' }
+          $body = [string]$release.body
+          $body = ($body -replace '(?s)\s*<!-- installer-verification -->.*?<!-- /installer-verification -->', '').TrimEnd()
+          $verification = @(
+            '<!-- installer-verification -->'
+            '## Verify the installer'
+            "SHA-256: $hash"
+            "[Download checksum](https://github.com/$env:GH_REPO/releases/download/$env:RELEASE_TAG/$($installer.Name).sha256)"
+            "[VirusTotal scan](https://www.virustotal.com/gui/file/$hash) (results appear after the file is scanned)."
+            'Verify the build provenance with `gh attestation verify <installer> --repo <owner>/<repo>`.'
+            '<!-- /installer-verification -->'
+          ) -join [Environment]::NewLine
+          $notes = @($body, $verification) -join ([Environment]::NewLine + [Environment]::NewLine)
+          $notesFile = Join-Path $env:RUNNER_TEMP 'release-notes.md'
+          $notes | Set-Content -LiteralPath $notesFile -Encoding utf8
+          gh release edit $env:RELEASE_TAG --notes-file $notesFile
+          if ($LASTEXITCODE -ne 0) { throw 'Could not update draft release notes' }

@@ -37,6 +37,8 @@ async function buildAndCheck(releases, check) {
           (article, before, _notes, after) => before.includes('Cloud transcription · In development') ? article : before + after)
         : content;
       assert.doesNotMatch(siteCopy, /beta/i, `${path} contains Beta in site-authored copy`);
+      assert.doesNotMatch(siteCopy, /roadmap|December 2026|\(target\)/i,
+        `${path} contains a roadmap or target date`);
     }
     await check(output);
   } finally {
@@ -44,11 +46,14 @@ async function buildAndCheck(releases, check) {
   }
 }
 
-test('public copy has no Beta when Windows has no published Release', async () => {
+test('Windows download is coming without a date before a published Release', async () => {
   await buildAndCheck(null, async output => {
     const home = await readFile(join(output, 'index.html'), 'utf8');
-    assert.match(home, /Free for Windows:<\/strong> December 2026 \(target\)/);
+    assert.match(home, /Windows app is coming/);
     assert.doesNotMatch(home, /Download for Windows/);
+    const llms = await readFile(join(output, 'llms.txt'), 'utf8');
+    assert.match(llms, /Windows app is coming/);
+    assert.doesNotMatch(llms, /roadmap|December 2026|\(target\)/i);
   });
 });
 
@@ -62,8 +67,22 @@ test('public copy has no Beta with a published Windows Release', async () => {
     assert.ok(home.includes(`href="${installer}"`), 'download links to the published installer');
     assert.match(home, /Version v0\.1\.0 · 14 MB · Windows 11 · Free · unsigned/);
     assert.match(home, /href="\/support\/#smartscreen">see why/);
+    const llms = await readFile(join(output, 'llms.txt'), 'utf8');
+    assert.doesNotMatch(llms, /roadmap|December 2026|\(target\)/i);
     const changelog = await readFile(join(output, 'changelog', 'index.html'), 'utf8');
     assert.match(changelog, /<div class="notes"><p>First beta<\/p><\/div>/);
+  });
+});
+
+test('support explains how to verify or build the unsigned installer', async () => {
+  await buildAndCheck(null, async output => {
+    const support = await readFile(join(output, 'support', 'index.html'), 'utf8');
+    assert.match(support, /free and its source is public[\s\S]*unsigned/i);
+    assert.match(support, /gh attestation verify [^<]+ --repo ducdv98\/meeting-minutes/);
+    assert.match(support, /Get-FileHash/);
+    assert.match(support, /\.sha256/);
+    assert.match(support, /build it yourself/i);
+    assert.match(support, /More info[\s\S]*Run anyway/);
   });
 });
 

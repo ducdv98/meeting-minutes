@@ -6,7 +6,13 @@
   <div class="support-shot">{{SCREEN_DIAGNOSTICS}}</div>
   <h2>Choose a transcription model</h2><p>The first-run guide recommends a model for your PC. You can review the choice before downloading it.</p>
   <div class="support-shot">{{SCREEN_FIRSTRUN_MODEL}}</div>
-  <h2 id="smartscreen">Windows says it protected your PC</h2><p>The installer is unsigned, so Windows SmartScreen may warn you. Download the installer only through this site, then choose <strong>More info</strong> and <strong>Run anyway</strong> if you trust the file. Code signing is planned.</p>
+  <h2 id="smartscreen">Windows says it protected your PC</h2><p>Meeting Minutes is free and its source is public. The installer is unsigned because we do not use a paid code-signing certificate. Windows SmartScreen may warn you. Download it only from this site or the <a href="https://github.com/ducdv98/meeting-minutes/releases">GitHub Releases page</a>. After checking the file and deciding you trust it, choose <strong>More info</strong> and <strong>Run anyway</strong> if Windows offers those options.</p>
+  <h2>Verify the installer</h2><ol class="steps">
+    <li>Download the installer and its matching <code>.sha256</code> file from the same GitHub Release.</li>
+    <li>In PowerShell, run <code>Get-FileHash ".\installer.exe" -Algorithm SHA256</code>, replacing <code>installer.exe</code> with the downloaded file name. Compare the hash with the first value in the <code>.sha256</code> file.</li>
+    <li>With the <a href="https://cli.github.com/">GitHub CLI</a>, run <code>gh attestation verify ".\installer.exe" --repo ducdv98/meeting-minutes</code> using the same file name. This checks that GitHub's release workflow produced that installer.</li>
+  </ol>
+  <p>You can also <a href="https://github.com/ducdv98/meeting-minutes#develop-and-build-on-windows">build it yourself</a> from the public source.</p>
   <h2>Uninstalling</h2><p>Use Settings → Apps in Windows. Your Library in Documents\Meeting Minutes is kept. The uninstaller offers an unticked option to remove downloaded models, settings and the search index.</p>
   <p>Windows 11 x64 is supported. Windows 10 may work, but is untested.</p>
 </article>

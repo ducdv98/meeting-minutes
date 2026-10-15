@@ -24,6 +24,6 @@ The site is served by a static-only Cloudflare Worker (`wrangler.jsonc`) on the 
 3. Keep **Web Analytics** and **Bot Fight Mode** off for the zone: the privacy policy promises no analytics, and Bot Fight Mode sets a `__cf_bm` cookie.
 4. Run the **Website** workflow (or push to `main`). While screenshots are missing, the deploy job lists them in the run summary and skips deploying. After the first deploy, open https://meeting-minutes.tech/ and check HTTPS.
 
-Publishing a Release triggers the website workflow so the download URL, version, size, roadmap and Changelog refresh from GitHub Releases. Do not deploy a `--draft` build.
+Publishing a Release triggers the website workflow so the download URL, version, size and Changelog refresh from GitHub Releases. Do not deploy a `--draft` build.
 
 The Changelog shows the cloud transcription work as **In development** above the published Release notes. It does not imply a public download is available.

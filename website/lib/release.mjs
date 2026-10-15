@@ -18,6 +18,8 @@ function safeLink(raw) {
     if (url.protocol !== 'https:') return null;
     if (url.hostname === 'meeting-minutes.tech') return url.href;
     if (url.hostname === 'github.com' && url.pathname.startsWith(`/${REPO}/`)) return url.href;
+    if (url.hostname === 'www.virustotal.com' && !url.username && !url.password &&
+        !url.search && !url.hash && /^\/gui\/file\/[0-9a-f]{64}$/i.test(url.pathname)) return url.href;
   } catch { /* Text is shown without a link. */ }
   return null;
 }
@@ -42,6 +44,9 @@ export function renderNotes(markdown) {
     inList = false;
   };
   for (const line of lines) {
+    if (/^<!-- \/?installer-verification -->$/.test(line.trim())) { flush(); continue; }
+    const heading = line.match(/^## (.+)$/);
+    if (heading) { flush(); output.push(`<h3>${inlineMarkdown(heading[1])}</h3>`); continue; }
     const item = line.match(/^\s*[-*]\s+(.+)$/);
     if (item) {
       if (paragraph.length) { output.push(`<p>${inlineMarkdown(paragraph.join(' '))}</p>`); paragraph = []; }

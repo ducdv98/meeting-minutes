@@ -8,7 +8,7 @@ Your Library stays on your PC. With your own keys, audio goes to Groq for transc
 
 ## Download
 
-The first Free Beta release is not published yet; it is planned for December 2026. When it is out, download it from [meeting-minutes.tech](https://meeting-minutes.tech) or from the [GitHub Releases page](https://github.com/ducdv98/meeting-minutes/releases/latest). The app checks for updates when it starts and asks before installing one.
+The first Free Beta release is not published yet. When it is out, download it from [meeting-minutes.tech](https://meeting-minutes.tech) or from the [GitHub Releases page](https://github.com/ducdv98/meeting-minutes/releases/latest). The app checks for updates when it starts and asks before installing one.
 
 - **Supported:** Windows 11 x64. Windows 10 may work but is untested.
 - **SmartScreen:** the Beta installer is not code-signed yet, so Windows may say it protected your PC. Download it only from the links above, then choose **More info → Run anyway**. Signing is planned before the app leaves Beta.
