@@ -53,6 +53,10 @@ impl<'de> Deserialize<'de> for EngineName {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FallbackReason {
+    ManagedAllowance,
+    ManagedCapacity(String),
+    ManagedWaitlisted,
+    ManagedSuspended,
     Quota(EngineName),
     Unauthorized(EngineName),
     Offline(EngineName),
@@ -62,6 +66,18 @@ pub enum FallbackReason {
 }
 impl FallbackReason {
     fn from_saved(value: String) -> Self {
+        if value == "Managed allowance exhausted" {
+            return Self::ManagedAllowance;
+        }
+        if value == "Managed Account waitlisted" {
+            return Self::ManagedWaitlisted;
+        }
+        if value == "Managed Account suspended" {
+            return Self::ManagedSuspended;
+        }
+        if let Some(date) = value.strip_prefix("Managed capacity exhausted until ") {
+            return Self::ManagedCapacity(date.to_owned());
+        }
         if let Some(reason) = value.strip_prefix("managed ") {
             return match reason {
                 "quota" => Self::Quota(EngineName::Managed),
@@ -97,6 +113,10 @@ impl FallbackReason {
 impl fmt::Display for FallbackReason {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::ManagedAllowance => f.write_str("Managed allowance exhausted"),
+            Self::ManagedCapacity(date) => write!(f, "Managed capacity exhausted until {date}"),
+            Self::ManagedWaitlisted => f.write_str("Managed Account waitlisted"),
+            Self::ManagedSuspended => f.write_str("Managed Account suspended"),
             Self::Quota(EngineName::Managed) | Self::RateLimit(EngineName::Managed) => {
                 f.write_str("Managed transcription is busy")
             }

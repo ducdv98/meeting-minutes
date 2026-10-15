@@ -441,7 +441,7 @@ fn retry_after_waits_exactly_and_reuses_request() {
 }
 
 #[test]
-fn three_failed_retries_exhaust_provider_and_busy_codes() {
+fn operator_capacity_moves_to_next_provider_without_retry() {
     let error = r#"{"error":{"code":"CAPACITY_EXHAUSTED","retryable":true}}"#;
     let http = FakeHttp::new(
         [
@@ -454,11 +454,39 @@ fn three_failed_retries_exhaust_provider_and_busy_codes() {
     );
     let mut engine = engine(http.clone(), None);
     engine.set_sleeper(|_: Duration, _: &AtomicBool| true);
-    assert_eq!(
+    assert!(matches!(
         transcribe(&mut engine).unwrap_err(),
-        EngineError::QuotaExhausted
-    );
-    assert_eq!(http.uploads().len(), 4);
+        EngineError::ManagedCapacityExhausted(_)
+    ));
+    assert_eq!(http.uploads().len(), 1);
+}
+
+#[test]
+fn account_admission_errors_do_not_retry_managed_transcription() {
+    for (status, body, expected) in [
+        (
+            402,
+            r#"{"error":{"code":"ALLOWANCE_EXHAUSTED","retryable":false}}"#,
+            EngineError::ManagedAllowanceExhausted,
+        ),
+        (
+            403,
+            r#"{"error":{"code":"WAITLISTED","retryable":false}}"#,
+            EngineError::ManagedWaitlisted,
+        ),
+        (
+            403,
+            r#"{"error":{"code":"ACCOUNT_SUSPENDED","retryable":false}}"#,
+            EngineError::ManagedSuspended,
+        ),
+    ] {
+        let http = FakeHttp::new([Reply::Error(status, body)], false);
+        assert_eq!(
+            transcribe(&mut engine(http.clone(), None)).unwrap_err(),
+            expected
+        );
+        assert_eq!(http.uploads().len(), 1);
+    }
 }
 
 #[test]
@@ -541,10 +569,22 @@ fn managed_engine_name_and_fallback_round_trip_with_old_transcripts() {
         serde_json::from_str::<EngineName>("\"managed\"").unwrap(),
         EngineName::Managed
     );
+    for reason in [
+        FallbackReason::ManagedAllowance,
+        FallbackReason::ManagedCapacity("2026-11-01".into()),
+        FallbackReason::ManagedWaitlisted,
+        FallbackReason::ManagedSuspended,
+    ] {
+        let saved = serde_json::to_string(&reason).unwrap();
+        assert_eq!(
+            serde_json::from_str::<FallbackReason>(&saved).unwrap(),
+            reason
+        );
+    }
 }
 
 #[test]
-fn a_long_retry_after_is_capped_at_a_minute() {
+fn capacity_retry_after_does_not_pause_processing() {
     let http = FakeHttp::new(
         [
             Reply::Error(
@@ -556,14 +596,18 @@ fn a_long_retry_after_is_capped_at_a_minute() {
         false,
     );
     let waits = Arc::new(Mutex::new(Vec::new()));
-    let mut engine = engine(http, None);
+    let mut engine = engine(http.clone(), None);
     let recorded = waits.clone();
     engine.set_sleeper(move |duration, _: &AtomicBool| {
         recorded.lock().unwrap().push(duration);
         true
     });
-    transcribe(&mut engine).unwrap();
-    assert_eq!(*waits.lock().unwrap(), vec![Duration::from_secs(60)]);
+    assert!(matches!(
+        transcribe(&mut engine).unwrap_err(),
+        EngineError::ManagedCapacityExhausted(_)
+    ));
+    assert!(waits.lock().unwrap().is_empty());
+    assert_eq!(http.uploads().len(), 1);
 }
 
 #[test]

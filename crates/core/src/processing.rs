@@ -399,6 +399,14 @@ impl<'a> EngineChain<'a> {
                         }
                         let engine_name = EngineName::from(name.as_str());
                         let reason = match error {
+                            EngineError::ManagedAllowanceExhausted => {
+                                FallbackReason::ManagedAllowance
+                            }
+                            EngineError::ManagedCapacityExhausted(ref date) => {
+                                FallbackReason::ManagedCapacity(date.clone())
+                            }
+                            EngineError::ManagedWaitlisted => FallbackReason::ManagedWaitlisted,
+                            EngineError::ManagedSuspended => FallbackReason::ManagedSuspended,
                             EngineError::QuotaExhausted => FallbackReason::Quota(engine_name),
                             EngineError::Unauthorized => FallbackReason::Unauthorized(engine_name),
                             EngineError::Offline => FallbackReason::Offline(engine_name),
@@ -410,6 +418,10 @@ impl<'a> EngineChain<'a> {
                         if matches!(
                             error,
                             EngineError::QuotaExhausted
+                                | EngineError::ManagedAllowanceExhausted
+                                | EngineError::ManagedCapacityExhausted(_)
+                                | EngineError::ManagedWaitlisted
+                                | EngineError::ManagedSuspended
                                 | EngineError::Unauthorized
                                 | EngineError::Offline
                         ) {
@@ -518,12 +530,24 @@ impl SpeechEngine for EngineChain<'_> {
                     if matches!(
                         error,
                         EngineError::QuotaExhausted
+                            | EngineError::ManagedAllowanceExhausted
+                            | EngineError::ManagedCapacityExhausted(_)
+                            | EngineError::ManagedWaitlisted
+                            | EngineError::ManagedSuspended
                             | EngineError::Unauthorized
                             | EngineError::Offline
                     ) {
                         self.unavailable[index] = true;
                         let name = EngineName::from(engine.name());
                         let reason = match error {
+                            EngineError::ManagedAllowanceExhausted => {
+                                FallbackReason::ManagedAllowance
+                            }
+                            EngineError::ManagedCapacityExhausted(date) => {
+                                FallbackReason::ManagedCapacity(date)
+                            }
+                            EngineError::ManagedWaitlisted => FallbackReason::ManagedWaitlisted,
+                            EngineError::ManagedSuspended => FallbackReason::ManagedSuspended,
                             EngineError::QuotaExhausted => FallbackReason::Quota(name),
                             EngineError::Unauthorized => FallbackReason::Unauthorized(name),
                             _ => FallbackReason::Offline(name),

@@ -3,15 +3,41 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import SettingsView, { type SettingsTabId } from "./SettingsView";
 import type { AiSettings } from "./ai";
 import { acknowledgeCloudNotice, firstRunInfo, getSettings, installedModels, modelDownloadStatus, onModelDownloadStatus, updateSettings, type Settings } from "./processing";
-import { aiStatus, deleteApiKey, listAiModels, managedSendCode, managedSignIn, managedDisconnect, managedStatus, saveApiKey, testCloudApiKey, testLanguageModel, updateLanguageModels, type AiStatus } from "./ai";
+import { aiStatus, deleteApiKey, listAiModels, managedAccount, managedSendCode, managedSignIn, managedDisconnect, managedStatus, saveApiKey, testCloudApiKey, testLanguageModel, updateLanguageModels, type AiStatus } from "./ai";
 import { openLink } from "./app-info";
 import { CLOUD_NOTICE_SUMMARY, CLOUD_NOTICE_TEXT, PRIVACY_INTRO } from "./privacy-text";
 
 vi.mock("./processing", async (importOriginal) => ({ ...(await importOriginal<typeof import("./processing")>()), firstRunInfo: vi.fn(), getSettings: vi.fn(), updateSettings: vi.fn(), installedModels: vi.fn(), acknowledgeCloudNotice: vi.fn(), modelDownloadStatus: vi.fn(), onModelDownloadStatus: vi.fn() }));
-vi.mock("./ai", async (importOriginal) => ({ ...(await importOriginal<typeof import("./ai")>()), aiStatus: vi.fn(), listAiModels: vi.fn(), managedStatus: vi.fn(), managedSendCode: vi.fn(), managedSignIn: vi.fn(), managedDisconnect: vi.fn(), saveApiKey: vi.fn(), deleteApiKey: vi.fn(), updateLanguageModels: vi.fn(), testLanguageModel: vi.fn(), testCloudApiKey: vi.fn() }));
+vi.mock("./ai", async (importOriginal) => ({ ...(await importOriginal<typeof import("./ai")>()), aiStatus: vi.fn(), listAiModels: vi.fn(), managedStatus: vi.fn(), managedAccount: vi.fn(), managedSendCode: vi.fn(), managedSignIn: vi.fn(), managedDisconnect: vi.fn(), saveApiKey: vi.fn(), deleteApiKey: vi.fn(), updateLanguageModels: vi.fn(), testLanguageModel: vi.fn(), testCloudApiKey: vi.fn() }));
 vi.mock("./app-info", () => ({ openLink: vi.fn() }));
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.resetAllMocks(); });
-beforeEach(() => { vi.mocked(firstRunInfo).mockResolvedValue({ discrete_gpu: false, library_location: "D:\\Meetings" }); vi.mocked(installedModels).mockResolvedValue([]); vi.mocked(managedStatus).mockResolvedValue({ connected: false, revoked: false }); vi.mocked(modelDownloadStatus).mockResolvedValue([]); vi.mocked(onModelDownloadStatus).mockResolvedValue(() => {}); });
+beforeEach(() => { vi.mocked(firstRunInfo).mockResolvedValue({ discrete_gpu: false, library_location: "D:\\Meetings" }); vi.mocked(installedModels).mockResolvedValue([]); vi.mocked(managedStatus).mockResolvedValue({ connected: false, revoked: false }); vi.mocked(managedAccount).mockResolvedValue({ email: "person@example.com", state: "admitted", minutes_used: 0.5, minutes_remaining: 119.5, allowance_minutes: 120, resets_at: "2026-11-01T00:00:00.000Z" }); vi.mocked(modelDownloadStatus).mockResolvedValue([]); vi.mocked(onModelDownloadStatus).mockResolvedValue(() => {}); });
+
+it("shows the Account allowance when Settings opens", async () => {
+  vi.mocked(getSettings).mockResolvedValue(base); vi.mocked(aiStatus).mockResolvedValue(empty);
+  vi.mocked(managedStatus).mockResolvedValue({ connected: true, revoked: false, email: "person@example.com", enabled: true });
+  render(<SettingsView initialTab="speech-to-text" />);
+  expect(await screen.findByText(/119.5 of 120 minutes remaining this month/, {}, { timeout: 5000 })).toBeTruthy();
+  expect(managedAccount).toHaveBeenCalledOnce();
+  expect(screen.getByText(new Intl.DateTimeFormat(undefined, { dateStyle: "long" }).format(new Date("2026-11-01T00:00:00.000Z")), { exact: false })).toBeTruthy();
+});
+
+it("shows Waitlisted position and available alternatives", async () => {
+  vi.mocked(getSettings).mockResolvedValue(base); vi.mocked(aiStatus).mockResolvedValue(empty);
+  vi.mocked(managedStatus).mockResolvedValue({ connected: true, revoked: false, email: "person@example.com", enabled: false });
+  vi.mocked(managedAccount).mockResolvedValue({ email: "person@example.com", state: "waitlisted", minutes_used: 0, minutes_remaining: 120, allowance_minutes: 120, resets_at: "2026-11-01T00:00:00.000Z", waitlist_position: 3 });
+  render(<SettingsView initialTab="speech-to-text" />);
+  expect(await screen.findByText(/Waitlisted · position 3/)).toBeTruthy();
+  expect(screen.getByText(/Local Processing and Processing with your own keys keep working/)).toBeTruthy();
+});
+
+it("shows a short note for a suspended Account", async () => {
+  vi.mocked(getSettings).mockResolvedValue(base); vi.mocked(aiStatus).mockResolvedValue(empty);
+  vi.mocked(managedStatus).mockResolvedValue({ connected: true, revoked: false, email: "person@example.com", enabled: true });
+  vi.mocked(managedAccount).mockResolvedValue({ email: "person@example.com", state: "suspended", minutes_used: 0, minutes_remaining: 120, allowance_minutes: 120, resets_at: "2026-11-01T00:00:00.000Z" });
+  render(<SettingsView initialTab="speech-to-text" />);
+  expect(await screen.findByText("Your Account is suspended. Local Processing and Processing with your own keys keep working.")).toBeTruthy();
+});
 
 const noAi: AiSettings = { provider: null, ollama_model: null, openai_model: null, anthropic_model: null, gemini_model: null };
 const empty: AiStatus = { provider: null, model: null, configured: false, has_openai_key: false, has_anthropic_key: false, has_groq_key: false, has_gemini_key: false };
@@ -104,6 +130,7 @@ it("signs in to an Account from Settings", async () => {
   fireEvent.change(within(section).getByLabelText("Six-digit code"), { target: { value: "123456" } });
   fireEvent.click(within(section).getByRole("button", { name: "Sign in" }));
   expect(await within(section).findByText("Signed in as person@example.com")).toBeTruthy();
+  await waitFor(() => expect(managedAccount).toHaveBeenCalledOnce());
 });
 
 it("shows a specific sign-in error", async () => {

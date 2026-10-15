@@ -1,9 +1,10 @@
 use meeting_minutes_core::{
     ai::{AiError, HttpClient, HttpRequest, HttpResponse, Method},
     cloud::managed::{
-        base_url_from, delete_account, parse_gateway_error, refresh, request_code, verify_code,
-        GatewayErrorCode, ManagedAuthError, ManagedCredential, ManagedCredentialStore,
-        ManagedToken, MemoryManagedCredentialStore, TokenManager, GATEWAY_URL,
+        base_url_from, delete_account, get_account, parse_gateway_error, refresh, request_code,
+        verify_code, verify_code_with_token, GatewayErrorCode, ManagedAuthError, ManagedCredential,
+        ManagedCredentialStore, ManagedToken, MemoryManagedCredentialStore, TokenManager,
+        GATEWAY_URL,
     },
 };
 use std::{
@@ -51,6 +52,61 @@ fn activation_reply() -> Result<HttpResponse, AiError> {
         200,
         r#"{"client_id":"private-client","access_token":"private-access","token_type":"Bearer","expires_in":900,"refresh_token":"private-refresh"}"#,
     )
+}
+
+#[test]
+fn reads_account_allowance_and_waitlist_position() {
+    let http = FakeHttp::new(vec![reply(
+        200,
+        r#"{"email":"person@example.com","state":"waitlisted","minutes_used":0.5,"minutes_remaining":119.5,"allowance_minutes":120,"resets_at":"2026-11-01T00:00:00.000Z","waitlist_position":3}"#,
+    )]);
+    let account = get_account(
+        http.as_ref(),
+        GATEWAY_URL,
+        &ManagedToken::new("access").unwrap(),
+    )
+    .unwrap();
+    assert_eq!(account.state, "waitlisted");
+    assert_eq!(account.minutes_remaining, 119.5);
+    assert_eq!(account.waitlist_position, Some(3));
+    let request = http.requests().remove(0);
+    assert!(matches!(request.method, Method::Get));
+    assert_eq!(
+        request.headers,
+        vec![("Authorization".into(), "Bearer access".into())]
+    );
+}
+
+#[test]
+fn legacy_connection_without_an_account_keeps_its_distinct_error() {
+    let http = FakeHttp::new(vec![reply(
+        409,
+        r#"{"error":{"code":"NO_ACCOUNT","retryable":false}}"#,
+    )]);
+    let error = get_account(
+        http.as_ref(),
+        GATEWAY_URL,
+        &ManagedToken::new("legacy-access").unwrap(),
+    )
+    .unwrap_err();
+    assert_eq!(error.code, GatewayErrorCode::NoAccount);
+}
+
+#[test]
+fn links_a_legacy_installation_when_verifying_an_email_code() {
+    let http = FakeHttp::new(vec![activation_reply()]);
+    verify_code_with_token(
+        http.as_ref(),
+        GATEWAY_URL,
+        "person@example.com",
+        "123456",
+        Some(&ManagedToken::new("legacy-access").unwrap()),
+    )
+    .unwrap();
+    assert_eq!(
+        http.requests()[0].headers,
+        vec![("Authorization".into(), "Bearer legacy-access".into())]
+    );
 }
 
 fn refresh_reply(token: &str) -> Result<HttpResponse, AiError> {
@@ -102,6 +158,7 @@ fn requests_an_email_code_and_verifies_into_the_existing_token_shape() {
         &serde_json::json!({"email":"person@example.com"})
     );
     assert_eq!(requests[1].url, format!("{GATEWAY_URL}/v1/auth/verify"));
+    assert!(requests[1].headers.is_empty());
     assert_eq!(
         requests[1].body.as_ref().unwrap().json().unwrap(),
         &serde_json::json!({"email":"person@example.com","code":"123456"})

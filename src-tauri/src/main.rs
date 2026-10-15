@@ -948,11 +948,27 @@ fn account_error(error: managed::GatewayError) -> String {
             "This connection has no Account. Sign in with an email address first.".into()
         }
         GatewayErrorCode::Unauthorized => "Your sign-in expired. Sign in again.".into(),
+        GatewayErrorCode::AccountSuspended => "Your Account is suspended.".into(),
         _ if error.retryable || error.status.is_none() => {
             "Could not reach the Account service. Check your connection and try again.".into()
         }
         _ => "The Account request failed. Try again.".into(),
     }
+}
+
+#[tauri::command]
+async fn managed_account(app: AppHandle) -> Result<managed::AccountStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let managed = app.state::<Managed>();
+        let http = app.state::<Http>();
+        let token = managed.tokens.access_token().map_err(|error| match error {
+            managed::ManagedAuthError::Gateway(error) => account_error(error),
+            _ => "Your sign-in expired. Sign in again.".to_owned(),
+        })?;
+        managed::get_account(http.0.as_ref(), &managed.base, &token).map_err(account_error)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -986,15 +1002,35 @@ async fn managed_sign_in(
         }
         let managed = app.state::<Managed>();
         let http = app.state::<Http>();
-        let activation = managed::verify_code(http.0.as_ref(), &managed.base, &email, &code)
-            .map_err(account_error)?;
+        let legacy = managed
+            .store
+            .get()
+            .ok()
+            .flatten()
+            .filter(|credential| credential.email.is_none());
+        let legacy_token = if legacy.is_some() {
+            managed.tokens.access_token().ok()
+        } else {
+            None
+        };
+        let activation = managed::verify_code_with_token(
+            http.0.as_ref(),
+            &managed.base,
+            &email,
+            &code,
+            legacy_token.as_ref(),
+        )
+        .map_err(account_error)?;
+        let enabled = legacy.as_ref().is_some_and(|credential| {
+            credential.client_id == activation.client_id && credential.enabled
+        });
         managed
             .store
             .set(&ManagedCredential {
                 client_id: activation.client_id,
                 refresh_token: activation.refresh_token,
                 email: Some(email),
-                enabled: false,
+                enabled,
             })
             .map_err(|_| "Could not save your Account sign-in.".to_owned())?;
         managed.tokens.reset();
@@ -3462,6 +3498,7 @@ fn main() {
             delete_model_download,
             ai_status,
             managed_status,
+            managed_account,
             managed_send_code,
             managed_sign_in,
             managed_disconnect,

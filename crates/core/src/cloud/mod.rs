@@ -18,6 +18,10 @@ use std::{fmt, sync::atomic::AtomicBool, time::Duration};
 pub enum EngineError {
     RateLimited { retry_after: Duration },
     QuotaExhausted,
+    ManagedAllowanceExhausted,
+    ManagedCapacityExhausted(String),
+    ManagedWaitlisted,
+    ManagedSuspended,
     Unauthorized,
     Offline,
     Cancelled,
@@ -31,6 +35,10 @@ impl fmt::Display for EngineError {
         f.write_str(match self {
             Self::RateLimited { .. } => "Rate limit reached",
             Self::QuotaExhausted => "Daily limit reached",
+            Self::ManagedAllowanceExhausted => "Managed transcription allowance exhausted",
+            Self::ManagedCapacityExhausted(_) => "Managed transcription paused",
+            Self::ManagedWaitlisted => "Account is Waitlisted",
+            Self::ManagedSuspended => "Account is suspended",
             Self::Unauthorized => "API key rejected",
             Self::Offline => "Provider unavailable",
             Self::Cancelled => "Processing cancelled",
@@ -46,6 +54,10 @@ impl EngineError {
         match self {
             Self::RateLimited { .. } => "rate_limit",
             Self::QuotaExhausted => "quota",
+            Self::ManagedAllowanceExhausted => "allowance_exhausted",
+            Self::ManagedCapacityExhausted(_) => "capacity_exhausted",
+            Self::ManagedWaitlisted => "waitlisted",
+            Self::ManagedSuspended => "account_suspended",
             Self::Unauthorized => "unauthorized",
             Self::Offline => "offline",
             Self::Cancelled => "cancelled",

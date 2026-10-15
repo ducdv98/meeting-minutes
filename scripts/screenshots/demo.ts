@@ -52,6 +52,7 @@ mockIPC((cmd, args) => {
     case "get_settings": return settings;
     case "ai_status": return aiStatus;
     case "managed_status": return { connected: false, revoked: false, email: null, enabled: false };
+    case "managed_account": return { email: "alex@example.com", state: "admitted", minutes_used: 0, minutes_remaining: 120, allowance_minutes: 120, resets_at: "2026-11-01T00:00:00.000Z" };
     case "installed_models": return ["large-v3-turbo-q5_0"];
     case "list_participant_names": return ["Alex", "Priya", "Sam"];
     case "list_ai_models": return ["qwen3:8b"];

@@ -6,7 +6,8 @@ use crate::{
     processing::cloud_span_bounds,
     transcript::{shift_segment_times, Language, RawSegment},
 };
-use serde::Deserialize;
+use chrono::Datelike;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
     fmt,
@@ -72,6 +73,9 @@ pub enum GatewayErrorCode {
     TooManyAttempts,
     EmailUnavailable,
     NoAccount,
+    AllowanceExhausted,
+    Waitlisted,
+    AccountSuspended,
     InvalidAudio,
     Unauthorized,
     IdempotencyConflict,
@@ -95,6 +99,9 @@ impl GatewayErrorCode {
             "TOO_MANY_ATTEMPTS" => Self::TooManyAttempts,
             "EMAIL_UNAVAILABLE" => Self::EmailUnavailable,
             "NO_ACCOUNT" => Self::NoAccount,
+            "ALLOWANCE_EXHAUSTED" => Self::AllowanceExhausted,
+            "WAITLISTED" => Self::Waitlisted,
+            "ACCOUNT_SUSPENDED" => Self::AccountSuspended,
             "INVALID_AUDIO" => Self::InvalidAudio,
             "UNAUTHORIZED" => Self::Unauthorized,
             "IDEMPOTENCY_CONFLICT" => Self::IdempotencyConflict,
@@ -277,12 +284,27 @@ pub fn verify_code(
     email: &str,
     code: &str,
 ) -> Result<Activation, GatewayError> {
-    let reply = auth_reply(post(
-        http,
-        base,
-        "/v1/auth/verify",
-        json!({ "email": email, "code": code }),
-    )?)?;
+    verify_code_with_token(http, base, email, code, None)
+}
+
+pub fn verify_code_with_token(
+    http: &dyn HttpClient,
+    base: &str,
+    email: &str,
+    code: &str,
+    token: Option<&ManagedToken>,
+) -> Result<Activation, GatewayError> {
+    let response = http
+        .send(HttpRequest {
+            method: Method::Post,
+            url: format!("{}/v1/auth/verify", base.trim_end_matches('/')),
+            headers: token
+                .map(|token| vec![("Authorization".into(), format!("Bearer {}", token.expose()))])
+                .unwrap_or_default(),
+            body: Some(HttpBody::Json(json!({ "email": email, "code": code }))),
+        })
+        .map_err(|_| transport_error())?;
+    let reply = auth_reply(read_response(response)?)?;
     let client_id = reply
         .client_id
         .filter(|value| !value.is_empty())
@@ -297,6 +319,45 @@ pub fn verify_code(
         refresh_token,
         expires_in: Duration::from_secs(reply.expires_in),
     })
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct AccountStatus {
+    pub email: String,
+    pub state: String,
+    pub minutes_used: f64,
+    pub minutes_remaining: f64,
+    pub allowance_minutes: f64,
+    pub resets_at: String,
+    pub waitlist_position: Option<u64>,
+}
+
+pub fn get_account(
+    http: &dyn HttpClient,
+    base: &str,
+    token: &ManagedToken,
+) -> Result<AccountStatus, GatewayError> {
+    let response = http
+        .send(HttpRequest {
+            method: Method::Get,
+            url: format!("{}/v1/account", base.trim_end_matches('/')),
+            headers: vec![("Authorization".into(), format!("Bearer {}", token.expose()))],
+            body: None,
+        })
+        .map_err(|_| transport_error())?;
+    let status: AccountStatus =
+        serde_json::from_value(read_response(response)?).map_err(|_| transport_error())?;
+    if !matches!(
+        status.state.as_str(),
+        "admitted" | "waitlisted" | "suspended"
+    ) || !status.minutes_used.is_finite()
+        || !status.minutes_remaining.is_finite()
+        || !status.allowance_minutes.is_finite()
+        || chrono::DateTime::parse_from_rfc3339(&status.resets_at).is_err()
+    {
+        return Err(transport_error());
+    }
+    Ok(status)
 }
 
 pub fn delete_account(
@@ -880,6 +941,9 @@ impl UploadFailure {
                 GatewayErrorCode::TooManyAttempts => "TOO_MANY_ATTEMPTS",
                 GatewayErrorCode::EmailUnavailable => "EMAIL_UNAVAILABLE",
                 GatewayErrorCode::NoAccount => "NO_ACCOUNT",
+                GatewayErrorCode::AllowanceExhausted => "ALLOWANCE_EXHAUSTED",
+                GatewayErrorCode::Waitlisted => "WAITLISTED",
+                GatewayErrorCode::AccountSuspended => "ACCOUNT_SUSPENDED",
                 GatewayErrorCode::InvalidAudio => "INVALID_AUDIO",
                 GatewayErrorCode::Unauthorized => "UNAUTHORIZED",
                 GatewayErrorCode::IdempotencyConflict => "IDEMPOTENCY_CONFLICT",
@@ -908,7 +972,6 @@ impl UploadFailure {
                     GatewayErrorCode::RateLimited
                         | GatewayErrorCode::RequestInProgress
                         | GatewayErrorCode::ProviderUnavailable
-                        | GatewayErrorCode::CapacityExhausted
                         | GatewayErrorCode::TranscriptionTimeout
                 ) || (error.code == GatewayErrorCode::Unknown
                     && (matches!(error.status, Some(502..=504)) || error.retryable))
@@ -931,10 +994,30 @@ impl UploadFailure {
             Self::Transport => EngineError::Offline,
             Self::InvalidResponse => EngineError::QuotaExhausted,
             Self::Gateway(error) => match error.code {
+                GatewayErrorCode::AllowanceExhausted => EngineError::ManagedAllowanceExhausted,
+                GatewayErrorCode::CapacityExhausted => {
+                    let now = chrono::Utc::now();
+                    let next_month = (now.date_naive().with_day(1).unwrap()
+                        + chrono::Months::new(1))
+                    .and_hms_opt(0, 0, 0)
+                    .unwrap()
+                    .and_utc();
+                    let reset_in = (next_month - now).num_milliseconds();
+                    let date = error
+                        .retry_after
+                        .filter(|wait| {
+                            i64::try_from(wait.as_millis())
+                                .is_ok_and(|ms| (ms - reset_in).abs() < 300_000)
+                        })
+                        .map(|_| next_month.date_naive().to_string())
+                        .unwrap_or_default();
+                    EngineError::ManagedCapacityExhausted(date)
+                }
+                GatewayErrorCode::Waitlisted => EngineError::ManagedWaitlisted,
+                GatewayErrorCode::AccountSuspended => EngineError::ManagedSuspended,
                 GatewayErrorCode::RateLimited
                 | GatewayErrorCode::RequestInProgress
                 | GatewayErrorCode::ProviderUnavailable
-                | GatewayErrorCode::CapacityExhausted
                 | GatewayErrorCode::TranscriptionTimeout => EngineError::QuotaExhausted,
                 GatewayErrorCode::Unauthorized => EngineError::Unauthorized,
                 GatewayErrorCode::Unknown if self.retryable() => EngineError::QuotaExhausted,

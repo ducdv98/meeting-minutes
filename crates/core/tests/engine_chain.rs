@@ -485,6 +485,40 @@ fn managed_quota_midway_uses_groq_for_the_rest() {
 }
 
 #[test]
+fn managed_allowance_midway_uses_groq_for_remaining_spans() {
+    let managed = call_log();
+    let groq = call_log();
+    let mut engine = chain(
+        vec![
+            tracking_cloud(
+                "Managed transcription",
+                vec![Ok(vec![]), Err(EngineError::ManagedAllowanceExhausted)],
+                None,
+                managed.clone(),
+                Arc::new(AtomicUsize::new(0)),
+            ),
+            tracking_cloud(
+                "Groq",
+                vec![],
+                Some(Language::En),
+                groq.clone(),
+                Arc::new(AtomicUsize::new(0)),
+            ),
+        ],
+        Arc::new(AtomicUsize::new(0)),
+    );
+    for _ in 0..3 {
+        run(&mut engine, &[0.1; 16_000]).unwrap();
+    }
+    assert_eq!(managed.lock().unwrap().len(), 2);
+    assert_eq!(groq.lock().unwrap().len(), 2);
+    assert_eq!(
+        engine.fallback_reason(),
+        Some(&FallbackReason::ManagedAllowance)
+    );
+}
+
+#[test]
 fn managed_busy_or_disconnected_falls_through_to_next_engine() {
     for error in [EngineError::QuotaExhausted, EngineError::Unauthorized] {
         let managed = call_log();

@@ -54,6 +54,22 @@ function meetingDateTime(value: string): string {
 
 const draftKey = (segment: DraftSegment) => `${segment.start_ms}:${segment.end_ms}:${segment.speaker}:${segment.text}`;
 
+function fallbackNotice(transcript: Transcript): string {
+  const destination = transcript.model.at(-1);
+  const processedWith = destination === "Groq" || destination === "Gemini" ? destination : "local Whisper";
+  const reason = transcript.fallback_reason;
+  if (reason === "Managed allowance exhausted") return `Your free Managed transcription minutes ran out this month; the rest was transcribed with ${processedWith}.`;
+  if (reason === "Managed Account waitlisted") return `Your Account is on the waitlist for Managed transcription; the rest was transcribed with ${processedWith}.`;
+  if (reason === "Managed Account suspended") return `Your Account is suspended from Managed transcription; the rest was transcribed with ${processedWith}.`;
+  if (reason?.startsWith("Managed capacity exhausted until ")) {
+    const date = reason.slice("Managed capacity exhausted until ".length);
+    if (!date) return `Managed transcription is unavailable right now; the rest was transcribed with ${processedWith}.`;
+    const until = /^\d{4}-\d{2}-\d{2}$/.test(date) ? new Intl.DateTimeFormat(undefined, { dateStyle: "long", timeZone: "UTC" }).format(new Date(`${date}T00:00:00Z`)) : "next month";
+    return `Managed transcription is paused for everyone until ${until}; the rest was transcribed with ${processedWith}.`;
+  }
+  return `Part of this Meeting was transcribed ${transcript.model.every((engine) => engine === "Groq" || engine === "Gemini" || engine === "Managed transcription") ? `with ${destination}` : "locally"}: ${reason}.`;
+}
+
 /** Adds Draft Segments in time order, skipping ones already shown (the stored Draft and live events overlap). */
 function mergeDraft(current: DraftSegment[], incoming: DraftSegment[]): DraftSegment[] {
   const seen = new Set(current.map(draftKey));
@@ -332,7 +348,7 @@ export default function MeetingView({ id, onBack, onRenamed, onOpenSettings, ope
             {transcript && !job && <Button variant="ghost" disabled={recordingMeetingId === id} onClick={() => setTranscribeOpen(true)}><RefreshCw size={16} strokeWidth={1.5} />Transcribe again with…</Button>}
           </div>
           {transcript && !showingDraft && <p className="sr-only">Transcript revision {transcript.revision} · model {transcript.model.join(", ")} · {transcript.segments.length} segments · {meetingLanguageName(transcript.language)}</p>}
-          {transcript?.fallback_reason && !showingDraft && <p role="status" className="mb-3 text-sm text-ink-muted">Part of this Meeting was transcribed {transcript.model.every((engine) => engine === "Groq" || engine === "Gemini" || engine === "Managed transcription") ? `with ${transcript.model.at(-1)}` : "locally"}: {transcript.fallback_reason}.</p>}
+          {transcript?.fallback_reason && !showingDraft && <p role="status" className="mb-3 text-sm text-ink-muted">{fallbackNotice(transcript)}</p>}
           {transcript && !showingDraft && detail.correction_notice && <p role="status" className="mb-4 text-sm text-ink-muted">{detail.correction_notice}</p>}
           {transcript && !showingDraft && meetingParticipants.length > 0 && <div className="mb-4 grid gap-2 rounded-md border border-line bg-raised p-3"><h3 className="m-0 text-sm font-medium">Participants</h3><datalist id="participant-names">{suggestions.map((name) => <option key={name} value={name} />)}</datalist><div className="flex flex-wrap gap-3">{meetingParticipants.map((name) => { const labels = speakerLabels.filter((label) => labelParticipantName(label, detail.participants, yourName, isVoiceNote) === name); const removable = Object.values(detail.participants).includes(name) || Object.values(detail.segment_participants?.segments ?? {}).includes(name); return <div key={name} className="grid min-w-[130px] flex-1 gap-1 text-xs text-ink-muted"><label>{labels.length ? labels.map(speakerName).join(", ") : name} Participant<Input aria-label={`${labels.length === 1 ? speakerName(labels[0]) : name} Participant`} list="participant-names" value={participantDrafts[name] ?? name} onChange={(event) => setParticipantDrafts((current) => ({ ...current, [name]: event.target.value }))} onBlur={() => void saveParticipant(name)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); event.currentTarget.blur(); } }} /></label>{labels.length > 0 && <span className="text-ink-faint">Speaker labels: {labels.map(speakerName).join(", ")}</span>}{removable && <Button variant="ghost" className="justify-self-start px-0 text-xs" onClick={() => void removeName(name)}>Remove {name}</Button>}</div>; })}</div></div>}
           {job && job.stage !== "failed" && <div role="status" className="mb-4"><LoadingRows rows={2} /><p className="text-sm text-ink-muted">{processingStageLabel(job)}</p>{job.stage !== "queued" && <div role="progressbar" aria-label={processingStageLabel(job)} aria-valuenow={Math.round(job.progress * 100)} aria-valuemin={0} aria-valuemax={100} className="mt-2 h-1.5 max-w-md rounded-sm bg-page-shadow"><div className="h-full rounded-sm bg-accent" style={{ width: `${Math.round(job.progress * 100)}%` }} /></div>}<Button variant="ghost" className="mt-2" onClick={() => void cancelJob()}>Cancel processing</Button></div>}

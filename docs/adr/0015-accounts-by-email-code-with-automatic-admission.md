@@ -7,6 +7,8 @@ Accounts and the free Managed transcription allowance ship in 1.0, not after it,
 
 The allowance and the operator ceiling both reset on the first day of each month in UTC, as ADR 0014 says; the gateway's rolling 30-day budget is replaced. The allowance number is provisional (120 Processed audio minutes) during 0.9.0 and is published after that release has measured the cost.
 
+An installation with an Invite-era client can link that client when its user verifies an Account. The linked Account is admitted immediately and counts toward N, even when N has already been reached. It does not evict anyone. Admission for other Accounts resumes in Waitlist order when N exceeds the admitted count.
+
 ## Consequences
 
 - The gateway needs an email sender. It sits behind a small interface so the provider can change; the first choice is the free tier with the highest daily cap.

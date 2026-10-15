@@ -6,6 +6,6 @@
 
 Status: ready-for-agent
 
-- [ ] Admitted and Waitlisted states render from the gateway's Account status
-- [ ] Remaining minutes and the reset date are shown
-- [ ] Falling back after exhaustion is explained on the Meeting
+- [x] Admitted and Waitlisted states render from the gateway's Account status
+- [x] Remaining minutes and the reset date are shown
+- [x] Falling back after exhaustion is explained on the Meeting
