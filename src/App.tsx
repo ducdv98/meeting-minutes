@@ -21,8 +21,9 @@ import RecordingBar from "./RecordingBar";
 import RecordingScreen from "./RecordingScreen";
 import SettingsView, { type SettingsTabId } from "./SettingsView";
 import HelpView from "./HelpView";
+import FirstRun from "./FirstRun";
 import { onLibraryChanged, onRecordingStatus, recordHotkey, recordingStatus, type RecorderStatus } from "./recording";
-import { cancelProcessing, onProcessingStatus, processingStageLabel, processingStatus, type ProcessingJob } from "./processing";
+import { cancelProcessing, completeFirstRun, firstRunInfo, getSettings, onProcessingStatus, processingStageLabel, processingStatus, type FirstRunInfo, type ProcessingJob, type Settings as AppSettings } from "./processing";
 import { meetingLanguageLabel } from "./languages";
 
 function groupName(value: string) {
@@ -91,6 +92,9 @@ export default function App() {
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<{ id: string; title: string; saving: boolean; error: string | null } | null>(null);
   const [panel, setPanel] = useState<"settings" | "help" | null>(null);
+  const [setupSettings, setSetupSettings] = useState<AppSettings | null>(null);
+  const [setupInfo, setSetupInfo] = useState<FirstRunInfo | null>(null);
+  const [guideOpen, setGuideOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<SettingsTabId | undefined>();
   const [showSearch, setShowSearch] = useState(false);
   const [query, setQuery] = useState("");
@@ -101,6 +105,35 @@ export default function App() {
   const [recorder, setRecorder] = useState<RecorderStatus | null>(null);
   const [imports, setImports] = useState<ImportStatus>({ current: null, queued: 0, errors: [] });
   const [importHover, setImportHover] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    void getSettings().then((settings) => {
+      if (!active) return;
+      setSetupSettings(settings);
+      if (settings.first_run_completed === false) void firstRunInfo().then((info) => { if (active) setSetupInfo(info); }, () => {});
+    }, () => {});
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    if (setupSettings?.first_run_completed !== false || !meetings?.length) return;
+    void completeFirstRun().then(() => { setSetupSettings((current) => current && { ...current, first_run_completed: true }); }, () => {});
+  }, [setupSettings?.first_run_completed, meetings]);
+
+  async function openGuide() {
+    const [settings, info] = await Promise.all([getSettings(), firstRunInfo()]);
+    setSetupSettings(settings);
+    setSetupInfo(info);
+    setGuideOpen(true);
+  }
+
+  async function finishGuide(useKey = false) {
+    await completeFirstRun();
+    setSetupSettings((current) => current && { ...current, first_run_completed: true });
+    setGuideOpen(false);
+    if (useKey) { setSettingsTab("keys"); setPanel("settings"); }
+  }
 
   useEffect(() => {
     let active = true;
@@ -239,7 +272,7 @@ export default function App() {
     : panel === "help" ? <PageHeader title="Help" context="App information, shortcuts and diagnostics." />
     : showSearch ? <PageHeader title="Search" context="Find a Segment across Transcripts in your Library." />
     : <PageHeader title="Library" context="Your Meetings, kept on this PC." actions={<Button variant="secondary" onClick={() => void pickFiles()}><Import size={16} strokeWidth={1.5} />Import a file</Button>} />;
-  const view = panel === "settings" ? <SettingsView initialTab={settingsTab} /> : panel === "help" ? <HelpView /> : showSearch ? <LibrarySearch query={query} onQueryChange={setQuery} onOpen={openHit} /> : selectedId ? <MeetingView key={selectedId} id={selectedId} recordingMeetingId={busyRecording ? recorder?.meeting_id : null} openAt={openAt} onOpened={() => setOpenAt(null)} onDeleted={() => { setSelectedId(null); setOpenAt(null); setScan((value) => value + 1); }} onRenamed={() => setScan((value) => value + 1)} onOpenSettings={(tab) => { setSettingsTab(tab); setPanel("settings"); }} onBack={() => { setSelectedId(null); setOpenAt(null); setScan((value) => value + 1); }} notifications={notifications} /> : showRecording && busyRecording && recorder ? <RecordingScreen status={recorder} title={meetings?.find((meeting) => meeting.id === recorder.meeting_id)?.title} onRenamed={() => setScan((value) => value + 1)} /> : <section className="flex min-h-0 flex-1 flex-col" aria-label="Library home">
+  const view = panel === "settings" ? <SettingsView initialTab={settingsTab} /> : panel === "help" ? <HelpView onOpenGuide={() => void openGuide()} /> : showSearch ? <LibrarySearch query={query} onQueryChange={setQuery} onOpen={openHit} /> : selectedId ? <MeetingView key={selectedId} id={selectedId} recordingMeetingId={busyRecording ? recorder?.meeting_id : null} openAt={openAt} onOpened={() => setOpenAt(null)} onDeleted={() => { setSelectedId(null); setOpenAt(null); setScan((value) => value + 1); }} onRenamed={() => setScan((value) => value + 1)} onOpenSettings={(tab) => { setSettingsTab(tab); setPanel("settings"); }} onBack={() => { setSelectedId(null); setOpenAt(null); setScan((value) => value + 1); }} notifications={notifications} /> : showRecording && busyRecording && recorder ? <RecordingScreen status={recorder} title={meetings?.find((meeting) => meeting.id === recorder.meeting_id)?.title} onRenamed={() => setScan((value) => value + 1)} /> : <section className="flex min-h-0 flex-1 flex-col" aria-label="Library home">
     {failed ? <div className="grid flex-1 place-items-center p-10"><ErrorState title="Couldn't load the Library" guidance="Try rescanning the Library." onRetry={() => setScan((value) => value + 1)} /></div> : meetings === null ? <div className="grid flex-1 place-items-center p-10"><Loading message="Loading the Library…" /></div> : meetings.length === 0 ? <div className="grid flex-1 place-items-center p-10"><div className="grid justify-items-center gap-3"><EmptyState title="Your Library is empty" description={<>Record a call from any app, or import an audio file. Meetings are saved to <span className="text-ink">Documents\Meeting Minutes</span>.</>} action={<><Button variant="recordSoft" disabled={!recorder || busyRecording} onClick={requestRecording}><span aria-hidden="true" className="size-2 rounded-full bg-current shadow-[0_0_0_3px_color-mix(in_srgb,currentColor_25%,transparent)]" />Record</Button><Button variant="secondary" onClick={() => void pickFiles()}><Import size={16} strokeWidth={1.5} />Import a file</Button></>} /><p className="m-0 text-center text-xs text-ink-muted">Or press <KeyCombo keys={recordHotkey} className="mx-0.5 align-middle" /> from any app.</p></div></div> : <LibraryTable meetings={meetings} details={details} jobs={jobs} recordingMeetingId={busyRecording ? recorder?.meeting_id ?? null : null} onOpen={openMeeting} onRename={(meeting) => setRenaming({ id: meeting.id, title: meeting.title, saving: false, error: null })} onDelete={(meeting) => { setDeleteError(null); setDeleting(meeting); }} onCancelProcessing={(id) => void cancelJob(id)} />}
   </section>;
 
@@ -306,6 +339,7 @@ export default function App() {
       <MainViewTransition viewKey={viewKey}>{!panel && !showSearch && (selectedId || showRecording && busyRecording) ? view : <>{pageHeader}{notifications}{view}</>}</MainViewTransition>
     </div>
     {deleting && <ConfirmDelete title={deleting.title} busy={deleteBusy} onConfirm={() => void confirmDelete()} onCancel={() => setDeleting(null)} error={deleteError} />}
+    {setupSettings && setupInfo && (guideOpen || setupSettings.first_run_completed === false && meetings?.length === 0) && <FirstRun settings={setupSettings} discreteGpu={setupInfo.discrete_gpu} libraryLocation={setupInfo.library_location} onFinish={() => finishGuide()} onUseKey={() => finishGuide(true)} />}
     {importHover && <div role="status" className="pointer-events-none fixed inset-0 z-50 grid place-items-center border-4 border-dashed border-accent bg-canvas/95 p-10 text-center text-heading-md text-ink">Drop audio to import (mp3, m4a, wav, flac)</div>}
   </main>;
 }

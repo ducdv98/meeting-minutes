@@ -3,15 +3,15 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import App from "./App";
 import { pickAudioFiles, importStatus, dismissImportErrors, onImportStatus, onImportHover } from "./importing";
 import { deleteMeeting, meetingDetail, renameMeeting, rescanLibrary, searchLibrary } from "./library";
-import { cancelProcessing, onProcessingStatus, processingStatus, type ProcessingStatus } from "./processing";
+import { cancelProcessing, completeFirstRun, firstRunInfo, getSettings, onProcessingStatus, processingStatus, type ProcessingStatus, type Settings } from "./processing";
 import { onRecordingStatus, recordingStatus } from "./recording";
 
 vi.mock("./importing", () => ({ pickAudioFiles: vi.fn(), importStatus: vi.fn(), dismissImportErrors: vi.fn(), onImportStatus: vi.fn(), onImportHover: vi.fn() }));
 vi.mock("./library", async (original) => ({ ...(await original<typeof import("./library")>()), rescanLibrary: vi.fn(), searchLibrary: vi.fn(), deleteMeeting: vi.fn(), renameMeeting: vi.fn(), meetingDetail: vi.fn() }));
 vi.mock("./RecordingBar", () => ({ default: () => null }));
-vi.mock("./SettingsView", async () => { const { PageHeader } = await import("./components/PageHeader"); return { default: () => <section><PageHeader title="Settings" context="Choose how Meetings are recorded and processed." /><h2>Settings pane</h2></section> }; });
-vi.mock("./HelpView", () => ({ default: () => <section><h1>Help pane</h1></section> }));
-vi.mock("./processing", async (importOriginal) => ({ ...(await importOriginal<typeof import("./processing")>()), processingStatus: vi.fn(), onProcessingStatus: vi.fn(), cancelProcessing: vi.fn() }));
+vi.mock("./SettingsView", async () => { const { PageHeader } = await import("./components/PageHeader"); return { default: ({ initialTab }: { initialTab?: string }) => <section><PageHeader title="Settings" context="Choose how Meetings are recorded and processed." /><h2>Settings pane</h2><p>Tab: {initialTab}</p></section> }; });
+vi.mock("./HelpView", () => ({ default: ({ onOpenGuide }: { onOpenGuide: () => void }) => <section><h1>Help pane</h1><button type="button" onClick={onOpenGuide}>Open the setup guide</button></section> }));
+vi.mock("./processing", async (importOriginal) => ({ ...(await importOriginal<typeof import("./processing")>()), processingStatus: vi.fn(), onProcessingStatus: vi.fn(), cancelProcessing: vi.fn(), getSettings: vi.fn(), firstRunInfo: vi.fn(), completeFirstRun: vi.fn() }));
 vi.mock("./summary", () => ({ meetingSummary: vi.fn(() => Promise.resolve(null)), onSummaryStatus: vi.fn(() => Promise.resolve(() => {})) }));
 vi.mock("./MeetingView", () => ({ default: ({ id, openAt, onBack }: { id: string; openAt?: { segment_id: string }; onBack: () => void }) => (
   <section><h1>Meeting {id}</h1>{openAt && <p>Segment {openAt.segment_id}</p>}<button type="button" onClick={onBack}>Back to Library</button></section>
@@ -31,6 +31,9 @@ function openMoreMenu() {
 }
 
 beforeEach(() => {
+  vi.mocked(getSettings).mockResolvedValue({ first_run_completed: true, recording_notice_acknowledged: true, cloud_notice_acknowledged: true, auto_process: true, model: "small", vocabulary: [], language: null, your_name: null, ai: { provider: null, ollama_model: null, openai_model: null, anthropic_model: null, gemini_model: null } });
+  vi.mocked(firstRunInfo).mockResolvedValue({ discrete_gpu: false, library_location: "Documents\\Meeting Minutes" });
+  vi.mocked(completeFirstRun).mockResolvedValue();
   vi.mocked(importStatus).mockResolvedValue({ current: null, queued: 0, errors: [] });
   vi.mocked(onImportStatus).mockResolvedValue(() => {});
   vi.mocked(onImportHover).mockResolvedValue(() => {});
@@ -47,6 +50,39 @@ beforeEach(() => {
 });
 
 const sidebar = () => within(screen.getByRole("navigation", { name: "Meetings" }));
+
+it("opens setup only on a new empty Library, completes skips, and can reopen it from Help", async () => {
+  vi.mocked(rescanLibrary).mockResolvedValue({ meetings: [], malformed: [] });
+  vi.mocked(getSettings).mockResolvedValue({ ...await getSettings(), first_run_completed: false } as Settings);
+  render(<App />);
+  expect(await screen.findByRole("dialog", { name: "Before you record" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Skip" }));
+  fireEvent.click(screen.getByRole("button", { name: "Skip" }));
+  fireEvent.click(screen.getByRole("button", { name: "Skip" }));
+  await waitFor(() => expect(completeFirstRun).toHaveBeenCalledOnce());
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  fireEvent.click(screen.getByRole("button", { name: "Help" }));
+  fireEvent.click(screen.getByRole("button", { name: "Open the setup guide" }));
+  expect(await screen.findByRole("dialog", { name: "Before you record" })).toBeTruthy();
+});
+
+it("opens Settings Keys when the first-run model step chooses an own key", async () => {
+  vi.mocked(rescanLibrary).mockResolvedValue({ meetings: [], malformed: [] });
+  vi.mocked(getSettings).mockResolvedValue({ ...await getSettings(), first_run_completed: false } as Settings);
+  render(<App />);
+  fireEvent.click(await screen.findByRole("button", { name: "Skip" }));
+  fireEvent.click(screen.getByRole("button", { name: "I'll use my own key" }));
+  expect(await screen.findByText("Tab: keys")).toBeTruthy();
+});
+
+it("does not open first-run setup for a Library that already has Meetings", async () => {
+  vi.mocked(rescanLibrary).mockResolvedValue({ meetings: [{ id: "one", title: "Planning", started_at: "2026-10-12T09:00:00Z", duration_ms: 0 }], malformed: [] });
+  vi.mocked(getSettings).mockResolvedValue({ ...await getSettings(), first_run_completed: false } as Settings);
+  render(<App />);
+  await sidebar().findByRole("button", { name: "Planning" });
+  await waitFor(() => expect(completeFirstRun).toHaveBeenCalledOnce());
+  expect(screen.queryByRole("dialog", { name: "Before you record" })).toBeNull();
+});
 
 it("opens a Meeting from a search result at its Segment", async () => {
   vi.mocked(rescanLibrary).mockResolvedValue({ meetings: [], malformed: [] });

@@ -3,6 +3,7 @@ import { mockIPC, mockConvertFileSrc } from "@tauri-apps/api/mocks";
 import * as demo from "./demo-data";
 
 const settings = {
+  first_run_completed: true,
   recording_notice_acknowledged: true,
   cloud_notice_acknowledged: true,
   auto_process: true,

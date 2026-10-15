@@ -14,6 +14,7 @@ pub const DEFAULT_GEMINI_MODEL: &str = "gemini-2.5-flash";
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
+    pub first_run_completed: bool,
     pub recording_notice_acknowledged: bool,
     #[serde(default)]
     pub cloud_notice_acknowledged: bool,
@@ -32,6 +33,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            first_run_completed: false,
             recording_notice_acknowledged: false,
             cloud_notice_acknowledged: false,
             auto_process: true,
@@ -93,9 +95,16 @@ impl Settings {
         let legacy_speech = value
             .as_ref()
             .is_some_and(|value| value.get("speech").is_none());
+        let past_first_run = path.is_file()
+            && value
+                .as_ref()
+                .is_none_or(|value| value.get("first_run_completed").is_none());
         let mut settings: Self = value
             .and_then(|value| serde_json::from_value(value).ok())
             .unwrap_or_default();
+        if past_first_run {
+            settings.first_run_completed = true;
+        }
         if legacy {
             settings.language_models = LanguageModelSettings::from_legacy(&settings.ai);
         }
@@ -124,6 +133,19 @@ impl Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn existing_settings_skip_first_run_but_new_settings_do_not() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        assert!(!Settings::load(&path).first_run_completed);
+        fs::write(&path, r#"{"model":"small"}"#).unwrap();
+        assert!(Settings::load(&path).first_run_completed);
+        fs::write(&path, r#"{"first_run_completed":false}"#).unwrap();
+        assert!(!Settings::load(&path).first_run_completed);
+        fs::write(&path, b"invalid").unwrap();
+        assert!(Settings::load(&path).first_run_completed);
+    }
 
     #[test]
     fn legacy_model_settings_load_as_quantized_turbo() {

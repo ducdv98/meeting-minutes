@@ -5,6 +5,7 @@ import { LevelMeter } from "./components/ui/LevelMeter";
 import { ErrorState } from "./components/states/ErrorState";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "./components/ui/Dialog";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./components/ui/Tooltip";
+import { RECORDING_NOTICE } from "./recording-notice";
 import {
   acknowledgeRecordingNotice,
   continueMeeting,
@@ -137,10 +138,7 @@ export default function RecordingBar({ recordRequest = 0, hideIdleButton = false
       Recovered {meetingId} after the app closed unexpectedly. Continue it with a new Recording? <span className="inline-flex gap-2"><Button variant="secondary" onClick={() => record(() => continueMeeting(meetingId))}>Continue meeting</Button><Button variant="ghost" onClick={() => run(() => dismissContinue(meetingId))}>Dismiss</Button></span>
     </div>)}
     <Dialog open={!!noticeAction} onOpenChange={(open) => { if (!open) setNoticeAction(null); }}>
-      <DialogContent><DialogTitle>Before you record</DialogTitle><DialogDescription>
-        Other people on the call may need to agree to being recorded. Let them know before you start.
-        While a Recording runs, the window and the tray icon show it.
-      </DialogDescription><div className="mt-6 flex justify-end gap-2"><Button variant="secondary" onClick={() => setNoticeAction(null)}>Cancel</Button><Button variant="record" onClick={confirmNotice}>Start recording</Button></div></DialogContent>
+      <DialogContent><DialogTitle>Before you record</DialogTitle><DialogDescription>{RECORDING_NOTICE}</DialogDescription><div className="mt-6 flex justify-end gap-2"><Button variant="secondary" onClick={() => setNoticeAction(null)}>Cancel</Button><Button variant="record" onClick={confirmNotice}>Start recording</Button></div></DialogContent>
     </Dialog>
   </section>;
 }

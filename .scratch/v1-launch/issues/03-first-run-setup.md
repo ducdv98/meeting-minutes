@@ -6,8 +6,8 @@
 
 Status: ready-for-agent
 
-- [ ] The flow opens automatically only on first launch, and each step can be skipped
-- [ ] The recommendation depends on hardware and language
-- [ ] Download now starts the download from ticket 02 and shows its progress
-- [ ] Help can reopen the flow
-- [ ] Tests cover skip, download and use-my-key paths
+- [x] The flow opens automatically only on first launch, and each step can be skipped
+- [x] The recommendation depends on hardware and language
+- [x] Download now starts the download from ticket 02 and shows its progress
+- [x] Help can reopen the flow
+- [x] Tests cover skip, download and use-my-key paths

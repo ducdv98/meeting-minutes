@@ -741,6 +741,32 @@ fn get_settings(path: State<'_, SettingsPath>, secrets: State<'_, Secrets>) -> S
     settings
 }
 
+#[derive(serde::Serialize)]
+struct FirstRunInfo {
+    discrete_gpu: bool,
+    library_location: String,
+}
+
+#[tauri::command]
+fn first_run_info(app: AppHandle) -> Result<FirstRunInfo, String> {
+    let location = app
+        .path()
+        .document_dir()
+        .map_err(|error| error.to_string())?
+        .join("Meeting Minutes");
+    Ok(FirstRunInfo {
+        discrete_gpu: WhisperEngine::discrete_gpu_available(),
+        library_location: location.display().to_string(),
+    })
+}
+
+#[tauri::command]
+fn complete_first_run(path: State<'_, SettingsPath>) -> Result<(), String> {
+    let mut settings = Settings::load(&path.0);
+    settings.first_run_completed = true;
+    settings.save(&path.0).map_err(|error| error.to_string())
+}
+
 // Tauri maps each argument to a field of the invoke payload, so the count follows the Settings form.
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
@@ -3301,6 +3327,8 @@ fn main() {
             edit_segment,
             set_meeting_language,
             get_settings,
+            first_run_info,
+            complete_first_run,
             update_settings,
             installed_models,
             model_download_status,
