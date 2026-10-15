@@ -6,7 +6,7 @@
 
 Status: ready-for-agent
 
-- [ ] Three cards, with no price, checkout or signup form
-- [ ] The Pro card links to the Discussion and the Support card to Sponsors or Ko-fi
-- [ ] The privacy page describes Accounts as current and mentions no Invite code
-- [ ] Website tests pass
+- [x] Three cards, with no price, checkout or signup form
+- [x] The Pro card links to the Discussion and the Support card to Sponsors or Ko-fi
+- [x] The privacy page describes Accounts as current and mentions no Invite code
+- [x] Website tests pass

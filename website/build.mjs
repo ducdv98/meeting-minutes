@@ -25,6 +25,7 @@ const fixtureIndex = args.indexOf('--fixture');
 if (fixtureIndex !== -1 && !args[fixtureIndex + 1]) { console.error('--fixture needs a JSON file path'); process.exit(1); }
 const fixture = fixtureIndex === -1 ? null : resolve(args[fixtureIndex + 1]);
 const screens = ['meeting', 'ask', 'transcript', 'search', 'diagnostics', 'firstrun-model'];
+const freeCloudMinutes = 120;
 const missing = [];
 const missingScreens = [];
 
@@ -125,6 +126,7 @@ const substitutions = {
   '{{SCREEN_DIAGNOSTICS}}': screen('diagnostics', 'Help menu with Copy diagnostics selected'),
   '{{SCREEN_FIRSTRUN_MODEL}}': screen('firstrun-model', 'First-run guide recommending a transcription model'),
   '{{FREE_STATUS}}': published.length ? 'Available now' : 'Windows app is coming',
+  '{{FREE_CLOUD_MINUTES}}': String(freeCloudMinutes),
 };
 function replace(text) {
   for (const [key, value] of Object.entries(substitutions)) text = text.replaceAll(key, value);
@@ -164,12 +166,12 @@ const entries = published.map(release => `<article class="release"><h2>${escapeH
 const cloudEntry = '<article class="release"><h2>Cloud transcription · In development</h2><time datetime="2026-10-13">October 13, 2026</time><div class="notes"><p>Adding transcription with your own Groq key, Gemini fallback and Correction. Local Whisper remains available.</p></div></article>';
 const changelog = `<article class="doc"><h1>Changelog</h1><p class="updated">Work in progress and published releases, newest first.</p>${cloudEntry}${entries || '<p>No public releases yet. The Windows app is coming.</p>'}</article>`;
 await write(join(dist, 'index.html'), shell('Home', 'Record any call on Windows. Keep a Transcript on your PC and get Answers with Citations.', home));
-await write(join(dist, 'pricing', 'index.html'), shell('Pricing', 'The Free plan is $0 forever for local Processing and your own keys. Managed access and Pro are planned.', pricing, '/pricing/'));
+await write(join(dist, 'pricing', 'index.html'), shell('Pricing', 'Free local Processing and your own keys, plus an Account with a monthly Managed transcription allowance. Pro is coming soon.', pricing, '/pricing/'));
 await write(join(dist, 'support', 'index.html'), shell('Support', 'Get help with Meeting Minutes, diagnostics, installation and uninstalling.', support, '/support/'));
 await write(join(dist, 'privacy', 'index.html'), shell('Privacy', 'How Meeting Minutes handles your meetings and data.', privacy, '/privacy/'));
 await write(join(dist, 'changelog', 'index.html'), shell('Changelog', 'Meeting Minutes updates and published releases.', changelog, '/changelog/'));
 await write(join(dist, '404.html'), shell('Page not found', 'This page could not be found.', '<article class="doc"><h1>Page not found</h1><p>The page you requested does not exist. <a href="/">Go to the home page</a>.</p></article>'));
-await write(join(dist, 'llms.txt'), `# Meeting Minutes\n\nMeeting Minutes is a local-first Windows 11 app by Duc Dao. It records Microphone and System audio from meetings and transcribes English, Vietnamese, Spanish, French, German, Portuguese, Italian, Japanese, Korean, Chinese and Hindi. Auto-detect the Meeting language or choose one per Meeting. Transcription runs locally by default; with the user's own keys, audio can go to Groq or Gemini. Gemini can receive Transcript text for Correction. The app provides cited Summaries and Answers. No account or telemetry.\n\n${latest ? `Free for Windows: ${latest.version}, published ${latest.date}; download: ${latest.url}.` : 'Windows app is coming.'}\n\nHome: https://meeting-minutes.tech/\nPricing: https://meeting-minutes.tech/pricing/\nPrivacy: https://meeting-minutes.tech/privacy/\nSupport: https://meeting-minutes.tech/support/\nChangelog: https://meeting-minutes.tech/changelog/\nRepository: https://github.com/ducdv98/meeting-minutes\nContact: admin@meeting-minutes.tech\n`);
+await write(join(dist, 'llms.txt'), `# Meeting Minutes\n\nMeeting Minutes is a local-first Windows 11 app by Duc Dao. It records Microphone and System audio from meetings and transcribes English, Vietnamese, Spanish, French, German, Portuguese, Italian, Japanese, Korean, Chinese and Hindi. Auto-detect the Meeting language or choose one per Meeting. Transcription runs locally by default; with the user's own keys, audio can go to Groq or Gemini. Gemini can receive Transcript text for Correction. The app provides cited Summaries and Answers. An optional Account provides Managed transcription when admitted. No telemetry.\n\n${latest ? `Free for Windows: ${latest.version}, published ${latest.date}; download: ${latest.url}.` : 'Windows app is coming.'}\n\nHome: https://meeting-minutes.tech/\nPricing: https://meeting-minutes.tech/pricing/\nPrivacy: https://meeting-minutes.tech/privacy/\nSupport: https://meeting-minutes.tech/support/\nChangelog: https://meeting-minutes.tech/changelog/\nRepository: https://github.com/ducdv98/meeting-minutes\nContact: admin@meeting-minutes.tech\n`);
 
 const ranges = { latin: 'U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD',
   'latin-ext': 'U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20CF,U+2113,U+2C60-2C7F,U+A720-A7FF',

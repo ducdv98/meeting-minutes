@@ -18,7 +18,7 @@ async function* htmlFiles(dir) {
   }
 }
 
-test('pricing is reachable and describes current and planned access', async () => {
+test('pricing shows Free, coming Pro and a way to support the project', async () => {
   const temp = await mkdtemp(join(tmpdir(), 'meeting-minutes-pricing-'));
   const output = join(temp, 'site');
   try {
@@ -29,6 +29,7 @@ test('pricing is reachable and describes current and planned access', async () =
 
     for await (const path of htmlFiles(output)) {
       const page = await readFile(path, 'utf8');
+      assert.doesNotMatch(page, /invite codes?|open source/i, `${relative(output, path)} uses current launch language`);
       for (const nav of ['Main navigation', 'Mobile navigation', 'Footer navigation']) {
         const content = page.match(new RegExp(`<nav\\b[^>]*aria-label="${nav}"[^>]*>([\\s\\S]*?)<\\/nav>`))?.[1];
         assert.ok(content, `${relative(output, path)} has ${nav}`);
@@ -37,38 +38,40 @@ test('pricing is reachable and describes current and planned access', async () =
       }
     }
 
-    assert.match(home, /Is it free\?[\s\S]*?id="faq-free"[\s\S]*?<a href="\/pricing\/">/);
-    assert.match(home, /id="faq-upload"[\s\S]*?Invite code[\s\S]*?Meeting Minutes service, which forwards it to Groq[\s\S]*?<a href="\/privacy\/">/);
+    assert.match(home, /Is it free\?[\s\S]*?id="faq-free"[\s\S]*?Account[\s\S]*?<a href="\/pricing\/">/);
+    assert.match(home, /id="faq-upload"[\s\S]*?Managed transcription[\s\S]*?Meeting Minutes service[\s\S]*?<a href="\/privacy\/">/);
     assert.match(llms, /^Pricing: https:\/\/meeting-minutes\.tech\/pricing\/$/m);
+    assert.match(llms, /optional Account/i);
+    assert.doesNotMatch(llms, /No account/i);
+    assert.doesNotMatch(llms, /invite codes?|open source/i);
 
     const plans = [...pricing.matchAll(/<article class="plan-card">([\s\S]*?)<\/article>/g)].map(match => match[1]);
-    assert.equal(plans.length, 2, 'Free and Pro are the only plan cards');
+    assert.equal(plans.length, 3, 'Free, Pro and Support are the three cards');
     assert.match(plans[0], /<h2>Free plan<\/h2>[\s\S]*?Windows app is coming/i);
     assert.doesNotMatch(plans[0], /Available now/i);
-    assert.match(plans[0], /Account[\s\S]*?Managed transcription allowance[\s\S]*?Managed access: Planned/i);
+    assert.match(plans[0], /local Processing[\s\S]*?your own provider keys/i);
+    assert.match(plans[0], /Account[\s\S]*?\d+ free (?:Processed audio |cloud )minutes a month[\s\S]*?capacity lasts/i);
+    assert.doesNotMatch(plans[0], /Managed access: Planned/i);
     assert.match(plans[1], /<h2>Pro plan<\/h2>[\s\S]*?Coming soon/i);
-    for (const plan of plans) assert.doesNotMatch(plan, /\b\d+\s+(?:Processed audio )?minutes?\b/i);
-    assert.match(pricing, /\$0 forever/);
+    assert.match(plans[1], /<a [^>]*href="https:\/\/github\.com\/ducdv98\/meeting-minutes\/discussions"[^>]*>I'd pay for Pro<\/a>/i);
+    assert.match(plans[2], /<h2>Support the project<\/h2>/);
+    assert.match(plans[2], /<a [^>]*href="https:\/\/github\.com\/sponsors\/ducdv98"[^>]*>GitHub Sponsors<\/a>/);
     assert.match(pricing, /no Account needed/i);
     assert.match(pricing, /no app-imposed usage limit/i);
-    assert.match(pricing, /cohorts/i);
-    assert.match(pricing, /published once .*cost .*measured/i);
+    assert.match(pricing, /admitted in order of verification/i);
     assert.match(pricing, /larger Managed transcription allowance/i);
     assert.match(pricing, /Processed audio minutes/i);
-    assert.match(pricing, /Planned: how the allowance will work/i);
-    assert.match(pricing, /each Source will count separately/i);
-    assert.match(pricing, /60-minute Meeting[\s\S]*?Microphone[\s\S]*?System audio[\s\S]*?120 minutes/i);
-    assert.match(pricing, /Import will count as one stream/i);
-    assert.match(pricing, /Re-transcribing the same audio will count again/i);
-    assert.match(pricing, /will reset on the first of each month \(UTC\)[\s\S]*?without rollover/i);
-    assert.match(pricing, /will cover transcription only[\s\S]*?Correction[\s\S]*?Summary[\s\S]*?Ask/i);
-    assert.match(pricing, /will fall back to your own keys[\s\S]*?local Whisper/i);
-    assert.match(pricing, /Signing in alone will not turn on Managed transcription/i);
-    assert.match(pricing, /will choose to enable it separately/i);
+    assert.match(pricing, /each Source counts separately/i);
+    assert.match(pricing, /Import counts as one stream/i);
+    assert.match(pricing, /Re-transcribing the same audio counts again/i);
+    assert.match(pricing, /resets on the first of each month \(UTC\)[\s\S]*?without rollover/i);
+    assert.match(pricing, /covers transcription only[\s\S]*?Correction[\s\S]*?Summary[\s\S]*?Ask/i);
+    assert.match(pricing, /falls back to your own keys[\s\S]*?local Whisper/i);
+    assert.match(pricing, /Signing in alone does not turn on Managed transcription/i);
 
-    for (const amount of pricing.match(/[$€£]\s*\d+(?:[.,]\d+)?/g) ?? []) assert.equal(amount, '$0');
+    assert.doesNotMatch(pricing, /[$€£]\s*\d|\bprice\b/i);
     assert.doesNotMatch(pricing, /<form\b/i);
-    assert.doesNotMatch(pricing, /\b(?:checkout|buy|subscribe|sign up|waitlist)\b/i);
+    assert.doesNotMatch(pricing, /\b(?:checkout|buy|subscribe|sign up)\b/i);
     assert.doesNotMatch(pricing, /\b(?:open source|faster|more accurate)\b/i);
   } finally {
     await rm(temp, { recursive: true, force: true });
@@ -90,7 +93,7 @@ test('Free plan is available when a Windows Release is published', async () => {
     const free = pricing.match(/<article class="plan-card">([\s\S]*?)<\/article>/)?.[1];
     assert.ok(free);
     assert.match(free, /<h2>Free plan<\/h2>[\s\S]*?<p class="plan-status">Available now<\/p>/);
-    assert.match(free, /\$0 forever/);
+    assert.match(free, /free cloud minutes a month/i);
     assert.doesNotMatch(free, /Windows app is coming/);
   } finally {
     await rm(temp, { recursive: true, force: true });
