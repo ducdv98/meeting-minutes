@@ -177,7 +177,6 @@ fn request(meeting_dir: &Path) -> TranscribeRequest<'_> {
         meeting_dir,
         model: "small",
         vocabulary: &[],
-        default_language: Some(Language::En),
     }
 }
 

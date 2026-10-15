@@ -173,6 +173,15 @@ impl Library {
         title: &str,
         started_at: DateTime<FixedOffset>,
     ) -> Result<MeetingSummary, LibraryError> {
+        self.create_meeting_with_language(title, started_at, None)
+    }
+
+    pub fn create_meeting_with_language(
+        &mut self,
+        title: &str,
+        started_at: DateTime<FixedOffset>,
+        language: Option<Language>,
+    ) -> Result<MeetingSummary, LibraryError> {
         let base = folder_name(started_at);
         for number in 1..=1000 {
             let id = if number == 1 {
@@ -184,7 +193,8 @@ impl Library {
             match fs::create_dir(&path) {
                 Ok(()) => {
                     let started_at_string = started_at.to_rfc3339();
-                    let meeting_file = MeetingFile::new(title, started_at_string.clone());
+                    let mut meeting_file = MeetingFile::new(title, started_at_string.clone());
+                    meeting_file.language = language.map(|language| language.code().to_owned());
                     if let Err(error) = write_meeting_file(&path, &meeting_file) {
                         // The folder is ours and only holds the failed meeting.json.
                         let _ = fs::remove_dir_all(&path);
@@ -210,6 +220,16 @@ impl Library {
         root: &Path,
         source: &Path,
         imported_at: DateTime<FixedOffset>,
+        cancel: &AtomicBool,
+    ) -> Result<PreparedImport, LibraryError> {
+        Self::prepare_import_meeting_with_language(root, source, imported_at, None, cancel)
+    }
+
+    pub fn prepare_import_meeting_with_language(
+        root: &Path,
+        source: &Path,
+        imported_at: DateTime<FixedOffset>,
+        language: Option<Language>,
         cancel: &AtomicBool,
     ) -> Result<PreparedImport, LibraryError> {
         let extension = import_extension(source).ok_or_else(|| {
@@ -272,6 +292,7 @@ impl Library {
                 ));
             }
             let mut file = MeetingFile::new(title, started_at.clone());
+            file.language = language.map(|language| language.code().to_owned());
             file.duration_ms = duration_ms;
             file.audio = Some(audio.clone());
             file.import = Some(ImportFile {
@@ -351,7 +372,23 @@ impl Library {
         imported_at: DateTime<FixedOffset>,
         cancel: &AtomicBool,
     ) -> Result<MeetingSummary, LibraryError> {
-        let prepared = Self::prepare_import_meeting(&self.root, source, imported_at, cancel)?;
+        self.import_audio_with_language(source, imported_at, None, cancel)
+    }
+
+    pub fn import_audio_with_language(
+        &mut self,
+        source: &Path,
+        imported_at: DateTime<FixedOffset>,
+        language: Option<Language>,
+        cancel: &AtomicBool,
+    ) -> Result<MeetingSummary, LibraryError> {
+        let prepared = Self::prepare_import_meeting_with_language(
+            &self.root,
+            source,
+            imported_at,
+            language,
+            cancel,
+        )?;
         self.publish_import_meeting(prepared, cancel)
     }
 
@@ -817,7 +854,16 @@ impl Library {
         &mut self,
         started_at: DateTime<FixedOffset>,
     ) -> Result<(MeetingSummary, PathBuf, RecordingManifest), LibraryError> {
-        let meeting = self.create_meeting("Untitled meeting", started_at)?;
+        self.begin_recording_with_language(started_at, None)
+    }
+
+    pub fn begin_recording_with_language(
+        &mut self,
+        started_at: DateTime<FixedOffset>,
+        language: Option<Language>,
+    ) -> Result<(MeetingSummary, PathBuf, RecordingManifest), LibraryError> {
+        let meeting =
+            self.create_meeting_with_language("Untitled meeting", started_at, language)?;
         let chunk_dir = self.meeting_dir(&meeting.id).join(".chunks/recording-1");
         fs::create_dir_all(&chunk_dir)?;
         let manifest = RecordingManifest {

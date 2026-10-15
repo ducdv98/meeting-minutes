@@ -67,10 +67,19 @@ pub struct BackgroundResult {
     pub engines_used: Vec<EngineName>,
     pub fallback_reason: Option<FallbackReason>,
     pub engine_audio_ms: Option<std::collections::BTreeMap<EngineName, u64>>,
+    pub speech_detected_by_vad: bool,
     pub sources: Vec<SourceProgress>,
 }
 
 impl BackgroundResult {
+    pub fn is_reusable(&self) -> bool {
+        self.speech_detected_by_vad
+            || self
+                .engines_used
+                .iter()
+                .all(|engine| matches!(engine, EngineName::Local(_)))
+    }
+
     pub fn source(&self, speaker: Speaker) -> Option<&SourceProgress> {
         self.sources
             .iter()
@@ -230,6 +239,7 @@ pub struct BackgroundTranscriber {
     engines_used: Vec<EngineName>,
     fallback_reason: Option<FallbackReason>,
     engine_audio_ms: Option<std::collections::BTreeMap<EngineName, u64>>,
+    vad_active_for_all_spans: bool,
     streams: Vec<SourceStream>,
 }
 
@@ -248,6 +258,7 @@ impl BackgroundTranscriber {
             engines_used: Vec::new(),
             fallback_reason: None,
             engine_audio_ms: None,
+            vad_active_for_all_spans: true,
             streams: vec![
                 SourceStream::new(Source::Microphone, Speaker::Me),
                 SourceStream::new(Source::SystemAudio, Speaker::Remote),
@@ -287,22 +298,33 @@ impl BackgroundTranscriber {
         engine: &mut EngineChain<'_>,
         cancel: &AtomicBool,
     ) -> Result<Vec<PlacedSegment>, ProcessingError> {
+        let result = self.transcribe_ready_spans(engine, cancel);
+        // A detector that fails disables itself, so check it after the spans ran.
+        self.vad_active_for_all_spans &= engine.has_speech_detector();
+        result
+    }
+
+    fn transcribe_ready_spans(
+        &mut self,
+        engine: &mut EngineChain<'_>,
+        cancel: &AtomicBool,
+    ) -> Result<Vec<PlacedSegment>, ProcessingError> {
         let mut finished = Vec::new();
         for index in 0..self.streams.len() {
             if !self.streams[index].ready() {
                 continue;
             }
             engine.set_source(Some(self.streams[index].source));
+            let stream = &mut self.streams[index];
+            if engine.skip_as_silence(&stream.decimator.output, self.language.is_some()) {
+                // Silence is skipped, so it is not scanned again for a language.
+                let end = stream.committed_ms() + stream.pending_ms();
+                stream.commit(end);
+                continue;
+            }
             let language = match self.language {
                 Some(language) => language,
                 None => {
-                    let stream = &mut self.streams[index];
-                    if !engine.has_speech(&stream.decimator.output) {
-                        // Silence is skipped, so it is not scanned again for a language.
-                        let end = stream.committed_ms() + stream.pending_ms();
-                        stream.commit(end);
-                        continue;
-                    }
                     let pending = &stream.decimator.output;
                     let language = engine.detect_language(pending, cancel).map_err(|error| {
                         if cancel.load(std::sync::atomic::Ordering::SeqCst) {
@@ -342,6 +364,7 @@ impl BackgroundTranscriber {
             engines_used: self.engines_used,
             fallback_reason: self.fallback_reason,
             engine_audio_ms: self.engine_audio_ms,
+            speech_detected_by_vad: self.vad_active_for_all_spans,
             sources: self
                 .streams
                 .into_iter()

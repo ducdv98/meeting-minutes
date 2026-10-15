@@ -45,7 +45,7 @@ use meeting_minutes_core::{
     window_fit::{fit_window, Rect},
     Library, LibraryError, MeetingDetail, MeetingSummary, ScanReport, SearchHit,
 };
-use meeting_minutes_whisper::WhisperEngine;
+use meeting_minutes_whisper::{WhisperEngine, WhisperSpeechDetector};
 use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind};
 use tauri::{
     image::Image,
@@ -439,9 +439,15 @@ fn import_worker(app: AppHandle) {
                 library.as_ref().map_err(Clone::clone)?.root().to_path_buf()
             };
             let now = chrono::Local::now().fixed_offset();
-            let prepared =
-                Library::prepare_import_meeting(&root, &path, now, &app.state::<ImportCancel>().0)
-                    .map_err(|e| e.to_string())?;
+            let language = Settings::load(&app.state::<SettingsPath>().0).language;
+            let prepared = Library::prepare_import_meeting_with_language(
+                &root,
+                &path,
+                now,
+                language,
+                &app.state::<ImportCancel>().0,
+            )
+            .map_err(|e| e.to_string())?;
             let library = app.state::<LibraryState>();
             let mut library = library.lock().map_err(|e| e.to_string())?;
             library
@@ -1837,6 +1843,7 @@ fn transcription_chain<'a>(
     model: &str,
     chosen: Option<&str>,
     local: Box<dyn FnMut() -> Result<Box<dyn SpeechEngine + 'a>, processing::ProcessingError> + 'a>,
+    download_missing_vad: Option<&AtomicBool>,
 ) -> Result<processing::EngineChain<'a>, processing::ProcessingError> {
     let mut cloud: Vec<Box<dyn CloudEngine>> = Vec::new();
     let settings = Settings::load(&app.state::<SettingsPath>().0);
@@ -1884,10 +1891,14 @@ fn transcription_chain<'a>(
         } else {
             None
         };
-        return Ok(match selected {
-            Some(engine) => processing::EngineChain::chosen_cloud(engine, model, local),
-            None => processing::EngineChain::new(vec![], model, local),
-        });
+        return match selected {
+            Some(engine) => with_cloud_vad(
+                app,
+                processing::EngineChain::chosen_cloud(engine, model, local),
+                download_missing_vad,
+            ),
+            None => Ok(processing::EngineChain::new(vec![], model, local)),
+        };
     }
     if !managed.tokens.is_disconnected()
         && matches!(managed.store.get(), Ok(Some(credential)) if credential.enabled)
@@ -1923,7 +1934,51 @@ fn transcription_chain<'a>(
             )));
         }
     }
-    Ok(processing::EngineChain::new(cloud, model, local))
+    let has_cloud = !cloud.is_empty();
+    let chain = processing::EngineChain::new(cloud, model, local);
+    if has_cloud {
+        with_cloud_vad(app, chain, download_missing_vad)
+    } else {
+        Ok(chain)
+    }
+}
+
+fn with_cloud_vad<'a>(
+    app: &AppHandle,
+    mut chain: processing::EngineChain<'a>,
+    download_missing_vad: Option<&AtomicBool>,
+) -> Result<processing::EngineChain<'a>, processing::ProcessingError> {
+    let models_state = app.state::<ModelsDir>();
+    let models_dir = &models_state.0;
+    if !models::is_installed(models_dir, &models::VAD_MODEL) {
+        if let Some(cancel) = download_missing_vad {
+            if cancel.load(Ordering::SeqCst) {
+                return Err(processing::ProcessingError::Cancelled);
+            }
+            if let Err(error) = models::download_vad(models_dir, &mut |_| {}, cancel) {
+                if matches!(error, processing::ProcessingError::Cancelled)
+                    || cancel.load(Ordering::SeqCst)
+                {
+                    return Err(processing::ProcessingError::Cancelled);
+                }
+                log_event(LogEvent::VadUnavailable);
+                return Ok(chain);
+            }
+            if cancel.load(Ordering::SeqCst) {
+                return Err(processing::ProcessingError::Cancelled);
+            }
+        }
+    }
+    if models::is_installed(models_dir, &models::VAD_MODEL) {
+        let path = models::model_path(models_dir, &models::VAD_MODEL);
+        match WhisperSpeechDetector::load(&path) {
+            Ok(detector) => chain.set_speech_detector(Box::new(detector)),
+            Err(_) => log_event(LogEvent::VadUnavailable),
+        }
+    } else {
+        log_event(LogEvent::VadUnavailable);
+    }
+    Ok(chain)
 }
 
 /// Starts transcribing the new Recording's Chunks in the background when cloud is configured or
@@ -1968,8 +2023,7 @@ fn start_background(app: &AppHandle) {
     let language = fs::read(job.meeting_dir.join("meeting.json"))
         .ok()
         .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
-        .and_then(|meeting| meeting["language"].as_str().and_then(Language::from_code))
-        .or(settings.language);
+        .and_then(|meeting| meeting["language"].as_str().and_then(Language::from_code));
     let chunk_dir = job
         .meeting_dir
         .join(format!(".chunks/recording-{}", job.number));
@@ -2004,6 +2058,7 @@ fn start_background(app: &AppHandle) {
                     }
                     Ok(Box::new(engine) as Box<dyn SpeechEngine>)
                 }),
+                None,
             ) {
                 Ok(chain) => chain,
                 Err(_) => return Some(transcriber.finish()),
@@ -2166,7 +2221,6 @@ fn processing_worker(app: AppHandle) {
                 meeting_dir: &meeting_dir,
                 model: model.name,
                 vocabulary: &vocabulary,
-                default_language: settings.language,
             };
             // What the Recording already transcribed is shown before the model loads.
             let early_draft = processing::background_draft(&request, &cached)?;
@@ -2201,6 +2255,7 @@ fn processing_worker(app: AppHandle) {
                         .map_err(processing::ProcessingError::Engine)?;
                     Ok(Box::new(engine) as Box<dyn SpeechEngine>)
                 }),
+                Some(cancel.as_ref()),
             )?;
             let correction = meeting_minutes_core::correction::configured_provider(
                 &settings,
@@ -2677,8 +2732,9 @@ fn with_recorder(
 }
 
 fn start(app: &AppHandle) -> Result<RecorderStatus, String> {
+    let language = Settings::load(&app.state::<SettingsPath>().0).language;
     start_with(app, |recorder, library, started_at| {
-        recorder.start(library, started_at)
+        recorder.start_with_language(library, started_at, language)
     })
 }
 

@@ -163,11 +163,11 @@ fn run_clip(
     .map_err(|e| e.to_string())?;
     let at = DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z").unwrap();
     let cancel = AtomicBool::new(false);
-    let meeting = library
-        .import_audio(&root.join(&clip.path), at, &cancel)
-        .map_err(|e| e.to_string())?;
     let language = Language::from_code(&clip.language)
         .ok_or_else(|| format!("Unknown language {}", clip.language))?;
+    let meeting = library
+        .import_audio_with_language(&root.join(&clip.path), at, Some(language), &cancel)
+        .map_err(|e| e.to_string())?;
     let mut measured = MeasuredEngine {
         inner: engine,
         whisper_time: Duration::ZERO,
@@ -178,7 +178,6 @@ fn run_clip(
             meeting_dir: &library.meeting_dir(&meeting.id),
             model,
             vocabulary: &[],
-            default_language: Some(language),
         },
         &mut meeting_minutes_core::processing::EngineChain::borrow_local(model, &mut measured),
         &mut |_| {},

@@ -1,7 +1,7 @@
 use chrono::{DateTime, FixedOffset};
 use meeting_minutes_core::ai::ProviderKind;
+use meeting_minutes_core::transcript::{Language, Speaker};
 use meeting_minutes_core::{Library, LibraryError, OrphanRecording};
-use meeting_minutes_core::transcript::Speaker;
 use tempfile::TempDir;
 
 fn write_transcript(library: &Library, id: &str, revision: u32, text: &str) {
@@ -20,15 +20,53 @@ fn write_transcript(library: &Library, id: &str, revision: u32, text: &str) {
 }
 
 #[test]
+fn new_recording_meeting_saves_its_language_choice() {
+    let temp = TempDir::new().unwrap();
+    let mut library = Library::open(
+        temp.path().join("Library"),
+        temp.path().join("index.sqlite3"),
+    )
+    .unwrap();
+    let vietnamese = library
+        .begin_recording_with_language(at("2026-10-12T09:30:00Z"), Some(Language::Vi))
+        .unwrap()
+        .0;
+    let automatic = library
+        .begin_recording_with_language(at("2026-10-12T09:31:00Z"), None)
+        .unwrap()
+        .0;
+    for (meeting, expected) in [
+        (vietnamese, serde_json::json!("vi")),
+        (automatic, serde_json::Value::Null),
+    ] {
+        let metadata: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(library.meeting_dir(&meeting.id).join("meeting.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(metadata["language"], expected);
+    }
+}
+
+#[test]
 fn search_tracks_participant_names_after_rename() {
     let temp = TempDir::new().unwrap();
-    let mut library = Library::open(temp.path().join("Library"), temp.path().join("index.sqlite3")).unwrap();
-    let meeting = library.create_meeting("Planning", at("2026-10-12T09:30:00Z")).unwrap();
+    let mut library = Library::open(
+        temp.path().join("Library"),
+        temp.path().join("index.sqlite3"),
+    )
+    .unwrap();
+    let meeting = library
+        .create_meeting("Planning", at("2026-10-12T09:30:00Z"))
+        .unwrap();
     write_transcript(&library, &meeting.id, 1, "Budget");
     library.refresh_transcript(&meeting.id).unwrap();
-    library.set_participant_name(&meeting.id, Speaker::Me, Some("Anna")).unwrap();
+    library
+        .set_participant_name(&meeting.id, Speaker::Me, Some("Anna"))
+        .unwrap();
     assert_eq!(library.search("Anna").unwrap()[0].meeting_id, meeting.id);
-    library.rename_participant(&meeting.id, "Anna", "Bao").unwrap();
+    library
+        .rename_participant(&meeting.id, "Anna", "Bao")
+        .unwrap();
     assert!(library.search("Anna").unwrap().is_empty());
     assert_eq!(library.search("Bao").unwrap()[0].snippet, "Budget");
 }
@@ -36,10 +74,21 @@ fn search_tracks_participant_names_after_rename() {
 #[test]
 fn settings_name_reindexes_every_meeting() {
     let temp = TempDir::new().unwrap();
-    let mut library = Library::open(temp.path().join("Library"), temp.path().join("index.sqlite3")).unwrap();
-    let first = library.create_meeting("First", at("2026-10-12T09:30:00Z")).unwrap();
-    let second = library.create_meeting("Second", at("2026-10-13T09:30:00Z")).unwrap();
-    for meeting in [&first, &second] { write_transcript(&library, &meeting.id, 1, "Budget"); library.refresh_transcript(&meeting.id).unwrap(); }
+    let mut library = Library::open(
+        temp.path().join("Library"),
+        temp.path().join("index.sqlite3"),
+    )
+    .unwrap();
+    let first = library
+        .create_meeting("First", at("2026-10-12T09:30:00Z"))
+        .unwrap();
+    let second = library
+        .create_meeting("Second", at("2026-10-13T09:30:00Z"))
+        .unwrap();
+    for meeting in [&first, &second] {
+        write_transcript(&library, &meeting.id, 1, "Budget");
+        library.refresh_transcript(&meeting.id).unwrap();
+    }
     library.set_your_name(Some("Duc")).unwrap();
     assert_eq!(library.search("Duc").unwrap().len(), 2);
     library.set_your_name(Some("Bao")).unwrap();
@@ -50,15 +99,26 @@ fn settings_name_reindexes_every_meeting() {
 #[test]
 fn a_fresh_index_opened_with_your_name_indexes_it() {
     let temp = TempDir::new().unwrap();
-    let library = Library::open(temp.path().join("Library"), temp.path().join("index.sqlite3")).unwrap();
+    let library = Library::open(
+        temp.path().join("Library"),
+        temp.path().join("index.sqlite3"),
+    )
+    .unwrap();
     let meeting = library_meeting(library);
     std::fs::remove_file(temp.path().join("index.sqlite3")).unwrap();
-    let library = Library::open_with_name(temp.path().join("Library"), temp.path().join("index.sqlite3"), Some("Duc")).unwrap();
+    let library = Library::open_with_name(
+        temp.path().join("Library"),
+        temp.path().join("index.sqlite3"),
+        Some("Duc"),
+    )
+    .unwrap();
     assert_eq!(library.search("Duc").unwrap()[0].meeting_id, meeting);
 }
 
 fn library_meeting(mut library: Library) -> String {
-    let meeting = library.create_meeting("First", at("2026-10-12T09:30:00Z")).unwrap();
+    let meeting = library
+        .create_meeting("First", at("2026-10-12T09:30:00Z"))
+        .unwrap();
     write_transcript(&library, &meeting.id, 1, "Budget");
     meeting.id
 }
@@ -66,9 +126,17 @@ fn library_meeting(mut library: Library) -> String {
 #[test]
 fn summary_participants_unchanged_without_its_revision() {
     let temp = TempDir::new().unwrap();
-    let library = Library::open(temp.path().join("Library"), temp.path().join("index.sqlite3")).unwrap();
+    let library = Library::open(
+        temp.path().join("Library"),
+        temp.path().join("index.sqlite3"),
+    )
+    .unwrap();
     let id = library_meeting(library);
-    let library = Library::open(temp.path().join("Library"), temp.path().join("index.sqlite3")).unwrap();
+    let library = Library::open(
+        temp.path().join("Library"),
+        temp.path().join("index.sqlite3"),
+    )
+    .unwrap();
     std::fs::write(library.meeting_dir(&id).join("summary.json"), r#"{"schema_version":1,"revision":7,"created_at":"now","provider":"ollama","model":"m","overview":[],"key_points":[],"decisions":[],"action_items":[],"dropped_items":0}"#).unwrap();
     assert!(!library.summary_participants_changed(&id).unwrap());
 }
@@ -76,68 +144,165 @@ fn summary_participants_unchanged_without_its_revision() {
 #[test]
 fn library_checks_summary_participants_for_saved_and_legacy_files() {
     let temp = TempDir::new().unwrap();
-    let mut library = Library::open(temp.path().join("Library"), temp.path().join("index.sqlite3")).unwrap();
-    let meeting = library.create_meeting("Planning", at("2026-10-12T09:30:00Z")).unwrap();
+    let mut library = Library::open(
+        temp.path().join("Library"),
+        temp.path().join("index.sqlite3"),
+    )
+    .unwrap();
+    let meeting = library
+        .create_meeting("Planning", at("2026-10-12T09:30:00Z"))
+        .unwrap();
     write_transcript(&library, &meeting.id, 1, "Budget");
     let folder = library.meeting_dir(&meeting.id);
     let transcript = library.transcript(&meeting.id).unwrap().unwrap();
     let participants = library.participants(&meeting.id).unwrap();
     let mut summary = serde_json::json!({"schema_version":1,"revision":1,"created_at":"now","provider":"ollama","model":"local","overview":[],"key_points":[],"decisions":[],"action_items":[],"dropped_items":0,
         "participants_fingerprint":meeting_minutes_core::summary::participants_fingerprint(&transcript, &participants)});
-    std::fs::write(folder.join("summary.json"), serde_json::to_vec(&summary).unwrap()).unwrap();
+    std::fs::write(
+        folder.join("summary.json"),
+        serde_json::to_vec(&summary).unwrap(),
+    )
+    .unwrap();
     assert!(!library.summary_participants_changed(&meeting.id).unwrap());
-    library.set_participant_name(&meeting.id, Speaker::Me, Some("Anna")).unwrap();
+    library
+        .set_participant_name(&meeting.id, Speaker::Me, Some("Anna"))
+        .unwrap();
     assert!(library.summary_participants_changed(&meeting.id).unwrap());
-    summary.as_object_mut().unwrap().remove("participants_fingerprint");
-    std::fs::write(folder.join("summary.json"), serde_json::to_vec(&summary).unwrap()).unwrap();
+    summary
+        .as_object_mut()
+        .unwrap()
+        .remove("participants_fingerprint");
+    std::fs::write(
+        folder.join("summary.json"),
+        serde_json::to_vec(&summary).unwrap(),
+    )
+    .unwrap();
     assert!(library.summary_participants_changed(&meeting.id).unwrap());
-    library.set_participant_name(&meeting.id, Speaker::Me, None).unwrap();
+    library
+        .set_participant_name(&meeting.id, Speaker::Me, None)
+        .unwrap();
     assert!(!library.summary_participants_changed(&meeting.id).unwrap());
 }
 
 #[test]
 fn import_segments_can_be_moved_in_groups_and_return_to_unknown() {
     let temp = TempDir::new().unwrap();
-    let mut library = Library::open(temp.path().join("Library"), temp.path().join("index.sqlite3")).unwrap();
-    let meeting = library.create_meeting("Import", at("2026-10-12T09:30:00Z")).unwrap();
+    let mut library = Library::open(
+        temp.path().join("Library"),
+        temp.path().join("index.sqlite3"),
+    )
+    .unwrap();
+    let meeting = library
+        .create_meeting("Import", at("2026-10-12T09:30:00Z"))
+        .unwrap();
     let folder = library.meeting_dir(&meeting.id);
     let transcript = serde_json::json!({"schema_version":1,"revision":1,"created_at":"now","model":"small","language":"en","language_detected":false,"duration_ms":3000,"segments":[
         {"id":"s00001","start_ms":0,"end_ms":800,"text":"First","speaker":"unknown"},
         {"id":"s00002","start_ms":900,"end_ms":1700,"text":"Second","speaker":"unknown"},
         {"id":"s00003","start_ms":1800,"end_ms":2600,"text":"Third","speaker":"unknown"}
     ]});
-    std::fs::write(folder.join("transcript.r1.json"), serde_json::to_vec(&transcript).unwrap()).unwrap();
-    library.assign_segments(&meeting.id, 1, &["s00001".into(), "s00003".into()], Some("Anna")).unwrap();
-    library.assign_segments(&meeting.id, 1, &["s00002".into()], Some("Bao")).unwrap();
+    std::fs::write(
+        folder.join("transcript.r1.json"),
+        serde_json::to_vec(&transcript).unwrap(),
+    )
+    .unwrap();
+    library
+        .assign_segments(
+            &meeting.id,
+            1,
+            &["s00001".into(), "s00003".into()],
+            Some("Anna"),
+        )
+        .unwrap();
+    library
+        .assign_segments(&meeting.id, 1, &["s00002".into()], Some("Bao"))
+        .unwrap();
     assert_eq!(library.participant_names().unwrap(), vec!["Anna", "Bao"]);
-    assert!(matches!(library.assign_segments(&meeting.id, 0, &["s00001".into()], Some("Bao")), Err(LibraryError::StaleRevision)));
-    assert_eq!(library.meeting(&meeting.id).unwrap().segment_participants.unwrap().segments.len(), 3);
+    assert!(matches!(
+        library.assign_segments(&meeting.id, 0, &["s00001".into()], Some("Bao")),
+        Err(LibraryError::StaleRevision)
+    ));
+    assert_eq!(
+        library
+            .meeting(&meeting.id)
+            .unwrap()
+            .segment_participants
+            .unwrap()
+            .segments
+            .len(),
+        3
+    );
     let markdown = std::fs::read_to_string(folder.join("transcript.md")).unwrap();
     assert!(markdown.contains("Anna:** First"));
     assert!(markdown.contains("Bao:** Second"));
     assert!(markdown.contains("Anna:** Third"));
     library.remove_participant(&meeting.id, "Bao").unwrap();
-    assert!(std::fs::read_to_string(folder.join("transcript.md")).unwrap().contains("Unknown:** Second"));
-    library.assign_segments(&meeting.id, 1, &["s00003".into()], None).unwrap();
-    assert!(std::fs::read_to_string(folder.join("transcript.md")).unwrap().contains("Unknown:** Third"));
-    assert_eq!(library.meeting(&meeting.id).unwrap().segment_participants.unwrap().segments.len(), 1);
+    assert!(std::fs::read_to_string(folder.join("transcript.md"))
+        .unwrap()
+        .contains("Unknown:** Second"));
+    library
+        .assign_segments(&meeting.id, 1, &["s00003".into()], None)
+        .unwrap();
+    assert!(std::fs::read_to_string(folder.join("transcript.md"))
+        .unwrap()
+        .contains("Unknown:** Third"));
+    assert_eq!(
+        library
+            .meeting(&meeting.id)
+            .unwrap()
+            .segment_participants
+            .unwrap()
+            .segments
+            .len(),
+        1
+    );
 }
 
 #[test]
 fn rename_participant_merges_defaults_labels_and_segment_assignments() {
     let temp = TempDir::new().unwrap();
-    let mut library = Library::open(temp.path().join("Library"), temp.path().join("index.sqlite3")).unwrap();
+    let mut library = Library::open(
+        temp.path().join("Library"),
+        temp.path().join("index.sqlite3"),
+    )
+    .unwrap();
     library.set_your_name(Some("Duc")).unwrap();
-    let meeting = library.create_meeting("Call", at("2026-10-12T09:30:00Z")).unwrap();
+    let meeting = library
+        .create_meeting("Call", at("2026-10-12T09:30:00Z"))
+        .unwrap();
     write_transcript(&library, &meeting.id, 1, "Hello");
-    library.set_participant_name(&meeting.id, Speaker::Remote, Some("Anna")).unwrap();
-    library.assign_segments(&meeting.id, 1, &["s00001".into()], Some("Bao")).unwrap();
-    library.rename_participant(&meeting.id, "Bao", "Anna").unwrap();
-    assert!(std::fs::read_to_string(library.meeting_dir(&meeting.id).join("transcript.md")).unwrap().contains("Anna:** Hello"));
-    library.rename_participant(&meeting.id, "Duc", "Anna").unwrap();
-    assert_eq!(library.meeting(&meeting.id).unwrap().participants.get("me").map(String::as_str), Some("Anna"));
+    library
+        .set_participant_name(&meeting.id, Speaker::Remote, Some("Anna"))
+        .unwrap();
+    library
+        .assign_segments(&meeting.id, 1, &["s00001".into()], Some("Bao"))
+        .unwrap();
+    library
+        .rename_participant(&meeting.id, "Bao", "Anna")
+        .unwrap();
+    assert!(
+        std::fs::read_to_string(library.meeting_dir(&meeting.id).join("transcript.md"))
+            .unwrap()
+            .contains("Anna:** Hello")
+    );
+    library
+        .rename_participant(&meeting.id, "Duc", "Anna")
+        .unwrap();
+    assert_eq!(
+        library
+            .meeting(&meeting.id)
+            .unwrap()
+            .participants
+            .get("me")
+            .map(String::as_str),
+        Some("Anna")
+    );
     library.remove_participant(&meeting.id, "Anna").unwrap();
-    assert!(std::fs::read_to_string(library.meeting_dir(&meeting.id).join("transcript.md")).unwrap().contains("Duc:** Hello"));
+    assert!(
+        std::fs::read_to_string(library.meeting_dir(&meeting.id).join("transcript.md"))
+            .unwrap()
+            .contains("Duc:** Hello")
+    );
 }
 
 #[test]
@@ -146,47 +311,104 @@ fn participant_names_survive_rescan_and_update_transcript_markdown() {
     let root = temp.path().join("Library");
     let index = temp.path().join("index.sqlite3");
     let mut library = Library::open(&root, &index).unwrap();
-    let meeting = library.create_meeting("Planning", at("2026-10-12T09:30:00Z")).unwrap();
+    let meeting = library
+        .create_meeting("Planning", at("2026-10-12T09:30:00Z"))
+        .unwrap();
     write_transcript(&library, &meeting.id, 1, "Hello");
-    library.set_participant_name(&meeting.id, Speaker::Me, Some("Duc")).unwrap();
-    assert_eq!(library.meeting(&meeting.id).unwrap().participants.get("me").map(String::as_str), Some("Duc"));
-    assert!(std::fs::read_to_string(library.meeting_dir(&meeting.id).join("transcript.md")).unwrap().contains("Duc:** Hello"));
+    library
+        .set_participant_name(&meeting.id, Speaker::Me, Some("Duc"))
+        .unwrap();
+    assert_eq!(
+        library
+            .meeting(&meeting.id)
+            .unwrap()
+            .participants
+            .get("me")
+            .map(String::as_str),
+        Some("Duc")
+    );
+    assert!(
+        std::fs::read_to_string(library.meeting_dir(&meeting.id).join("transcript.md"))
+            .unwrap()
+            .contains("Duc:** Hello")
+    );
     drop(library);
     let mut reopened = Library::open(&root, &index).unwrap();
     reopened.rescan().unwrap();
-    assert_eq!(reopened.meeting(&meeting.id).unwrap().participants.get("me").map(String::as_str), Some("Duc"));
+    assert_eq!(
+        reopened
+            .meeting(&meeting.id)
+            .unwrap()
+            .participants
+            .get("me")
+            .map(String::as_str),
+        Some("Duc")
+    );
     assert_eq!(reopened.participant_names().unwrap(), vec!["Duc"]);
 }
 
 #[test]
 fn participant_defaults_merging_and_voice_notes_use_meeting_sources() {
     let temp = TempDir::new().unwrap();
-    let mut library = Library::open(temp.path().join("Library"), temp.path().join("index.sqlite3")).unwrap();
+    let mut library = Library::open(
+        temp.path().join("Library"),
+        temp.path().join("index.sqlite3"),
+    )
+    .unwrap();
     library.set_your_name(Some("Duc")).unwrap();
-    let meeting = library.create_meeting("Planning", at("2026-10-12T09:30:00Z")).unwrap();
+    let meeting = library
+        .create_meeting("Planning", at("2026-10-12T09:30:00Z"))
+        .unwrap();
     let path = library.meeting_dir(&meeting.id);
     let transcript = serde_json::json!({"schema_version":1,"revision":1,"created_at":"2026-10-12T10:00:00Z","model":"small","language":"en","language_detected":false,"duration_ms":3000,"segments":[
         {"id":"s00001","start_ms":0,"end_ms":500,"text":"Hello","speaker":"me"},
         {"id":"s00002","start_ms":600,"end_ms":1000,"text":"Hi","speaker":"remote"},
         {"id":"s00003","start_ms":1100,"end_ms":1500,"text":"Maybe","speaker":"unknown"}
     ]});
-    std::fs::write(path.join("transcript.r1.json"), serde_json::to_vec(&transcript).unwrap()).unwrap();
-    library.set_participant_name(&meeting.id, Speaker::Remote, Some("Anna")).unwrap();
-    library.set_participant_name(&meeting.id, Speaker::Unknown, Some("Anna")).unwrap();
+    std::fs::write(
+        path.join("transcript.r1.json"),
+        serde_json::to_vec(&transcript).unwrap(),
+    )
+    .unwrap();
+    library
+        .set_participant_name(&meeting.id, Speaker::Remote, Some("Anna"))
+        .unwrap();
+    library
+        .set_participant_name(&meeting.id, Speaker::Unknown, Some("Anna"))
+        .unwrap();
     let markdown = std::fs::read_to_string(path.join("transcript.md")).unwrap();
     assert!(markdown.contains("Duc:** Hello"));
     assert!(markdown.contains("Anna:** Hi"));
     assert!(markdown.contains("Anna:** Maybe"));
-    library.set_participant_name(&meeting.id, Speaker::Remote, Some("Remote")).unwrap();
-    assert!(!library.meeting(&meeting.id).unwrap().participants.contains_key("remote"));
-    library.set_participant_name(&meeting.id, Speaker::Me, Some("Duc")).unwrap();
-    assert!(!library.meeting(&meeting.id).unwrap().participants.contains_key("me"));
-    let mut metadata: serde_json::Value = serde_json::from_slice(&std::fs::read(path.join("meeting.json")).unwrap()).unwrap();
+    library
+        .set_participant_name(&meeting.id, Speaker::Remote, Some("Remote"))
+        .unwrap();
+    assert!(!library
+        .meeting(&meeting.id)
+        .unwrap()
+        .participants
+        .contains_key("remote"));
+    library
+        .set_participant_name(&meeting.id, Speaker::Me, Some("Duc"))
+        .unwrap();
+    assert!(!library
+        .meeting(&meeting.id)
+        .unwrap()
+        .participants
+        .contains_key("me"));
+    let mut metadata: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(path.join("meeting.json")).unwrap()).unwrap();
     metadata["recordings"] = serde_json::json!([{"number":1,"started_at":"2026-10-12T09:30:00Z","timeline_start_ms":0,"duration_ms":3000,"files":[{"source":"microphone","file":"mic.flac","channels":1}]}]);
     assert!(!library.meeting(&meeting.id).unwrap().voice_note);
-    std::fs::write(path.join("meeting.json"), serde_json::to_vec(&metadata).unwrap()).unwrap();
+    std::fs::write(
+        path.join("meeting.json"),
+        serde_json::to_vec(&metadata).unwrap(),
+    )
+    .unwrap();
     assert!(library.meeting(&meeting.id).unwrap().voice_note);
-    library.set_participant_name(&meeting.id, Speaker::Me, Some("Duc Voice")).unwrap();
+    library
+        .set_participant_name(&meeting.id, Speaker::Me, Some("Duc Voice"))
+        .unwrap();
     let markdown = std::fs::read_to_string(path.join("transcript.md")).unwrap();
     assert!(markdown.contains("Duc Voice:** Maybe"));
     assert!(!markdown.contains("Anna:** Maybe"));
@@ -227,16 +449,28 @@ fn search_finds_current_segments_across_meetings_and_survives_rebuild() {
 #[test]
 fn search_keeps_a_second_meeting_visible_after_many_matches_in_one() {
     let temp = TempDir::new().unwrap();
-    let mut library = Library::open(temp.path().join("Library"), temp.path().join("index.sqlite3")).unwrap();
-    let first = library.create_meeting("First", at("2026-10-12T09:30:00Z")).unwrap();
-    let second = library.create_meeting("Second", at("2026-10-13T09:30:00Z")).unwrap();
+    let mut library = Library::open(
+        temp.path().join("Library"),
+        temp.path().join("index.sqlite3"),
+    )
+    .unwrap();
+    let first = library
+        .create_meeting("First", at("2026-10-12T09:30:00Z"))
+        .unwrap();
+    let second = library
+        .create_meeting("Second", at("2026-10-13T09:30:00Z"))
+        .unwrap();
     let transcript = serde_json::json!({
         "schema_version": 1, "revision": 1, "created_at": "2026-10-12T10:00:00Z",
         "model": "small", "language": "en", "language_detected": false,
         "duration_ms": 60000,
         "segments": (1..=60).map(|i| serde_json::json!({"id": format!("s{i:05}"), "start_ms": i * 1000, "end_ms": i * 1000 + 500, "text": "budget", "speaker": "me"})).collect::<Vec<_>>()
     });
-    std::fs::write(library.meeting_dir(&first.id).join("transcript.r1.json"), serde_json::to_vec(&transcript).unwrap()).unwrap();
+    std::fs::write(
+        library.meeting_dir(&first.id).join("transcript.r1.json"),
+        serde_json::to_vec(&transcript).unwrap(),
+    )
+    .unwrap();
     write_transcript(&library, &second.id, 1, "budget");
     library.rescan().unwrap();
     let hits = library.search("budget").unwrap();
@@ -845,7 +1079,9 @@ fn legacy_title_folder_loads_and_renames_in_place() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().join("Library");
     let mut library = Library::open(&root, temp.path().join("index.sqlite3")).unwrap();
-    let meeting = library.create_meeting("Planning", at("2026-10-12T09:30:00Z")).unwrap();
+    let meeting = library
+        .create_meeting("Planning", at("2026-10-12T09:30:00Z"))
+        .unwrap();
     let legacy_id = "2026-10-12 0930 Planning";
     std::fs::rename(root.join(&meeting.id), root.join(legacy_id)).unwrap();
     library.rescan().unwrap();
@@ -862,15 +1098,22 @@ fn summary_finished_after_rename_uses_the_current_title() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().join("Library");
     let mut library = Library::open(&root, temp.path().join("index.sqlite3")).unwrap();
-    let meeting = library.create_meeting("Planning", at("2026-10-12T09:30:00Z")).unwrap();
+    let meeting = library
+        .create_meeting("Planning", at("2026-10-12T09:30:00Z"))
+        .unwrap();
     let summary: Summary = serde_json::from_value(serde_json::json!({
         "schema_version": 1, "revision": 1, "created_at": "2026-10-12T10:00:00Z",
         "provider": "ollama", "model": "fake", "overview": [], "key_points": [],
         "decisions": [], "action_items": [], "dropped_items": 0
-    })).unwrap();
+    }))
+    .unwrap();
     library.rename_meeting(&meeting.id, "Review").unwrap();
     write_summary_for_meeting(&root.join(&meeting.id), &summary).unwrap();
-    assert!(std::fs::read_to_string(root.join(&meeting.id).join("summary.md")).unwrap().starts_with("# Review — Summary\n"));
+    assert!(
+        std::fs::read_to_string(root.join(&meeting.id).join("summary.md"))
+            .unwrap()
+            .starts_with("# Review — Summary\n")
+    );
 }
 
 #[test]
@@ -901,14 +1144,23 @@ fn rename_refreshes_derived_markdown_for_current_revision() {
         "provider": "ollama", "model": "fake", "overview": [], "key_points": [],
         "decisions": [], "action_items": [], "dropped_items": 0
     });
-    std::fs::write(folder.join("summary.json"), serde_json::to_vec(&summary).unwrap()).unwrap();
-    std::fs::write(folder.join("summary.md"), "# Planning — Summary\n\nOld content").unwrap();
+    std::fs::write(
+        folder.join("summary.json"),
+        serde_json::to_vec(&summary).unwrap(),
+    )
+    .unwrap();
+    std::fs::write(
+        folder.join("summary.md"),
+        "# Planning — Summary\n\nOld content",
+    )
+    .unwrap();
     let renamed = library.rename_meeting(&original.id, "Review").unwrap();
     let markdown =
         std::fs::read_to_string(library.meeting_dir(&renamed.id).join("transcript.md")).unwrap();
     assert!(markdown.starts_with("# Review\n"));
     assert!(markdown.contains("Hello"));
-    let summary_markdown = std::fs::read_to_string(library.meeting_dir(&renamed.id).join("summary.md")).unwrap();
+    let summary_markdown =
+        std::fs::read_to_string(library.meeting_dir(&renamed.id).join("summary.md")).unwrap();
     assert!(summary_markdown.starts_with("# Review — Summary\n"));
     assert_eq!(
         std::fs::read(library.meeting_dir(&renamed.id).join("transcript.r1.json")).unwrap(),
@@ -984,7 +1236,13 @@ fn rename_accepts_unsaved_recordings_and_refuses_missing_or_invalid_ids() {
         .create_meeting("Planning", at("2026-10-12T09:30:00Z"))
         .unwrap();
     std::fs::create_dir_all(root.join(&original.id).join(".chunks/recording-1")).unwrap();
-    assert_eq!(library.rename_meeting(&original.id, "New title").unwrap().id, original.id);
+    assert_eq!(
+        library
+            .rename_meeting(&original.id, "New title")
+            .unwrap()
+            .id,
+        original.id
+    );
     assert!(matches!(
         library.rename_meeting("missing", "New title"),
         Err(LibraryError::MeetingNotFound)
@@ -1008,7 +1266,9 @@ fn concurrent_title_and_language_writes_both_survive() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().join("Library");
     let mut library = Library::open(&root, temp.path().join("index.sqlite3")).unwrap();
-    let meeting = library.create_meeting("Planning", at("2026-10-12T09:30:00Z")).unwrap();
+    let meeting = library
+        .create_meeting("Planning", at("2026-10-12T09:30:00Z"))
+        .unwrap();
     let barrier = Arc::new(Barrier::new(2));
     let rename_index = temp.path().join("rename-index.sqlite3");
     std::thread::scope(|scope| {
@@ -1019,21 +1279,28 @@ fn concurrent_title_and_language_writes_both_survive() {
             let mut writer = Library::open(root, rename_index).unwrap();
             for number in 0..32 {
                 thread_barrier.wait();
-                writer.rename_meeting(&id, &format!("Review {number}")).unwrap();
+                writer
+                    .rename_meeting(&id, &format!("Review {number}"))
+                    .unwrap();
                 thread_barrier.wait();
             }
         });
         for number in 0..32 {
             barrier.wait();
-            let language = if number % 2 == 0 { meeting_minutes_core::transcript::Language::En } else { meeting_minutes_core::transcript::Language::Vi };
+            let language = if number % 2 == 0 {
+                meeting_minutes_core::transcript::Language::En
+            } else {
+                meeting_minutes_core::transcript::Language::Vi
+            };
             library.set_language(&meeting.id, Some(language)).unwrap();
             barrier.wait();
         }
     });
     assert_eq!(library.meeting(&meeting.id).unwrap().title, "Review 31");
     let metadata: serde_json::Value = serde_json::from_slice(
-        &std::fs::read(root.join(&meeting.id).join("meeting.json")).unwrap()
-    ).unwrap();
+        &std::fs::read(root.join(&meeting.id).join("meeting.json")).unwrap(),
+    )
+    .unwrap();
     assert_eq!(metadata["language"], "vi");
 }
 

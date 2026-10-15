@@ -4,8 +4,8 @@ use meeting_minutes_core::{
     cloud::{CloudEngine, EngineError},
     finalize_recording,
     processing::{
-        background_draft, transcribe_meeting_resuming, EngineChain, ProcessingError, SpeechEngine,
-        TranscribeRequest,
+        background_draft, transcribe_meeting_resuming, EngineChain, ProcessingError,
+        SpeechDetector, SpeechEngine, TranscribeRequest,
     },
     recording::ChunkWriter,
     transcript::{EngineName, Language, RawSegment, RawWord, Speaker},
@@ -309,6 +309,8 @@ fn stop_reuses_cloud_segments_and_transcribes_only_the_remainder() {
         }) as Box<dyn CloudEngine>
     };
     let mut engine = EngineChain::new(vec![cloud()], "small", Box::new(|| Ok(Box::new(Local))));
+    // Only background cloud work filtered by a speech detector is reused after Stop.
+    engine.set_speech_detector(Box::new(AllSpeech));
     engine.set_background_local_allowed(Box::new(|| false));
     let mut transcriber = BackgroundTranscriber::new(1, "small", Some(Language::En), None);
     transcriber.push(Source::Microphone, &audio[..35 * 48_000]);
@@ -324,7 +326,6 @@ fn stop_reuses_cloud_segments_and_transcribes_only_the_remainder() {
         meeting_dir: &meeting_dir,
         model: "small",
         vocabulary: &[],
-        default_language: Some(Language::En),
     };
     assert!(!background_draft(&request, std::slice::from_ref(&cache))
         .unwrap()
@@ -392,4 +393,11 @@ fn background_sets_managed_source_for_each_ready_stream() {
         *sent.lock().unwrap(),
         vec![Some(Source::Microphone), Some(Source::SystemAudio)]
     );
+}
+
+struct AllSpeech;
+impl SpeechDetector for AllSpeech {
+    fn speech_ranges(&mut self, samples: &[f32]) -> Result<Vec<std::ops::Range<usize>>, String> {
+        Ok(vec![0..samples.len()])
+    }
 }

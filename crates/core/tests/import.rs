@@ -1,4 +1,5 @@
 use chrono::DateTime;
+use meeting_minutes_core::transcript::Language;
 use meeting_minutes_core::{Library, LibraryError};
 use std::{f32::consts::PI, fs, path::Path, sync::atomic::AtomicBool};
 use tempfile::TempDir;
@@ -25,6 +26,40 @@ fn wav(path: &Path, rate: u32, hz: f32, seconds: f32) {
         bytes.extend_from_slice(&sample.to_le_bytes());
     }
     fs::write(path, bytes).unwrap();
+}
+
+#[test]
+fn new_import_meeting_saves_its_language_choice() {
+    let temp = TempDir::new().unwrap();
+    let source = temp.path().join("speech.wav");
+    wav(&source, 16_000, 440.0, 0.1);
+    let mut library = Library::open(
+        temp.path().join("Library"),
+        temp.path().join("index.sqlite3"),
+    )
+    .unwrap();
+    for (at, language, expected) in [
+        (
+            "2026-10-12T10:00:00Z",
+            Some(Language::Vi),
+            serde_json::json!("vi"),
+        ),
+        ("2026-10-12T10:01:00Z", None, serde_json::Value::Null),
+    ] {
+        let meeting = library
+            .import_audio_with_language(
+                &source,
+                DateTime::parse_from_rfc3339(at).unwrap(),
+                language,
+                &AtomicBool::new(false),
+            )
+            .unwrap();
+        let metadata: serde_json::Value = serde_json::from_slice(
+            &fs::read(library.meeting_dir(&meeting.id).join("meeting.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(metadata["language"], expected);
+    }
 }
 
 #[test]
@@ -228,7 +263,6 @@ fn imported_audio_transcribes_with_unknown_speaker() {
             meeting_dir: &folder,
             model: "small",
             vocabulary: &[],
-            default_language: None,
         },
         &mut EngineChain::borrow_local("small", &mut FakeEngine),
         &mut |_| {},
@@ -300,7 +334,6 @@ fn imported_audio_has_unknown_managed_source() {
             meeting_dir: &folder,
             model: "small",
             vocabulary: &[],
-            default_language: Some(Language::En),
         },
         &mut engine,
         &mut |_| {},

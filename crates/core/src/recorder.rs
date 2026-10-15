@@ -232,13 +232,23 @@ impl<O: InputOpener, C: Clock> Recorder<O, C> {
         library: &mut Library,
         started_at: DateTime<FixedOffset>,
     ) -> Result<(), RecorderError> {
+        self.start_with_language(library, started_at, None)
+    }
+
+    pub fn start_with_language(
+        &mut self,
+        library: &mut Library,
+        started_at: DateTime<FixedOffset>,
+        language: Option<crate::transcript::Language>,
+    ) -> Result<(), RecorderError> {
         if !self.notice_acknowledged {
             return Err(RecorderError::NoticeRequired);
         }
         if self.active.is_some() {
             return Err(RecorderError::AlreadyActive);
         }
-        let (meeting, chunk_dir, manifest) = library.begin_recording(started_at)?;
+        let (meeting, chunk_dir, manifest) =
+            library.begin_recording_with_language(started_at, language)?;
         let job = SaveJob {
             meeting_dir: library.meeting_dir(&meeting.id),
             meeting_id: meeting.id,

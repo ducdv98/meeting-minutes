@@ -1,12 +1,14 @@
 use meeting_minutes_core::{
     diagnostics::{log_event, LogEvent},
     processing::{
-        PowerState, ProcessingError, SpeechEngine, StreamTranscription, LANGUAGE_SCAN_SAMPLES,
+        PowerState, ProcessingError, SpeechDetector, SpeechEngine, StreamTranscription,
+        LANGUAGE_SCAN_SAMPLES,
     },
     transcript::{Language, RawSegment, RawWord},
 };
 pub mod benchmark;
 use std::{
+    ops::Range,
     path::Path,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -27,6 +29,32 @@ pub struct WhisperEngine {
     threads: usize,
     vad: Option<WhisperVadContext>,
     audio_after_vad_ms: Option<u64>,
+}
+
+pub struct WhisperSpeechDetector(WhisperVadContext);
+
+impl WhisperSpeechDetector {
+    pub fn load(path: &Path) -> Result<Self, String> {
+        let path = path.to_str().ok_or("Invalid VAD model path")?;
+        WhisperVadContext::new(path, WhisperVadContextParams::default())
+            .map(Self)
+            .map_err(|error| error.to_string())
+    }
+}
+
+impl SpeechDetector for WhisperSpeechDetector {
+    fn speech_ranges(&mut self, samples_16k: &[f32]) -> Result<Vec<Range<usize>>, String> {
+        let segments = self
+            .0
+            .segments_from_samples(WhisperVadParams::default(), samples_16k)
+            .map_err(|error| error.to_string())?;
+        Ok(segments
+            .map(|segment| {
+                (segment.start.max(0.0) * (SAMPLE_RATE as f32 / 100.0)) as usize
+                    ..(segment.end.max(0.0) * (SAMPLE_RATE as f32 / 100.0)) as usize
+            })
+            .collect())
+    }
 }
 
 static LAST_BACKEND: OnceLock<Mutex<String>> = OnceLock::new();

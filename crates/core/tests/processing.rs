@@ -53,7 +53,6 @@ fn correction_changes_the_revision_after_the_uncorrected_draft() {
             meeting_dir: &dir,
             model: "small",
             vocabulary: &[],
-            default_language: Some(Language::En),
         },
         &mut EngineChain::borrow_local("small", &mut engine),
         &mut |_| {},
@@ -87,7 +86,6 @@ fn correction_quota_failure_publishes_original_revision_with_notice() {
             meeting_dir: &dir,
             model: "small",
             vocabulary: &[],
-            default_language: Some(Language::En),
         },
         &mut EngineChain::borrow_local("small", &mut engine),
         &mut |_| {},
@@ -359,7 +357,6 @@ fn completed_transcription_reports_speech_duration_across_recordings() {
             meeting_dir: &dir,
             model: "small",
             vocabulary: &[],
-            default_language: Some(Language::En),
         },
         &mut EngineChain::borrow_local("small", &mut engine),
         &mut |_| {},
@@ -421,7 +418,6 @@ fn engine_failure_logs_transcribing_stage_and_completed_audio() {
             meeting_dir: &dir,
             model: "small",
             vocabulary: &[],
-            default_language: Some(Language::En),
         },
         &mut EngineChain::borrow_local("small", &mut engine),
         &mut |_| {},
@@ -457,7 +453,6 @@ fn cancelled_transcription_logs_cancellation() {
             meeting_dir: &dir,
             model: "small",
             vocabulary: &[],
-            default_language: None,
         },
         &mut EngineChain::borrow_local("small", &mut engine),
         &mut |_| {},
@@ -566,7 +561,6 @@ fn cloud_quota_mid_meeting_publishes_one_revision_with_both_engines() {
             meeting_dir: &dir,
             model: "small",
             vocabulary: &[],
-            default_language: Some(Language::En),
         },
         &mut engine,
         &mut |_| {},
@@ -643,7 +637,6 @@ fn managed_quota_mid_meeting_publishes_one_revision_with_groq() {
             meeting_dir: &dir,
             model: "small",
             vocabulary: &[],
-            default_language: Some(Language::En),
         },
         &mut engine,
         &mut |_| {},
@@ -703,7 +696,6 @@ fn managed_source_follows_recording_streams() {
             meeting_dir: &dir,
             model: "small",
             vocabulary: &[],
-            default_language: Some(Language::En),
         },
         &mut engine,
         &mut |_| {},
@@ -785,7 +777,6 @@ fn each_source_is_transcribed_and_labelled_on_the_meeting_timeline() {
             meeting_dir: &dir,
             model: "small",
             vocabulary: &[],
-            default_language: None,
         },
         &mut EngineChain::borrow_local("small", &mut engine),
         &mut |p| progress.push(p),
@@ -829,7 +820,6 @@ fn simultaneous_sources_keep_overlapping_segments_with_distinct_speakers() {
             meeting_dir: &dir,
             model: "small",
             vocabulary: &[],
-            default_language: Some(Language::En),
         },
         &mut EngineChain::borrow_local("small", &mut engine),
         &mut |_| {},
@@ -861,7 +851,6 @@ fn draft_callback_reports_placed_segments_per_source_with_bounded_progress() {
             meeting_dir: &dir,
             model: "small",
             vocabulary: &[],
-            default_language: Some(Language::En),
         },
         &mut EngineChain::borrow_local("small", &mut engine),
         &mut |fraction| progress.push(fraction),
@@ -936,7 +925,6 @@ fn language_detection_uses_system_audio_when_microphone_has_no_speech() {
             meeting_dir: &dir,
             model: "small",
             vocabulary: &[],
-            default_language: None,
         },
         &mut EngineChain::borrow_local("small", &mut engine),
         &mut |_| {},
@@ -984,7 +972,6 @@ fn groq_naming_an_unsupported_language_defaults_to_english_when_local_unavailabl
             meeting_dir: &dir,
             model: "small",
             vocabulary: &[],
-            default_language: None,
         },
         &mut engine,
         &mut |_| {},
@@ -1008,7 +995,6 @@ fn silent_sources_do_not_claim_a_detected_language() {
             meeting_dir: &dir,
             model: "small",
             vocabulary: &[],
-            default_language: None,
         },
         &mut EngineChain::borrow_local("small", &mut engine),
         &mut |_| {},
@@ -1043,7 +1029,6 @@ fn voice_note_segments_are_me_when_only_microphone_source_is_present() {
             meeting_dir: &dir,
             model: "small",
             vocabulary: &[],
-            default_language: Some(Language::En),
         },
         &mut EngineChain::borrow_local("small", &mut engine),
         &mut |_| {},
@@ -1069,7 +1054,6 @@ fn transcribes_two_recordings_on_timeline_and_creates_revisions() {
         meeting_dir: &dir,
         model: "small",
         vocabulary: &vocabulary,
-        default_language: None,
     };
     let first = transcribe_meeting(
         &request,
@@ -1196,7 +1180,6 @@ fn stale_json_temp_is_not_a_revision_and_existing_revision_is_preserved() {
         meeting_dir: &dir,
         model: "small",
         vocabulary: &[],
-        default_language: None,
     };
     let first = transcribe_meeting(
         &request,
@@ -1243,7 +1226,6 @@ fn chosen_meeting_language_skips_detection() {
             meeting_dir: &dir,
             model: "small",
             vocabulary: &[],
-            default_language: None,
         },
         &mut EngineChain::borrow_local("small", &mut engine),
         &mut |_| {},
@@ -1256,33 +1238,31 @@ fn chosen_meeting_language_skips_detection() {
 }
 
 #[test]
-fn default_language_from_settings_skips_detection() {
+fn auto_detect_meeting_detects_english() {
     let (_temp, dir) = saved_meeting();
-    let mut engine = FakeEngine {
-        calls: 0,
-        prompts: vec![],
+    let mut engine = AudibleEngine {
+        calls: vec![],
         detected: 0,
-        lengths: vec![],
+        detected_peak: 0.0,
     };
     let transcript = transcribe_meeting(
         &TranscribeRequest {
             meeting_dir: &dir,
             model: "small",
             vocabulary: &[],
-            default_language: Some(Language::En),
         },
         &mut EngineChain::borrow_local("small", &mut engine),
         &mut |_| {},
         &AtomicBool::new(false),
     )
     .unwrap();
-    assert_eq!(engine.detected, 0);
+    assert_eq!(engine.detected, 1);
     assert_eq!(transcript.language, Language::En);
-    assert!(!transcript.language_detected);
+    assert!(transcript.language_detected);
 }
 
 #[test]
-fn meeting_language_wins_over_default_language() {
+fn meeting_language_is_authoritative() {
     let (temp, dir) = saved_meeting();
     let id = dir.file_name().unwrap().to_str().unwrap();
     let library = Library::open(
@@ -1302,7 +1282,6 @@ fn meeting_language_wins_over_default_language() {
             meeting_dir: &dir,
             model: "small",
             vocabulary: &[],
-            default_language: Some(Language::En),
         },
         &mut EngineChain::borrow_local("small", &mut engine),
         &mut |_| {},
@@ -1326,7 +1305,6 @@ fn cancellation_and_no_audio_do_not_write_a_transcript() {
         meeting_dir: &dir,
         model: "small",
         vocabulary: &[],
-        default_language: None,
     };
     assert!(matches!(
         transcribe_meeting(
@@ -1377,7 +1355,6 @@ fn cancellation_and_no_audio_do_not_write_a_transcript() {
         meeting_dir: temp.path(),
         model: "small",
         vocabulary: &[],
-        default_language: None,
     };
     assert!(matches!(
         transcribe_meeting(
@@ -1435,7 +1412,6 @@ fn transcription_completes_without_vad_and_reports_no_speech_duration() {
             meeting_dir: &dir,
             model: "small",
             vocabulary: &[],
-            default_language: Some(Language::En),
         },
         &mut EngineChain::borrow_local("small", &mut engine),
         &mut |_| {},
@@ -1472,7 +1448,6 @@ fn rename_during_transcription_is_the_published_markdown_title() {
             meeting_dir: &dir,
             model: "small",
             vocabulary: &[],
-            default_language: Some(Language::En),
         },
         &mut EngineChain::borrow_local("small", &mut engine),
         &mut |_| {},
@@ -1522,7 +1497,6 @@ fn prepared_tone(hz: f32) -> Vec<f32> {
             meeting_dir: &dir,
             model: "small",
             vocabulary: &[],
-            default_language: None,
         },
         &mut EngineChain::borrow_local("small", &mut engine),
         &mut |_| {},

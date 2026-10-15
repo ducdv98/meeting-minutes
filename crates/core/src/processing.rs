@@ -76,6 +76,35 @@ const CHAIN_SPAN_SAMPLES: usize = 10 * 60 * 16_000;
 /// How far before the target length a span may end, to land on a pause instead of a word.
 const CHAIN_CUT_SEARCH_SAMPLES: usize = 10 * 16_000;
 const QUIET_WINDOW_SAMPLES: usize = 1_600;
+const SPEECH_PADDING_SAMPLES: usize = 16_000 / 4;
+const SPEECH_JOIN_GAP_SAMPLES: usize = 2 * 16_000;
+
+pub trait SpeechDetector {
+    fn speech_ranges(&mut self, samples_16k: &[f32]) -> Result<Vec<Range<usize>>, String>;
+}
+
+fn padded_speech_regions(ranges: Vec<Range<usize>>, length: usize) -> Vec<Range<usize>> {
+    let mut padded = ranges
+        .into_iter()
+        .filter(|range| range.start < range.end && range.start < length)
+        .map(|range| {
+            range.start.saturating_sub(SPEECH_PADDING_SAMPLES)
+                ..range.end.saturating_add(SPEECH_PADDING_SAMPLES).min(length)
+        })
+        .collect::<Vec<_>>();
+    padded.sort_by_key(|range| range.start);
+    let mut merged: Vec<Range<usize>> = Vec::new();
+    for range in padded {
+        if let Some(last) = merged.last_mut() {
+            if range.start.saturating_sub(last.end) < SPEECH_JOIN_GAP_SAMPLES {
+                last.end = last.end.max(range.end);
+                continue;
+            }
+        }
+        merged.push(range);
+    }
+    merged
+}
 
 fn fallback_for_error(name: &str, error: &EngineError) -> FallbackReason {
     let engine = EngineName::from(name);
@@ -144,6 +173,7 @@ pub struct EngineChain<'a> {
     local_name: String,
     local_factory: LocalFactory<'a>,
     local: Option<Box<dyn SpeechEngine + 'a>>,
+    speech_detector: Option<Box<dyn SpeechDetector + 'a>>,
     background_local_allowed: Option<Box<dyn FnMut() -> bool + 'a>>,
     offline: bool,
     deferred: bool,
@@ -272,6 +302,7 @@ impl<'a> EngineChain<'a> {
             local_name: local_name.into(),
             local_factory,
             local: None,
+            speech_detector: None,
             background_local_allowed: None,
             offline: false,
             deferred: false,
@@ -307,6 +338,38 @@ impl<'a> EngineChain<'a> {
 
     pub fn set_sleeper(&mut self, sleeper: RetrySleeper<'a>) {
         self.sleeper = sleeper;
+    }
+
+    pub fn set_speech_detector(&mut self, detector: Box<dyn SpeechDetector + 'a>) {
+        self.speech_detector = Some(detector);
+    }
+
+    pub fn has_speech_detector(&self) -> bool {
+        self.speech_detector.is_some()
+    }
+
+    /// Whether a background span holds no speech and can be skipped. Before the language is
+    /// known any audio below the sound threshold is skipped; once it is known, only a working
+    /// speech detector may skip a span.
+    pub fn skip_as_silence(&mut self, samples: &[f32], language_known: bool) -> bool {
+        if !language_known {
+            return !self.has_speech(samples);
+        }
+        self.detected_ranges(samples)
+            .is_some_and(|ranges| ranges.iter().all(|range| range.start >= range.end))
+    }
+
+    fn detected_ranges(&mut self, samples: &[f32]) -> Option<Vec<Range<usize>>> {
+        let detector = self.speech_detector.as_mut()?;
+        match detector.speech_ranges(samples) {
+            Ok(ranges) => Some(ranges),
+            Err(error) => {
+                log::warn!(target: "meeting_minutes_events", "VAD unavailable: {error}");
+                log_event(LogEvent::VadUnavailable);
+                self.speech_detector = None;
+                None
+            }
+        }
     }
 
     /// During a Recording, local Whisper may run only while the GPU and power allow it.
@@ -496,6 +559,9 @@ impl SpeechEngine for EngineChain<'_> {
                 |engine| engine.has_speech(samples),
             );
         }
+        if let Some(ranges) = self.detected_ranges(samples) {
+            return ranges.iter().any(|range| range.start < range.end);
+        }
         samples.iter().any(|sample| sample.abs() > 0.01)
     }
     fn detect_language(
@@ -505,16 +571,27 @@ impl SpeechEngine for EngineChain<'_> {
     ) -> Result<Language, String> {
         self.offline = false;
         self.deferred = false;
-        // Cloud engines detect from the opening they are sent, so skip a silent lead-in.
-        let sound = samples
-            .iter()
-            .position(|sample| sample.abs() > 0.01)
-            .unwrap_or(0);
+        // Start at the same padded speech region that cloud transcription sends first.
+        // Without a detector, keep the existing amplitude-based lead-in skip.
+        let opening = self
+            .detected_ranges(samples)
+            .and_then(|ranges| {
+                padded_speech_regions(ranges, samples.len())
+                    .first()
+                    .cloned()
+            })
+            .unwrap_or_else(|| {
+                let sound = samples
+                    .iter()
+                    .position(|sample| sample.abs() > 0.01)
+                    .unwrap_or(0);
+                sound..samples.len()
+            });
         for (index, engine) in self.cloud.iter_mut().enumerate() {
             if self.unavailable[index] {
                 continue;
             }
-            match engine.detect_language(&samples[sound..], cancel) {
+            match engine.detect_language(&samples[opening.clone()], cancel) {
                 Ok(Some(language)) => return Ok(language),
                 Ok(None) => continue,
                 Err(EngineError::Cancelled) => return Err("Processing cancelled".into()),
@@ -606,20 +683,37 @@ impl SpeechEngine for EngineChain<'_> {
             return Ok(result);
         }
         let mut all = Vec::new();
-        for span in cloud_span_bounds(samples, CHAIN_SPAN_SAMPLES, CHAIN_CUT_SEARCH_SAMPLES) {
-            let offset = span.start as u64 / 16;
-            let end = span.end;
-            let mut segments = self.transcribe_span(&samples[span], language, prompt, cancel)?;
-            for segment in &mut segments {
-                shift_segment_times(
-                    &mut segment.start_ms,
-                    &mut segment.end_ms,
-                    &mut segment.words,
-                    offset,
-                );
+        let regions = self.detected_ranges(samples).map_or_else(
+            || std::iter::once(0..samples.len()).collect(),
+            |ranges| padded_speech_regions(ranges, samples.len()),
+        );
+        let needs_completion = regions
+            .last()
+            .is_none_or(|region| region.end < samples.len());
+        for region in regions {
+            for span in cloud_span_bounds(
+                &samples[region.clone()],
+                CHAIN_SPAN_SAMPLES,
+                CHAIN_CUT_SEARCH_SAMPLES,
+            ) {
+                let start = region.start + span.start;
+                let end = region.start + span.end;
+                let mut segments =
+                    self.transcribe_span(&samples[start..end], language, prompt, cancel)?;
+                for segment in &mut segments {
+                    shift_segment_times(
+                        &mut segment.start_ms,
+                        &mut segment.end_ms,
+                        &mut segment.words,
+                        start as u64 / 16,
+                    );
+                }
+                all.extend(segments);
+                progress(end as f32 / samples.len().max(1) as f32);
             }
-            all.extend(segments);
-            progress(end as f32 / samples.len().max(1) as f32);
+        }
+        if needs_completion {
+            progress(1.0);
         }
         Ok(all)
     }
@@ -841,8 +935,6 @@ pub struct TranscribeRequest<'a> {
     pub meeting_dir: &'a Path,
     pub model: &'a str,
     pub vocabulary: &'a [String],
-    /// Settings' Meeting language, used when the Meeting has none of its own.
-    pub default_language: Option<Language>,
 }
 
 type DraftCallback<'a> = dyn FnMut(&[PlacedSegment]) + 'a;
@@ -858,12 +950,9 @@ pub fn initial_prompt(vocabulary: &[String]) -> Option<String> {
     (!prompt.is_empty()).then_some(prompt)
 }
 
-fn meeting_language(
-    metadata: &MeetingFile,
-    request: &TranscribeRequest,
-) -> Result<Option<Language>, ProcessingError> {
+fn meeting_language(metadata: &MeetingFile) -> Result<Option<Language>, ProcessingError> {
     match metadata.language.as_deref() {
-        None => Ok(request.default_language),
+        None => Ok(None),
         Some(code) => Language::from_code(code).map(Some).ok_or_else(|| {
             ProcessingError::Engine(format!("Unsupported Meeting language: {code}"))
         }),
@@ -883,6 +972,7 @@ fn usable_background<'b>(
         .iter()
         .filter(|cache| {
             metadata.import.is_none()
+                && cache.is_reusable()
                 && cache.model == request.model
                 && cache.initial_prompt.as_deref() == prompt
                 && (language.is_none() || cache.language.is_none() || cache.language == language)
@@ -899,7 +989,7 @@ pub fn background_draft(
     let metadata: MeetingFile =
         serde_json::from_slice(&fs::read(request.meeting_dir.join("meeting.json"))?)?;
     let prompt = initial_prompt(request.vocabulary);
-    let language = meeting_language(&metadata, request)?;
+    let language = meeting_language(&metadata)?;
     let background = usable_background(&metadata, request, prompt.as_deref(), language, background);
     let mut draft = Vec::new();
     for recording in metadata.recordings.iter().filter_map(|entry| match entry {
@@ -1132,7 +1222,7 @@ fn transcribe_meeting_inner(
     telemetry.total_ms = total;
     let prompt = initial_prompt(request.vocabulary);
     let prompt = prompt.as_deref();
-    let mut language = meeting_language(&metadata, request)?;
+    let mut language = meeting_language(&metadata)?;
     let detected = language.is_none();
     let background = usable_background(&metadata, request, prompt, language, background);
     let cached_local = background
