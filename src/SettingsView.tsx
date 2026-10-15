@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Check } from "lucide-react";
-import { getSettings, installedModels, onProcessingStatus, updateSettings, type Settings } from "./processing";
+import { firstRunInfo, getSettings, installedModels, onProcessingStatus, updateSettings, type Settings } from "./processing";
 import { aiStatus, type AiStatus } from "./ai";
 import { ErrorState } from "./components/states/ErrorState";
 import { Loading } from "./components/states/Loading";
@@ -29,6 +29,7 @@ export default function SettingsView({ initialTab }: { initialTab?: SettingsTabI
   const [loadFailed, setLoadFailed] = useState(false);
   const [load, setLoad] = useState(0);
   const [installed, setInstalled] = useState<string[] | null>(null);
+  const [libraryLocation, setLibraryLocation] = useState<string | null>(null);
   const [vocabulary, setVocabulary] = useState("");
   const [error, setError] = useState<{ reason: string; settings: Settings } | null>(null);
   const [saved, setSaved] = useState(false);
@@ -43,6 +44,7 @@ export default function SettingsView({ initialTab }: { initialTab?: SettingsTabI
     setLoadFailed(false);
     getSettings().then((next) => { if (active) { setSettings(next); setVocabulary(next.vocabulary.join("\n")); } }, () => { if (active) setLoadFailed(true); });
     installedModels().then((names) => { if (active) setInstalled(names); }, () => {});
+    firstRunInfo().then((info) => { if (active) setLibraryLocation(info.library_location); }, () => { if (active) setLibraryLocation("Unavailable"); });
     return () => { active = false; };
   }, [load]);
   useEffect(() => {
@@ -100,7 +102,7 @@ export default function SettingsView({ initialTab }: { initialTab?: SettingsTabI
       {error && <ErrorState title="Couldn't save Settings" guidance={`${error.reason}. The change shown below isn't saved yet.`} onRetry={() => save(error.settings)} />}
       {loadFailed ? <ErrorState title="Couldn't load Settings" guidance="Try again in a moment." onRetry={() => setLoad((value) => value + 1)} /> : !settings ? <Loading message="Loading Settings…" /> : <Tabs value={tab} onValueChange={(value) => setTab(value as SettingsTabId)} className="motion-content-enter min-w-0">
         <TabsList aria-label="Settings tabs" className="flex-wrap px-0"><TabsTrigger value="general">General</TabsTrigger><TabsTrigger value="speech-to-text">Speech-to-text</TabsTrigger><TabsTrigger value="language-models">Language models</TabsTrigger><TabsTrigger value="keys">Keys</TabsTrigger><TabsTrigger value="privacy">Privacy</TabsTrigger></TabsList>
-        <TabsContent forceMount hidden={tab !== "general"} value="general" className="settings-tab pt-7"><GeneralTab settings={settings} save={save} /></TabsContent>
+        <TabsContent forceMount hidden={tab !== "general"} value="general" className="settings-tab pt-7"><GeneralTab settings={settings} save={save} libraryLocation={libraryLocation} /></TabsContent>
         <TabsContent forceMount hidden={tab !== "speech-to-text"} value="speech-to-text" className="settings-tab pt-7"><SpeechToTextTab settings={settings} save={save} installed={installed} vocabulary={vocabulary} setVocabulary={setVocabulary} saveVocabulary={saveVocabulary} providerStatus={providerStatus} onManageKeys={() => setTab("keys")} /></TabsContent>
         <TabsContent forceMount hidden={tab !== "language-models"} value="language-models" className="settings-tab pt-7"><LanguageModelsTab settings={settings} setSettings={setSettings} providerStatus={providerStatus} setProviderStatus={setProviderStatus} aiError={aiError} setAiError={setAiError} onManageKeys={() => setTab("keys")} /></TabsContent>
         <TabsContent forceMount hidden={tab !== "keys"} value="keys" className="settings-tab pt-7"><KeysTab settings={settings} setSettings={setSettings} providerStatus={providerStatus} setProviderStatus={setProviderStatus} /></TabsContent>

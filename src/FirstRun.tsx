@@ -1,47 +1,41 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { Button } from "./components/ui/Button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "./components/ui/Dialog";
-import { MODELS, modelDownloadStatus, modelSizeLabel, onModelDownloadStatus, startModelDownload, updateSettings, type ModelDownloadStatus, type Settings } from "./processing";
+import { MEETING_LANGUAGES, type Language } from "./languages";
+import { MODELS, modelSizeLabel, openLibraryFolder, startModelDownload, updateSettings, type Settings } from "./processing";
 import { acknowledgeRecordingNotice } from "./recording";
 import { RECORDING_NOTICE } from "./recording-notice";
+import { useModelDownloads } from "./settings/useModelDownloads";
 
 export function recommendedModel(settings: Settings, discreteGpu: boolean) {
   return MODELS.find((model) => model.name === (discreteGpu || settings.language && settings.language !== "en" ? "large-v3-turbo-q5_0" : "small"))!;
 }
 
-export default function FirstRun({ settings, discreteGpu, libraryLocation = "Documents\\Meeting Minutes", onFinish, onUseKey }: {
+export default function FirstRun({ settings, discreteGpu, libraryLocation, onFinish, onUseKey }: {
   settings: Settings;
   discreteGpu: boolean;
-  libraryLocation?: string;
+  libraryLocation: string;
   onFinish: () => void | Promise<void>;
   onUseKey: () => void | Promise<void>;
 }) {
   const [step, setStep] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [downloads, setDownloads] = useState<Record<string, ModelDownloadStatus>>({});
-  const downloadEvents = useRef<Record<string, number>>({});
-  const model = recommendedModel(settings, discreteGpu);
+  const [language, setLanguage] = useState<Language | null>(settings.language);
+  const [savedModel, setSavedModel] = useState(settings.model);
+  const { downloads, error: downloadError, run } = useModelDownloads();
+  const model = recommendedModel({ ...settings, language }, discreteGpu);
   const download = downloads[model.name];
 
-  useEffect(() => {
-    let active = true;
-    const seen = new Set<string>();
-    let unlisten: (() => void) | undefined;
-    void onModelDownloadStatus((status) => {
-      if (!active) return;
-      seen.add(status.model_id);
-      downloadEvents.current[status.model_id] = (downloadEvents.current[status.model_id] ?? 0) + 1;
-      setDownloads((current) => ({ ...current, [status.model_id]: status }));
-    }).then((stop) => {
-      if (!active) { stop(); return; }
-      unlisten = stop;
-      return modelDownloadStatus().then((statuses) => {
-        if (active) setDownloads((current) => ({ ...current, ...Object.fromEntries(statuses.filter((status) => !seen.has(status.model_id)).map((status) => [status.model_id, status])) }));
-      });
-    }).catch((reason) => { if (active) setError(String(reason)); });
-    return () => { active = false; unlisten?.(); };
-  }, []);
+  async function chooseLanguage(next: Language | null) {
+    setBusy(true); setError(null);
+    try {
+      const speech = settings.speech ? { ...settings.speech, automatic_whisper: savedModel } : undefined;
+      await updateSettings(settings.auto_process, savedModel, settings.vocabulary, next, settings.your_name, speech);
+      setLanguage(next);
+    } catch (reason) { setError(String(reason)); }
+    finally { setBusy(false); }
+  }
 
   async function acknowledge() {
     setBusy(true); setError(null);
@@ -52,13 +46,11 @@ export default function FirstRun({ settings, discreteGpu, libraryLocation = "Doc
 
   async function downloadNow() {
     setBusy(true); setError(null);
-    const version = downloadEvents.current[model.name] ?? 0;
     try {
       const speech = settings.speech ? { ...settings.speech, automatic_whisper: model.name } : undefined;
-      await updateSettings(settings.auto_process, model.name, settings.vocabulary, settings.language, settings.your_name, speech);
-      const statuses = await startModelDownload(model.name);
-      const status = statuses.find((entry) => entry.model_id === model.name);
-      if (status && (downloadEvents.current[model.name] ?? 0) === version) setDownloads((current) => ({ ...current, [model.name]: status }));
+      await updateSettings(settings.auto_process, model.name, settings.vocabulary, language, settings.your_name, speech);
+      setSavedModel(model.name);
+      await run(model.name, () => startModelDownload(model.name));
     } catch (reason) { setError(String(reason)); }
     finally { setBusy(false); }
   }
@@ -76,14 +68,15 @@ export default function FirstRun({ settings, discreteGpu, libraryLocation = "Doc
       <DialogTitle>{step === 0 ? "Before you record" : step === 1 ? "Set up a local model" : "Library location"}</DialogTitle>
       {step === 0 ? <DialogDescription id="first-run-description">{RECORDING_NOTICE}</DialogDescription>
         : step === 1 ? <div id="first-run-description" className="mt-2 grid gap-4 text-sm text-ink-muted">
+          <div className="grid gap-1.5"><label htmlFor="first-run-language" className="font-medium text-ink">Meetings are mostly in</label><select id="first-run-language" className="rounded-sm border border-line-strong bg-raised px-2.5 py-1.5 text-sm text-ink" value={language ?? ""} disabled={busy} onChange={(event) => void chooseLanguage((event.target.value || null) as Language | null)}><option value="">Auto-detect</option>{MEETING_LANGUAGES.map((entry) => <option key={entry.code} value={entry.code}>{entry.label}</option>)}</select></div>
           <p className="m-0">Recommended for this PC and your default Meeting language: <strong className="text-ink">{model.label}</strong> · {modelSizeLabel(model.size_mb)}.</p>
           <p className="m-0">You can record while it downloads. Processing will wait for the model.</p>
           {download?.state === "downloading" && <p role="status" className="m-0 text-ink">Downloading {model.label}: {download.progress}%</p>}
           {download?.state === "downloaded" && <p role="status" className="m-0 text-ink">{model.label} is ready.</p>}
           {download?.state === "failed" && <p role="alert" className="m-0 text-record">{download.error ?? "Download failed"}</p>}
         </div>
-        : <DialogDescription id="first-run-description">Meetings are saved in your Library at <strong className="text-ink">{libraryLocation}</strong>. You can find this location in Settings → General.</DialogDescription>}
-      {error && <p role="alert" className="mt-3 text-sm text-record">{error}</p>}
+        : <div id="first-run-description" className="mt-2 grid gap-3 text-sm text-ink-muted"><p className="m-0">Meetings are saved in your Library at <strong className="text-ink">{libraryLocation}</strong>. You can find this location in Settings → General.</p><Button variant="secondary" className="justify-self-start" disabled={busy} onClick={() => void openLibraryFolder().catch((reason) => setError(String(reason)))}>Open folder</Button></div>}
+      {(error || downloadError) && <p role="alert" className="mt-3 text-sm text-record">{error || downloadError}</p>}
       <div className="mt-6 flex flex-wrap justify-end gap-2">
         <Button variant="ghost" disabled={busy} onClick={skip}>Skip</Button>
         {step === 0 ? <Button disabled={busy} onClick={() => void acknowledge()}>I understand</Button>

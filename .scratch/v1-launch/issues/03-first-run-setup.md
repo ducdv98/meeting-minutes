@@ -11,3 +11,8 @@ Status: ready-for-agent
 - [x] Download now starts the download from ticket 02 and shows its progress
 - [x] Help can reopen the flow
 - [x] Tests cover skip, download and use-my-key paths
+- [x] Model step saves the default Meeting language and updates the recommendation
+- [x] Library step opens the resolved folder; General shows that same path
+- [x] `first_run_completed` is required in TypeScript Settings
+- [x] Setup and Settings share model-download event reconciliation
+- [x] First-run Library location comes from the initialised Library state

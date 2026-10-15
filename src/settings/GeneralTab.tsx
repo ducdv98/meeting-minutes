@@ -6,7 +6,7 @@ import { FormSection } from "../components/FormSection";
 
 const selectClass = "h-[34px] w-full rounded-sm border border-line-strong bg-raised px-2.5 text-base outline-none focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-soft)] disabled:opacity-50";
 
-export function GeneralTab({ settings, save }: { settings: Settings; save: (next: Settings) => void }) {
+export function GeneralTab({ settings, save, libraryLocation }: { settings: Settings; save: (next: Settings) => void; libraryLocation: string | null }) {
   return <FormSection title="Meetings">
     <div className="grid gap-1.5"><label htmlFor="your-name" className="text-sm font-medium">Your name</label><Input id="your-name" value={settings.your_name ?? ""} placeholder="Me" onChange={(event) => save({ ...settings, your_name: event.target.value || null })} /><span className="text-xs text-ink-muted">Default Participant for Me in Meetings without a name override.</span></div>
     <div className="grid grid-cols-2 gap-3">
@@ -19,7 +19,7 @@ export function GeneralTab({ settings, save }: { settings: Settings; save: (next
       </div>
       <div className="grid gap-1.5">
         <span id="library-folder" className="text-sm font-medium">Library folder</span>
-        <span aria-labelledby="library-folder" className="flex h-[34px] items-center rounded-sm border border-line-strong bg-raised px-2.5 text-base text-ink-muted">Documents\Meeting Minutes</span>
+        <span aria-labelledby="library-folder" className="flex min-h-[34px] items-center break-all rounded-sm border border-line-strong bg-raised px-2.5 text-base text-ink-muted">{libraryLocation ?? "Loading…"}</span>
       </div>
     </div>
     <div className="flex items-center justify-between gap-4 rounded-md border border-line bg-raised px-3.5 py-3">

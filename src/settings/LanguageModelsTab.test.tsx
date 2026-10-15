@@ -11,7 +11,7 @@ const anthropic = { provider: "anthropic" as const, model: "claude-test" };
 const gemini = { provider: "gemini" as const, model: "gemini-test" };
 const models: LanguageModelSettings = { models: [ollama, anthropic, gemini], correction: null, summary: anthropic, ask: ollama, confirmed_correction_providers: [], legacy_correction_pending: false };
 const status: AiStatus = { provider: null, model: null, configured: false, has_openai_key: false, has_anthropic_key: true, has_groq_key: false, has_gemini_key: true };
-const initial: Settings = { recording_notice_acknowledged: true, cloud_notice_acknowledged: true, auto_process: true, model: "small", vocabulary: [], language: null, your_name: null, ai: { provider: null, ollama_model: null, openai_model: null, anthropic_model: null, gemini_model: null }, language_models: models };
+const initial: Settings = { first_run_completed: true, recording_notice_acknowledged: true, cloud_notice_acknowledged: true, auto_process: true, model: "small", vocabulary: [], language: null, your_name: null, ai: { provider: null, ollama_model: null, openai_model: null, anthropic_model: null, gemini_model: null }, language_models: models };
 
 function Harness() {
   const [settings, setSettings] = useState<Settings | null>(initial);

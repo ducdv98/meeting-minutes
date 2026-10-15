@@ -2,23 +2,31 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import SettingsView, { type SettingsTabId } from "./SettingsView";
 import type { AiSettings } from "./ai";
-import { acknowledgeCloudNotice, getSettings, installedModels, modelDownloadStatus, onModelDownloadStatus, updateSettings, type Settings } from "./processing";
+import { acknowledgeCloudNotice, firstRunInfo, getSettings, installedModels, modelDownloadStatus, onModelDownloadStatus, updateSettings, type Settings } from "./processing";
 import { aiStatus, deleteApiKey, listAiModels, managedConnect, managedDisconnect, managedStatus, saveApiKey, testCloudApiKey, testLanguageModel, updateLanguageModels, type AiStatus } from "./ai";
 import { openLink } from "./app-info";
 import { CLOUD_NOTICE_SUMMARY, CLOUD_NOTICE_TEXT, PRIVACY_INTRO } from "./privacy-text";
 
-vi.mock("./processing", async (importOriginal) => ({ ...(await importOriginal<typeof import("./processing")>()), getSettings: vi.fn(), updateSettings: vi.fn(), installedModels: vi.fn(), acknowledgeCloudNotice: vi.fn(), modelDownloadStatus: vi.fn(), onModelDownloadStatus: vi.fn() }));
+vi.mock("./processing", async (importOriginal) => ({ ...(await importOriginal<typeof import("./processing")>()), firstRunInfo: vi.fn(), getSettings: vi.fn(), updateSettings: vi.fn(), installedModels: vi.fn(), acknowledgeCloudNotice: vi.fn(), modelDownloadStatus: vi.fn(), onModelDownloadStatus: vi.fn() }));
 vi.mock("./ai", async (importOriginal) => ({ ...(await importOriginal<typeof import("./ai")>()), aiStatus: vi.fn(), listAiModels: vi.fn(), managedStatus: vi.fn(), managedConnect: vi.fn(), managedDisconnect: vi.fn(), saveApiKey: vi.fn(), deleteApiKey: vi.fn(), updateLanguageModels: vi.fn(), testLanguageModel: vi.fn(), testCloudApiKey: vi.fn() }));
 vi.mock("./app-info", () => ({ openLink: vi.fn() }));
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.resetAllMocks(); });
-beforeEach(() => { vi.mocked(installedModels).mockResolvedValue([]); vi.mocked(managedStatus).mockResolvedValue({ connected: false, revoked: false }); vi.mocked(modelDownloadStatus).mockResolvedValue([]); vi.mocked(onModelDownloadStatus).mockResolvedValue(() => {}); });
+beforeEach(() => { vi.mocked(firstRunInfo).mockResolvedValue({ discrete_gpu: false, library_location: "D:\\Meetings" }); vi.mocked(installedModels).mockResolvedValue([]); vi.mocked(managedStatus).mockResolvedValue({ connected: false, revoked: false }); vi.mocked(modelDownloadStatus).mockResolvedValue([]); vi.mocked(onModelDownloadStatus).mockResolvedValue(() => {}); });
 
 const noAi: AiSettings = { provider: null, ollama_model: null, openai_model: null, anthropic_model: null, gemini_model: null };
 const empty: AiStatus = { provider: null, model: null, configured: false, has_openai_key: false, has_anthropic_key: false, has_groq_key: false, has_gemini_key: false };
 
-const base: Settings = { recording_notice_acknowledged: true, cloud_notice_acknowledged: false, auto_process: true, model: "small", vocabulary: ["Nguyễn"], language: null, your_name: null, ai: noAi, language_models: { models: [], correction: null, summary: null, ask: null, confirmed_correction_providers: [], legacy_correction_pending: false } };
+const base: Settings = { first_run_completed: true, recording_notice_acknowledged: true, cloud_notice_acknowledged: false, auto_process: true, model: "small", vocabulary: ["Nguyễn"], language: null, your_name: null, ai: noAi, language_models: { models: [], correction: null, summary: null, ask: null, confirmed_correction_providers: [], legacy_correction_pending: false } };
 
 async function openTab(name: string) { fireEvent.mouseDown(await screen.findByRole("tab", { name }), { button: 0, ctrlKey: false }); }
+
+it("shows the resolved Library root in General", async () => {
+  vi.mocked(getSettings).mockResolvedValue(base);
+  vi.mocked(aiStatus).mockResolvedValue(empty);
+  render(<SettingsView initialTab="general" />);
+  expect(await screen.findByText("D:\\Meetings")).toBeTruthy();
+  expect(firstRunInfo).toHaveBeenCalledOnce();
+});
 
 it("shows five tabs, remembers the last one, and lets an opening link choose another", async () => {
   vi.mocked(getSettings).mockResolvedValue(base);

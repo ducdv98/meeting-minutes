@@ -749,11 +749,11 @@ struct FirstRunInfo {
 
 #[tauri::command]
 fn first_run_info(app: AppHandle) -> Result<FirstRunInfo, String> {
-    let location = app
-        .path()
-        .document_dir()
-        .map_err(|error| error.to_string())?
-        .join("Meeting Minutes");
+    let location = {
+        let state = app.state::<LibraryState>();
+        let guard = state.lock().map_err(|error| error.to_string())?;
+        guard.as_ref().map_err(Clone::clone)?.root().to_path_buf()
+    };
     Ok(FirstRunInfo {
         discrete_gpu: WhisperEngine::discrete_gpu_available(),
         library_location: location.display().to_string(),
@@ -2248,6 +2248,27 @@ fn open_meeting_folder(state: State<'_, LibraryState>, meeting_id: String) -> Re
     }
 }
 
+#[tauri::command]
+fn open_library_folder(state: State<'_, LibraryState>) -> Result<(), String> {
+    let folder = {
+        let guard = state.lock().map_err(|error| error.to_string())?;
+        guard.as_ref().map_err(Clone::clone)?.root().to_path_buf()
+    };
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer.exe")
+            .arg(folder)
+            .spawn()
+            .map_err(|error| format!("Couldn't open the Library folder: {error}"))?;
+        Ok(())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = folder;
+        Err("Opening the Library folder is available on Windows".into())
+    }
+}
+
 /// The app's fixed outside links, shown in Help.
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -3301,6 +3322,7 @@ fn main() {
             search_library,
             meeting_detail,
             open_meeting_folder,
+            open_library_folder,
             open_link,
             rename_meeting,
             set_participant_name,

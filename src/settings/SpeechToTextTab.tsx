@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
-import { cancelModelDownload, deleteModelDownload, GROQ_SPEECH_MODELS, modelDownloadStatus, MODELS, modelSizeLabel, onModelDownloadStatus, startModelDownload, testSpeechModel, type ModelDownloadStatus, type Settings, type SpeechProvider, type SpeechSettings } from "../processing";
+import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
+import { cancelModelDownload, deleteModelDownload, GROQ_SPEECH_MODELS, MODELS, modelSizeLabel, startModelDownload, testSpeechModel, type Settings, type SpeechProvider, type SpeechSettings } from "../processing";
 import { listAiModels, managedConnect, managedDisconnect, managedStatus, PROVIDER_NAMES, type AiStatus, type ManagedStatus } from "../ai";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
@@ -9,6 +9,7 @@ import { Textarea } from "../components/ui/Textarea";
 import { FormSection } from "../components/FormSection";
 import { Details } from "../components/Details";
 import { MANAGED_PRIVACY_STATEMENT, MANAGED_PRIVACY_SUMMARY } from "../privacy-text";
+import { useModelDownloads } from "./useModelDownloads";
 
 type Props = {
   settings: Settings;
@@ -35,27 +36,7 @@ export function SpeechToTextTab({ settings, save, installed, vocabulary, setVoca
   const [tested, setTested] = useState(false);
   const [modelBusy, setModelBusy] = useState(false);
   const [modelError, setModelError] = useState<string | null>(null);
-  const [downloads, setDownloads] = useState<Record<string, ModelDownloadStatus>>({});
-  const [downloadError, setDownloadError] = useState<string | null>(null);
-  const downloadEvents = useRef<Record<string, number>>({});
-  useEffect(() => {
-    let active = true;
-    const seen = new Set<string>();
-    let unlisten: (() => void) | undefined;
-    void onModelDownloadStatus((status) => {
-      if (!active) return;
-      seen.add(status.model_id);
-      downloadEvents.current[status.model_id] = (downloadEvents.current[status.model_id] ?? 0) + 1;
-      setDownloads((current) => ({ ...current, [status.model_id]: status }));
-    }).then((stop) => {
-      if (!active) { stop(); return; }
-      unlisten = stop;
-      return modelDownloadStatus().then((statuses) => {
-        if (active) setDownloads((current) => ({ ...current, ...Object.fromEntries(statuses.filter((status) => !seen.has(status.model_id)).map((status) => [status.model_id, status])) }));
-      });
-    }).catch((reason) => { if (active) setDownloadError(String(reason)); });
-    return () => { active = false; unlisten?.(); };
-  }, []);
+  const { downloads, error: downloadError, run: runDownload } = useModelDownloads();
   useEffect(() => {
     let active = true;
     managedStatus().then((next) => { if (active) setManaged(next); }, (reason) => { if (active) setManagedError(String(reason)); });
@@ -96,13 +77,7 @@ export function SpeechToTextTab({ settings, save, installed, vocabulary, setVoca
     return downloads[name] ?? { model_id: name, state: installed?.includes(name) ? "downloaded" as const : "not_downloaded" as const, progress: 0, error: null };
   }
   async function changeDownload(name: string, action: "start" | "cancel" | "delete") {
-    setDownloadError(null);
-    const version = downloadEvents.current[name] ?? 0;
-    try {
-      const statuses = await (action === "start" ? startModelDownload(name) : action === "cancel" ? cancelModelDownload(name) : deleteModelDownload(name));
-      const status = statuses.find((entry) => entry.model_id === name);
-      if (status && (downloadEvents.current[name] ?? 0) === version) setDownloads((current) => ({ ...current, [name]: status }));
-    } catch (reason) { setDownloadError(String(reason)); }
+    await runDownload(name, () => action === "start" ? startModelDownload(name) : action === "cancel" ? cancelModelDownload(name) : deleteModelDownload(name));
   }
   async function connectManaged() {
     setManagedBusy(true); setManagedError(null);

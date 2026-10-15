@@ -8,7 +8,7 @@ vi.mock("./ai", async (original) => ({ ...(await original<typeof import("./ai")>
 vi.mock("./processing", async (original) => ({ ...(await original<typeof import("./processing")>()), getSettings: vi.fn(), installedModels: vi.fn() }));
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
 beforeEach(() => {
-  vi.mocked(getSettings).mockResolvedValue({ recording_notice_acknowledged: true, cloud_notice_acknowledged: true, auto_process: false, model: "small", vocabulary: [], language: null, your_name: null, ai: { provider: null, ollama_model: null, openai_model: null, anthropic_model: null, gemini_model: null }, speech: { models: [{ provider: "groq", model: "whisper-large-v3" }, { provider: "gemini", model: "gemini-2.5-flash" }], automatic_groq: "whisper-large-v3", automatic_gemini: "gemini-2.5-flash", automatic_whisper: "small" } });
+  vi.mocked(getSettings).mockResolvedValue({ first_run_completed: true, recording_notice_acknowledged: true, cloud_notice_acknowledged: true, auto_process: false, model: "small", vocabulary: [], language: null, your_name: null, ai: { provider: null, ollama_model: null, openai_model: null, anthropic_model: null, gemini_model: null }, speech: { models: [{ provider: "groq", model: "whisper-large-v3" }, { provider: "gemini", model: "gemini-2.5-flash" }], automatic_groq: "whisper-large-v3", automatic_gemini: "gemini-2.5-flash", automatic_whisper: "small" } });
   vi.mocked(aiStatus).mockResolvedValue({ provider: null, model: null, configured: false, has_openai_key: false, has_anthropic_key: false, has_groq_key: true, has_gemini_key: false });
   vi.mocked(managedStatus).mockResolvedValue({ connected: true, revoked: false });
   vi.mocked(installedModels).mockResolvedValue(["small"]);

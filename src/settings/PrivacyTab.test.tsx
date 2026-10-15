@@ -9,7 +9,7 @@ vi.mock("../ai", async (importOriginal) => ({ ...(await importOriginal<typeof im
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
 
 const status: AiStatus = { provider: null, model: null, configured: false, has_openai_key: false, has_anthropic_key: false, has_groq_key: false, has_gemini_key: false };
-const settings: Settings = { recording_notice_acknowledged: true, cloud_notice_acknowledged: true, auto_process: true, model: "small", vocabulary: [], language: null, your_name: null, ai: { provider: null, ollama_model: null, openai_model: null, anthropic_model: null, gemini_model: null }, language_models: { models: [], correction: null, summary: null, ask: null, confirmed_correction_providers: [], legacy_correction_pending: false } };
+const settings: Settings = { first_run_completed: true, recording_notice_acknowledged: true, cloud_notice_acknowledged: true, auto_process: true, model: "small", vocabulary: [], language: null, your_name: null, ai: { provider: null, ollama_model: null, openai_model: null, anthropic_model: null, gemini_model: null }, language_models: { models: [], correction: null, summary: null, ask: null, confirmed_correction_providers: [], legacy_correction_pending: false } };
 
 it("lists every destination and shows all six off when no cloud option is active", async () => {
   vi.mocked(managedStatus).mockResolvedValue({ connected: false, revoked: false });
