@@ -1,6 +1,6 @@
 # Meeting Minutes
 
-A single-user, local-first Windows app that records calls from any meeting app, turns them into timed transcripts, and answers cited questions about one meeting at a time. An optional Account is planned for Managed transcription; Meetings remain local, without sharing or sync.
+A single-user, local-first Windows app that records calls from any meeting app, turns them into timed transcripts, and answers cited questions about one meeting at a time. An optional Account gives access to Managed transcription; Meetings remain local, without sharing or sync.
 
 ## Language
 
@@ -47,15 +47,15 @@ The reminder that other participants may need to consent to being recorded, plus
 ### Access
 
 **Free plan**:
-The permanent app offering, with no app-imposed usage limit on local Processing or cloud Processing through the user's own provider keys. An Account is optional and may add a limited Managed transcription allowance after admission.
+The permanent app offering, with no app-imposed usage limit on local Processing or cloud Processing through the user's own provider keys. An Account is optional and adds a limited Managed transcription allowance after admission.
 _Avoid_: Free tier, Registered tier
 
 **Account**:
-A planned identity for one user, tied to a verified email address and shared across their installations, required to use free or paid Managed transcription. During the experiment, an Invite code connects one installation instead.
+The identity of one user, tied to an email address verified by a one-time code and shared across their installations, required to use free or paid Managed transcription. The user can delete it from the app.
 _Avoid_: Install, Invite code
 
 **Managed access**:
-Permission for an Account to use Managed transcription after admission to the service. Registration alone does not grant access or consent to upload audio.
+Permission for an Account to use Managed transcription. Accounts are admitted automatically in order of verification while service capacity lasts; the rest are **Waitlisted** and told when they are admitted. Registration alone does not grant access or consent to upload audio.
 
 **Managed transcription allowance**:
 The monthly amount of Managed transcription an Account with Managed access may use at no charge, measured in Processed audio minutes and reset on the first day of each month in UTC without rollover. It covers transcription of audio, not Correction, Summary or Ask.
@@ -71,13 +71,13 @@ _Avoid_: Pro tier
 ### Understanding
 
 **Meeting language**:
-The spoken language of a Meeting (English or Vietnamese), chosen by the user or detected. One language per Meeting.
+The spoken language of a Meeting, one of the app's supported languages, chosen by the user or detected. One language per Meeting; its Summary and Answers are written in it.
 
 **Processing**:
 Turning a Meeting's audio into a Transcript, then a Summary and Action items. Processing starts automatically after Stop, in the cloud when the user has connected Managed transcription or set up a provider key, and locally otherwise. One Meeting's Transcript may come partly from each.
 
 **Managed transcription**:
-Cloud transcription run by the Meeting Minutes service, connected by Invite code during the experiment and enabled by a user with an Account and Managed access afterward. Enabling it is the user's consent to sending audio to the cloud; signing in alone is not.
+Cloud transcription run by the Meeting Minutes service, enabled by a user with an Account and Managed access. Enabling it is the user's consent to sending audio to the cloud; signing in alone is not.
 _Avoid_: Gateway, relay, hosted Groq
 
 **Provider**:
@@ -97,7 +97,7 @@ The fixed order of Providers that Processing tries for transcription, each with 
 _Avoid_: Engine chain, fallback chain
 
 **Invite code**:
-A one-time code from the operator that connects one install of the app to experimental Managed transcription. Disconnecting, or the operator revoking access, returns the app to its own keys or local transcription.
+A one-time code from the operator that connected one install of the app to experimental Managed transcription before Accounts. Retired in 1.0; its holders register an Account and are admitted first.
 _Avoid_: License key, account, token
 
 **Transcript**:
@@ -168,4 +168,3 @@ A reference from an Answer, Summary or Action item to a Segment ID in the same M
 ## Flagged ambiguities
 
 - "Task" means an Action item. Transcription, Correction, Summary and Ask are not tasks; name them directly.
-- "Meetless" is the macOS reference product this app is modelled on, not this product's name.
