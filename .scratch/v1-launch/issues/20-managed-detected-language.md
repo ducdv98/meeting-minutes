@@ -6,7 +6,7 @@
 
 Status: needs-triage
 
-- [ ] The gateway reply includes the detected language when `language=auto`
+- [x] The gateway reply includes the detected language when `language=auto`
 - [ ] `ManagedEngine` detects the language, and `needs_detected_language` no longer forces local detection
 - [ ] A Vietnamese Meeting on Auto-detect with only Managed transcription comes back in Vietnamese
 
