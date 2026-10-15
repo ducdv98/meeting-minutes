@@ -58,11 +58,14 @@ function fallbackNotice(transcript: Transcript): string {
   const destination = transcript.model.at(-1);
   const processedWith = destination === "Groq" || destination === "Gemini" ? destination : "local Whisper";
   const reason = transcript.fallback_reason;
-  if (reason === "Managed allowance exhausted") return `Your free Managed transcription minutes ran out this month; the rest was transcribed with ${processedWith}.`;
-  if (reason === "Managed Account waitlisted") return `Your Account is on the waitlist for Managed transcription; the rest was transcribed with ${processedWith}.`;
-  if (reason === "Managed Account suspended") return `Your Account is suspended from Managed transcription; the rest was transcribed with ${processedWith}.`;
-  if (reason?.startsWith("Managed capacity exhausted until ")) {
-    const date = reason.slice("Managed capacity exhausted until ".length);
+  const kind = transcript.fallback_kind;
+  if (kind === "managed_allowance" || reason === "Managed allowance exhausted") return `Your free Managed transcription minutes ran out this month; the rest was transcribed with ${processedWith}.`;
+  if (kind === "managed_waitlisted" || reason === "Managed Account waitlisted") return `Your Account is on the waitlist for Managed transcription; the rest was transcribed with ${processedWith}.`;
+  if (kind === "managed_suspended" || reason === "Managed Account suspended") return `Your Account is suspended from Managed transcription; the rest was transcribed with ${processedWith}.`;
+  if (kind === "managed_account_required" || reason === "Managed Account required") return `Sign in to an Account to keep using Managed transcription; the rest was transcribed with ${processedWith}.`;
+  if (kind === "managed_disabled" || reason === "Managed transcription turned off") return `Managed transcription was turned off; the rest was transcribed with ${processedWith}.`;
+  if (kind === "managed_capacity" || reason?.startsWith("Managed capacity exhausted until ")) {
+    const date = transcript.fallback_reset_date ?? reason?.slice("Managed capacity exhausted until ".length) ?? "";
     if (!date) return `Managed transcription is unavailable right now; the rest was transcribed with ${processedWith}.`;
     const until = /^\d{4}-\d{2}-\d{2}$/.test(date) ? new Intl.DateTimeFormat(undefined, { dateStyle: "long", timeZone: "UTC" }).format(new Date(`${date}T00:00:00Z`)) : "next month";
     return `Managed transcription is paused for everyone until ${until}; the rest was transcribed with ${processedWith}.`;

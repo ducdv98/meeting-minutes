@@ -84,6 +84,12 @@ it("shows a Managed fallback notice when Groq finishes the Meeting", async () =>
   expect(await screen.findByText("Part of this Meeting was transcribed with Groq: Managed transcription was disconnected.")).toBeTruthy();
 });
 
+it("asks a previous Managed user to sign in after Account enforcement", async () => {
+  vi.mocked(meetingTranscript).mockResolvedValue({ schema_version: 1, revision: 1, created_at: "now", model: ["Managed transcription", "Groq"], fallback_reason: "Account policy changed", fallback_kind: "managed_account_required", language: "en", language_detected: false, duration_ms: 1000, segments: [] });
+  render(<MeetingView id="old" onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
+  expect(await screen.findByText("Sign in to an Account to keep using Managed transcription; the rest was transcribed with Groq.")).toBeTruthy();
+});
+
 it("explains where audio went after the Managed allowance runs out", async () => {
   vi.mocked(meetingTranscript).mockResolvedValue({ schema_version: 1, revision: 1, created_at: "now", model: ["Managed transcription", "small"], fallback_reason: "Managed allowance exhausted", language: "en", language_detected: false, duration_ms: 1000, segments: [] });
   render(<MeetingView id="old" onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
@@ -94,6 +100,13 @@ it("explains the service pause and next Provider", async () => {
   vi.mocked(meetingTranscript).mockResolvedValue({ schema_version: 1, revision: 1, created_at: "now", model: ["Managed transcription", "Groq"], fallback_reason: "Managed capacity exhausted until 2026-11-01", language: "en", language_detected: false, duration_ms: 1000, segments: [] });
   render(<MeetingView id="old" onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
   expect(await screen.findByText(/Managed transcription is paused for everyone until .*; the rest was transcribed with Groq/)).toBeTruthy();
+});
+
+it("uses the reset date supplied with the stable Managed fallback kind", async () => {
+  vi.mocked(meetingTranscript).mockResolvedValue({ schema_version: 1, revision: 1, created_at: "now", model: ["Groq"], fallback_reason: "Service paused", fallback_kind: "managed_capacity", fallback_reset_date: "2026-11-01", language: "en", language_detected: false, duration_ms: 1000, segments: [] });
+  render(<MeetingView id="old" onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
+  const date = new Intl.DateTimeFormat(undefined, { dateStyle: "long", timeZone: "UTC" }).format(new Date("2026-11-01T00:00:00Z"));
+  expect(await screen.findByText(`Managed transcription is paused for everyone until ${date}; the rest was transcribed with Groq.`)).toBeTruthy();
 });
 
 it("shows the Correction failure notice for the published Revision", async () => {

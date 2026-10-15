@@ -1,15 +1,16 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { SpeechToTextTab } from "./SpeechToTextTab";
-import { managedDeleteAccount, managedDisconnect, managedSendCode, managedSetEnabled, managedSignIn, managedStatus } from "../ai";
+import { managedAccount, managedDeleteAccount, managedDisconnect, managedSendCode, managedSetEnabled, managedSignIn, managedStatus } from "../ai";
 import { cancelModelDownload, deleteModelDownload, modelDownloadStatus, onModelDownloadStatus, startModelDownload, testSpeechModel, type ModelDownloadStatus } from "../processing";
 import { MANAGED_PRIVACY_STATEMENT, MANAGED_PRIVACY_SUMMARY } from "../privacy-text";
 import type { Settings } from "../processing";
 
-vi.mock("../ai", async (importOriginal) => ({ ...(await importOriginal<typeof import("../ai")>()), managedStatus: vi.fn(), managedSendCode: vi.fn(), managedSignIn: vi.fn(), managedDisconnect: vi.fn(), managedSetEnabled: vi.fn(), managedDeleteAccount: vi.fn() }));
+vi.mock("../ai", async (importOriginal) => ({ ...(await importOriginal<typeof import("../ai")>()), managedStatus: vi.fn(), managedAccount: vi.fn(), managedSendCode: vi.fn(), managedSignIn: vi.fn(), managedDisconnect: vi.fn(), managedSetEnabled: vi.fn(), managedDeleteAccount: vi.fn() }));
 vi.mock("../processing", async (importOriginal) => ({ ...(await importOriginal<typeof import("../processing")>()), testSpeechModel: vi.fn(), modelDownloadStatus: vi.fn(), onModelDownloadStatus: vi.fn(), startModelDownload: vi.fn(), cancelModelDownload: vi.fn(), deleteModelDownload: vi.fn() }));
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
 beforeEach(() => {
+  vi.mocked(managedAccount).mockResolvedValue({ email: "person@example.com", state: "admitted", minutes_used: 0, minutes_remaining: 120, allowance_minutes: 120, resets_at: "2026-11-01T00:00:00.000Z" });
   vi.mocked(modelDownloadStatus).mockResolvedValue([]);
   vi.mocked(onModelDownloadStatus).mockResolvedValue(() => {});
 });
@@ -49,8 +50,8 @@ it("shows a legacy connection and keeps its tokens available while signing in", 
   vi.mocked(managedStatus).mockResolvedValue({ connected: true, revoked: false, email: null, enabled: true });
   renderTab();
   const account = screen.getByRole("region", { name: "Account" });
-  expect(await within(account).findByText("Connected (legacy invite)")).toBeTruthy();
-  expect(screen.getByText("New Meetings use: Managed transcription")).toBeTruthy();
+  expect(await within(account).findByText("Previous Managed connection — sign in with your email to keep using Managed transcription")).toBeTruthy();
+  expect(screen.getByText("New Meetings use: Local Whisper · small")).toBeTruthy();
   fireEvent.click(within(account).getByRole("button", { name: "Sign in" }));
   expect(within(account).getByLabelText("Email address")).toBeTruthy();
 });

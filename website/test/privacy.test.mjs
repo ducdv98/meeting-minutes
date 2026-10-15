@@ -56,8 +56,12 @@ test('privacy page explains current Account sign-in and Managed transcription', 
   assert.match(policy, /Signing in alone does not enable Managed transcription/i);
   assert.match(policy, /Meeting Minutes service[\s\S]*?forwards? (?:the )?audio to Groq/i);
   assert.match(policy, /Audio is deleted after processing/i);
-  assert.match(policy, /each part.{0,100}transcribed text.{0,100}up to five minutes.{0,40}retr(?:y|ies)/i);
-  assert.match(policy, /Windows Credential Manager[\s\S]*?client ID and refresh token/i);
+  assert.match(policy, /transcribed text.{0,100}deleted within 10 minutes/i);
+  assert.match(policy, /Windows Credential Manager[\s\S]*?client ID, refresh token, Account email address and enabled flag/i);
+  assert.match(policy, /Resend[\s\S]*?email address/i);
+  assert.match(policy, /waitlisted[\s\S]*?emailed when admitted/i);
+  assert.match(policy, /Sign out deletes this installation/i);
+  assert.doesNotMatch(policy, /Choosing Disconnect/i);
 });
 
 test('privacy page describes stored Account data, admission order and deletion as current', async () => {

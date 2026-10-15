@@ -283,10 +283,68 @@ fn managed_transcribes_continuous_speech_across_detection_boundary() {
 
     let uploads = http.uploads();
     assert_eq!(uploads.len(), 2);
-    assert_eq!(uploads[1].fields["offset_ms"], "0");
-    assert_eq!(uploads[1].fields["duration_ms"], "31000");
+    assert_eq!(uploads[1].fields["offset_ms"], "30000");
+    assert_eq!(uploads[1].fields["duration_ms"], "1000");
     assert_eq!(uploads[1].fields["language"], "vi");
-    assert_eq!(segments.len(), 1);
+    assert_eq!(segments.len(), 2);
+    assert_eq!(
+        uploads
+            .iter()
+            .map(|upload| upload.fields["duration_ms"].parse::<u64>().unwrap())
+            .sum::<u64>(),
+        31000
+    );
+}
+
+#[test]
+fn disabling_managed_stops_the_next_upload() {
+    let http = FakeHttp::new([], false);
+    let enabled = Arc::new(AtomicBool::new(true));
+    let mut engine = engine(http.clone(), None);
+    engine.set_enabled_check({
+        let enabled = enabled.clone();
+        move || enabled.load(Ordering::SeqCst)
+    });
+    transcribe(&mut engine).unwrap();
+    enabled.store(false, Ordering::SeqCst);
+    assert_eq!(
+        transcribe(&mut engine).unwrap_err(),
+        EngineError::ManagedDisabled
+    );
+    assert_eq!(http.uploads().len(), 1);
+}
+
+#[test]
+fn queued_managed_work_checks_consent_before_its_first_upload() {
+    let http = FakeHttp::new([], false);
+    let enabled = Arc::new(AtomicBool::new(true));
+    let mut engine = engine(http.clone(), None);
+    engine.set_enabled_check({
+        let enabled = enabled.clone();
+        move || enabled.load(Ordering::SeqCst)
+    });
+    enabled.store(false, Ordering::SeqCst);
+    assert_eq!(
+        transcribe(&mut engine).unwrap_err(),
+        EngineError::ManagedDisabled
+    );
+    assert!(http.uploads().is_empty());
+}
+
+#[test]
+fn disabling_during_token_refresh_stops_the_upload() {
+    let http = FakeHttp::new([], false);
+    let checks = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let mut engine = engine(http.clone(), None);
+    engine.set_enabled_check({
+        let checks = checks.clone();
+        move || checks.fetch_add(1, Ordering::SeqCst) == 0
+    });
+    assert_eq!(
+        transcribe(&mut engine).unwrap_err(),
+        EngineError::ManagedDisabled
+    );
+    assert!(http.uploads().is_empty());
 }
 
 #[test]
@@ -479,6 +537,11 @@ fn account_admission_errors_do_not_retry_managed_transcription() {
             r#"{"error":{"code":"ACCOUNT_SUSPENDED","retryable":false}}"#,
             EngineError::ManagedSuspended,
         ),
+        (
+            403,
+            r#"{"error":{"code":"ACCOUNT_REQUIRED","retryable":false}}"#,
+            EngineError::ManagedAccountRequired,
+        ),
     ] {
         let http = FakeHttp::new([Reply::Error(status, body)], false);
         assert_eq!(
@@ -574,6 +637,8 @@ fn managed_engine_name_and_fallback_round_trip_with_old_transcripts() {
         FallbackReason::ManagedCapacity("2026-11-01".into()),
         FallbackReason::ManagedWaitlisted,
         FallbackReason::ManagedSuspended,
+        FallbackReason::ManagedAccountRequired,
+        FallbackReason::ManagedDisabled,
     ] {
         let saved = serde_json::to_string(&reason).unwrap();
         assert_eq!(
@@ -581,6 +646,20 @@ fn managed_engine_name_and_fallback_round_trip_with_old_transcripts() {
             reason
         );
     }
+    assert_eq!(
+        FallbackReason::ManagedAccountRequired.kind(),
+        "managed_account_required"
+    );
+    assert_eq!(
+        FallbackReason::ManagedCapacity("2026-11-01".into()).reset_date(),
+        Some("2026-11-01")
+    );
+    assert_eq!(
+        serde_json::from_str::<FallbackReason>("\"Managed allowance exhausted\"")
+            .unwrap()
+            .kind(),
+        "managed_allowance"
+    );
 }
 
 #[test]

@@ -27,7 +27,7 @@ it("lists every destination and shows all six off when no cloud option is active
 });
 
 it("updates key and Correction states from live Settings props", async () => {
-  vi.mocked(managedStatus).mockResolvedValue({ connected: true, revoked: false });
+  vi.mocked(managedStatus).mockResolvedValue({ connected: true, revoked: false, email: "person@example.com", enabled: true });
   const cloud = { ...status, has_groq_key: true, has_anthropic_key: true };
   const correction = { provider: "anthropic" as const, model: "claude-test" };
   const nextSettings = { ...settings, speech: { models: [{ provider: "groq" as const, model: "whisper-large-v3" }], automatic_groq: "whisper-large-v3", automatic_gemini: null, automatic_whisper: "small" }, language_models: { ...settings.language_models!, models: [correction], correction } };
@@ -39,6 +39,12 @@ it("updates key and Correction states from live Settings props", async () => {
   view.rerender(<PrivacyTab settings={settings} providerStatus={status} />);
   expect(within(screen.getByRole("region", { name: "Groq" })).getByText("Off · No key")).toBeTruthy();
   expect(within(screen.getByRole("region", { name: "Correction model" })).getByText("Off")).toBeTruthy();
+});
+
+it("marks a previous Managed connection as off until Account sign-in", async () => {
+  vi.mocked(managedStatus).mockResolvedValue({ connected: true, revoked: false, email: null, enabled: true });
+  render(<PrivacyTab settings={settings} providerStatus={status} />);
+  expect(await within(screen.getByRole("region", { name: "Managed transcription" })).findByText("Off · Previous Managed connection")).toBeTruthy();
 });
 
 it("shows saved keys as off until an automatic Speech-to-text model or Use for default is valid", async () => {
@@ -53,12 +59,13 @@ it("shows saved keys as off until an automatic Speech-to-text model or Use for d
 });
 
 it("refreshes Managed status on each visit and uses the shared disclosure text", async () => {
-  vi.mocked(managedStatus).mockResolvedValueOnce({ connected: false, revoked: false }).mockResolvedValueOnce({ connected: true, revoked: false });
+  vi.mocked(managedStatus).mockResolvedValueOnce({ connected: false, revoked: false }).mockResolvedValueOnce({ connected: true, revoked: false, email: "person@example.com", enabled: true });
   const view = render(<PrivacyTab settings={settings} providerStatus={status} />);
   const managed = screen.getByRole("region", { name: "Managed transcription" });
   expect(await within(managed).findByText("Off · Not connected")).toBeTruthy();
   fireEvent.click(within(managed).getByRole("button", { name: "Details" }));
   expect(within(managed).getByText(MANAGED_PRIVACY_STATEMENT)).toBeTruthy();
+  expect(MANAGED_PRIVACY_STATEMENT).toContain("deleted within 10 minutes");
   const groq = screen.getByRole("region", { name: "Groq" });
   fireEvent.click(within(groq).getByRole("button", { name: "Details" }));
   expect(within(groq).getByText(PRIVACY_DESTINATIONS.groq.details)).toBeTruthy();

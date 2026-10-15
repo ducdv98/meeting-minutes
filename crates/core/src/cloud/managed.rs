@@ -73,6 +73,7 @@ pub enum GatewayErrorCode {
     TooManyAttempts,
     EmailUnavailable,
     NoAccount,
+    AccountRequired,
     AllowanceExhausted,
     Waitlisted,
     AccountSuspended,
@@ -99,6 +100,7 @@ impl GatewayErrorCode {
             "TOO_MANY_ATTEMPTS" => Self::TooManyAttempts,
             "EMAIL_UNAVAILABLE" => Self::EmailUnavailable,
             "NO_ACCOUNT" => Self::NoAccount,
+            "ACCOUNT_REQUIRED" => Self::AccountRequired,
             "ALLOWANCE_EXHAUSTED" => Self::AllowanceExhausted,
             "WAITLISTED" => Self::Waitlisted,
             "ACCOUNT_SUSPENDED" => Self::AccountSuspended,
@@ -425,6 +427,45 @@ pub trait ManagedCredentialStore: Send + Sync {
     fn delete(&self) -> Result<(), String>;
 }
 
+#[derive(Debug)]
+pub enum SignInError {
+    Gateway(GatewayError),
+    Store(String),
+}
+
+pub fn sign_in(
+    http: &dyn HttpClient,
+    base: &str,
+    store: &dyn ManagedCredentialStore,
+    tokens: &TokenManager,
+    email: &str,
+    code: &str,
+) -> Result<ManagedCredential, SignInError> {
+    let email = email.trim().to_lowercase();
+    let legacy = store
+        .get()
+        .map_err(SignInError::Store)?
+        .filter(|credential| credential.email.is_none());
+    let legacy_token = if legacy.is_some() {
+        tokens.access_token().ok()
+    } else {
+        None
+    };
+    let activation = verify_code_with_token(http, base, &email, code, legacy_token.as_ref())
+        .map_err(SignInError::Gateway)?;
+    let credential = ManagedCredential {
+        enabled: legacy
+            .as_ref()
+            .is_some_and(|old| old.client_id == activation.client_id && old.enabled),
+        client_id: activation.client_id,
+        refresh_token: activation.refresh_token,
+        email: Some(email),
+    };
+    store.set(&credential).map_err(SignInError::Store)?;
+    tokens.reset();
+    Ok(credential)
+}
+
 #[derive(Default)]
 pub struct MemoryManagedCredentialStore(Mutex<Option<ManagedCredential>>);
 
@@ -611,6 +652,7 @@ pub struct ManagedEngine {
     boundary: String,
     sleeper: Sleeper,
     detected_opening: Option<DetectedOpening>,
+    enabled_check: Box<dyn Fn() -> bool + Send + Sync>,
 }
 
 impl ManagedEngine {
@@ -643,6 +685,7 @@ impl ManagedEngine {
             boundary: boundary.into(),
             sleeper: Box::new(default_sleep),
             detected_opening: None,
+            enabled_check: Box::new(|| true),
         }
     }
 
@@ -651,6 +694,10 @@ impl ManagedEngine {
         sleeper: impl FnMut(Duration, &AtomicBool) -> bool + Send + 'static,
     ) {
         self.sleeper = Box::new(sleeper);
+    }
+
+    pub fn set_enabled_check(&mut self, check: impl Fn() -> bool + Send + Sync + 'static) {
+        self.enabled_check = Box::new(check);
     }
 
     fn upload(
@@ -682,11 +729,17 @@ impl ManagedEngine {
             if cancel.load(Ordering::SeqCst) {
                 return Err(EngineError::Cancelled);
             }
+            if !(self.enabled_check)() {
+                return Err(EngineError::ManagedDisabled);
+            }
             // Asked again before every attempt, so a Disconnect stops the next one.
             let token = self.tokens.access_token().map_err(|error| {
                 log_failure(auth_code(&error), request_id);
                 auth_error(error)
             })?;
+            if !(self.enabled_check)() {
+                return Err(EngineError::ManagedDisabled);
+            }
             let request = HttpRequest {
                 method: Method::Post,
                 url: format!("{}/v1/transcriptions", self.base.trim_end_matches('/')),
@@ -808,18 +861,7 @@ impl CloudEngine for ManagedEngine {
             } else {
                 None
             };
-            let safe_end = opening
-                .samples
-                .iter()
-                .rev()
-                .take(1600)
-                .all(|sample| sample.abs() <= 0.01);
-            // A longer span can reuse the opening only when the split lands in silence.
-            if opening.language == language
-                && (safe_end
-                    || offset
-                        .is_some_and(|offset| offset + opening.samples.len() == samples_16k.len()))
-            {
+            if opening.language == language {
                 if let Some(offset) = offset {
                     let offset_ms = offset as u64 * 1000 / 16_000;
                     segments.extend(opening.segments.into_iter().map(|mut segment| {
@@ -941,6 +983,7 @@ impl UploadFailure {
                 GatewayErrorCode::TooManyAttempts => "TOO_MANY_ATTEMPTS",
                 GatewayErrorCode::EmailUnavailable => "EMAIL_UNAVAILABLE",
                 GatewayErrorCode::NoAccount => "NO_ACCOUNT",
+                GatewayErrorCode::AccountRequired => "ACCOUNT_REQUIRED",
                 GatewayErrorCode::AllowanceExhausted => "ALLOWANCE_EXHAUSTED",
                 GatewayErrorCode::Waitlisted => "WAITLISTED",
                 GatewayErrorCode::AccountSuspended => "ACCOUNT_SUSPENDED",
@@ -1014,6 +1057,7 @@ impl UploadFailure {
                     EngineError::ManagedCapacityExhausted(date)
                 }
                 GatewayErrorCode::Waitlisted => EngineError::ManagedWaitlisted,
+                GatewayErrorCode::AccountRequired => EngineError::ManagedAccountRequired,
                 GatewayErrorCode::AccountSuspended => EngineError::ManagedSuspended,
                 GatewayErrorCode::RateLimited
                 | GatewayErrorCode::RequestInProgress

@@ -79,8 +79,8 @@ export function SpeechToTextTab({ settings, save, installed, vocabulary, setVoca
   }
   const groqReady = !!providerStatus?.has_groq_key && !!speech.automatic_groq;
   const geminiReady = !!providerStatus?.has_gemini_key && !!speech.automatic_gemini;
-  const managedReady = !!managed?.connected && (managed.enabled ?? !managed.email) && !managed.revoked;
-  const managedAvailable = managedReady && account?.state !== "waitlisted" && account?.state !== "suspended" && !accountError?.includes("suspended");
+  const managedReady = !!managed?.connected && !!managed.email && !!managed.enabled && !managed.revoked;
+  const managedAvailable = managedReady && account?.state === "admitted";
   const first = managedAvailable ? "Managed transcription" : groqReady ? `Groq · ${speech.automatic_groq}` : geminiReady ? `Gemini · ${speech.automatic_gemini}` : `Local Whisper · ${speech.automatic_whisper}`;
   function localStatus(name: string) {
     return downloads[name] ?? { model_id: name, state: installed?.includes(name) ? "downloaded" as const : "not_downloaded" as const, progress: 0, error: null };
@@ -131,13 +131,13 @@ export function SpeechToTextTab({ settings, save, installed, vocabulary, setVoca
     <FormSection title="Account">
       {managed?.email && !signInOpen ? <>
         <p role="status" className="m-0 text-sm">Signed in as {managed.email}</p>
-        {account?.state === "admitted" && <p className="m-0 text-sm">Admitted · {account.minutes_remaining.toLocaleString(undefined, { maximumFractionDigits: 1 })} of {account.allowance_minutes.toLocaleString()} minutes remaining this month. Resets {new Intl.DateTimeFormat(undefined, { dateStyle: "long", timeZone: "UTC" }).format(new Date(account.resets_at))} (UTC).</p>}
+        {(account?.state === "admitted" || account?.state === "waitlisted") && <p className="m-0 text-sm">{account.state === "admitted" ? "Admitted · " : ""}{account.minutes_remaining.toLocaleString(undefined, { maximumFractionDigits: 1 })} of {account.allowance_minutes.toLocaleString()} minutes remaining this month. Resets {new Intl.DateTimeFormat(undefined, { dateStyle: "long", timeZone: "UTC" }).format(new Date(account.resets_at))} (UTC).</p>}
         {account?.state === "waitlisted" && <p className="m-0 text-sm">Waitlisted{account.waitlist_position != null ? ` · position ${account.waitlist_position}` : ""}. Local Processing and Processing with your own keys keep working. We’ll email you when Managed access is available.</p>}
         {account?.state === "suspended" && <p className="m-0 text-sm">Your Account is suspended. Local Processing and Processing with your own keys keep working.</p>}
         {accountError && <p role="status" className="m-0 text-sm text-ink-muted">{accountError.includes("suspended") ? "Your Account is suspended. Local Processing and Processing with your own keys keep working." : accountError}</p>}
         <div className="flex flex-wrap gap-2"><Button variant="secondary" disabled={managedBusy} onClick={() => void disconnectManaged()}>Sign out</Button><Button variant="ghost" disabled={managedBusy} onClick={() => setConfirmDelete(true)}>Delete account</Button></div>
       </> : <>
-        {managed?.connected && !managed.email && !signInOpen && <div className="flex flex-wrap items-center gap-2 text-sm"><span role="status">Connected (legacy invite)</span><Button variant="secondary" disabled={managedBusy} onClick={() => setSignInOpen(true)}>Sign in</Button><Button variant="ghost" disabled={managedBusy} onClick={() => void disconnectManaged()}>Sign out</Button></div>}
+        {managed?.connected && !managed.email && !signInOpen && <div className="flex flex-wrap items-center gap-2 text-sm"><span role="status">Previous Managed connection — sign in with your email to keep using Managed transcription</span><Button variant="secondary" disabled={managedBusy} onClick={() => setSignInOpen(true)}>Sign in</Button><Button variant="ghost" disabled={managedBusy} onClick={() => void disconnectManaged()}>Sign out</Button></div>}
         {(!managed?.connected || signInOpen) && <div className="grid max-w-sm gap-3">
           {managed?.revoked && <p role="status" className="m-0 text-sm">Your previous connection expired. Sign in again.</p>}
           <div className="grid gap-1.5"><label htmlFor="account-email" className="text-sm">Email address</label><Input id="account-email" type="email" autoComplete="email" value={email} onChange={(event) => { setEmail(event.target.value); setCodeSent(false); }} /></div>

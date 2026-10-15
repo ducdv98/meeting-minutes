@@ -28,6 +28,8 @@ it("shows Waitlisted position and available alternatives", async () => {
   vi.mocked(managedAccount).mockResolvedValue({ email: "person@example.com", state: "waitlisted", minutes_used: 0, minutes_remaining: 120, allowance_minutes: 120, resets_at: "2026-11-01T00:00:00.000Z", waitlist_position: 3 });
   render(<SettingsView initialTab="speech-to-text" />);
   expect(await screen.findByText(/Waitlisted · position 3/)).toBeTruthy();
+  expect(screen.getByText(/120 of 120 minutes remaining this month/)).toBeTruthy();
+  expect(screen.getByText(new Intl.DateTimeFormat(undefined, { dateStyle: "long", timeZone: "UTC" }).format(new Date("2026-11-01T00:00:00.000Z")), { exact: false })).toBeTruthy();
   expect(screen.getByText(/Local Processing and Processing with your own keys keep working/)).toBeTruthy();
 });
 

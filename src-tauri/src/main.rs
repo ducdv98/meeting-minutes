@@ -683,13 +683,42 @@ fn dismiss_processing(app: AppHandle, meeting_id: String) -> Result<ProcessingSt
 fn meeting_transcript(
     state: State<'_, LibraryState>,
     meeting_id: String,
-) -> Result<Option<Transcript>, String> {
+) -> Result<Option<UiTranscript>, String> {
     let library = state.lock().map_err(|e| e.to_string())?;
     library
         .as_ref()
         .map_err(Clone::clone)?
         .transcript(&meeting_id)
+        .map(|transcript| transcript.map(UiTranscript::from))
         .map_err(|e| e.to_string())
+}
+
+#[derive(serde::Serialize)]
+struct UiTranscript {
+    #[serde(flatten)]
+    transcript: Transcript,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    fallback_kind: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    fallback_reset_date: Option<String>,
+}
+
+impl From<Transcript> for UiTranscript {
+    fn from(transcript: Transcript) -> Self {
+        let fallback_kind = transcript
+            .fallback_reason
+            .as_ref()
+            .map(|reason| reason.kind());
+        let fallback_reset_date = transcript
+            .fallback_reason
+            .as_ref()
+            .and_then(|reason| reason.reset_date().map(str::to_owned));
+        Self {
+            transcript,
+            fallback_kind,
+            fallback_reset_date,
+        }
+    }
 }
 
 #[tauri::command]
@@ -699,7 +728,7 @@ fn edit_segment(
     revision: u32,
     segment_id: String,
     text: String,
-) -> Result<Transcript, String> {
+) -> Result<UiTranscript, String> {
     // Held through the edit: no transcription of this Meeting can start and publish a newer Revision meanwhile.
     let processor = lock_processor(&app)?;
     meeting_busy_locked(&app, &processor, &meeting_id)?;
@@ -711,7 +740,7 @@ fn edit_segment(
         .edit_segment(&meeting_id, revision, &segment_id, &text)
         .map_err(|e| e.to_string())?;
     let _ = app.emit("library-changed", ());
-    Ok(transcript)
+    Ok(UiTranscript::from(transcript))
 }
 
 #[tauri::command]
@@ -1002,38 +1031,18 @@ async fn managed_sign_in(
         }
         let managed = app.state::<Managed>();
         let http = app.state::<Http>();
-        let legacy = managed
-            .store
-            .get()
-            .ok()
-            .flatten()
-            .filter(|credential| credential.email.is_none());
-        let legacy_token = if legacy.is_some() {
-            managed.tokens.access_token().ok()
-        } else {
-            None
-        };
-        let activation = managed::verify_code_with_token(
+        managed::sign_in(
             http.0.as_ref(),
             &managed.base,
+            managed.store.as_ref(),
+            managed.tokens.as_ref(),
             &email,
             &code,
-            legacy_token.as_ref(),
         )
-        .map_err(account_error)?;
-        let enabled = legacy.as_ref().is_some_and(|credential| {
-            credential.client_id == activation.client_id && credential.enabled
-        });
-        managed
-            .store
-            .set(&ManagedCredential {
-                client_id: activation.client_id,
-                refresh_token: activation.refresh_token,
-                email: Some(email),
-                enabled,
-            })
-            .map_err(|_| "Could not save your Account sign-in.".to_owned())?;
-        managed.tokens.reset();
+        .map_err(|error| match error {
+            managed::SignInError::Gateway(error) => account_error(error),
+            managed::SignInError::Store(_) => "Could not save your Account sign-in.".to_owned(),
+        })?;
         current_managed_status(&managed)
     })
     .await
@@ -1832,13 +1841,20 @@ fn transcription_chain<'a>(
     let mut cloud: Vec<Box<dyn CloudEngine>> = Vec::new();
     let settings = Settings::load(&app.state::<SettingsPath>().0);
     let managed = app.state::<Managed>();
+    let make_managed = || {
+        let mut engine =
+            ManagedEngine::new(app.state::<Http>().0.clone(), managed.tokens.clone(), None);
+        let store = managed.store.clone();
+        let tokens = managed.tokens.clone();
+        engine.set_enabled_check(move || {
+            !tokens.is_disconnected()
+                && matches!(store.get(), Ok(Some(credential)) if credential.enabled)
+        });
+        Box::new(engine) as Box<dyn CloudEngine>
+    };
     if let Some(chosen) = chosen {
         let selected: Option<Box<dyn CloudEngine>> = if chosen == "managed" {
-            Some(Box::new(ManagedEngine::new(
-                app.state::<Http>().0.clone(),
-                managed.tokens.clone(),
-                None,
-            )))
+            Some(make_managed())
         } else if let Some(name) = chosen.strip_prefix("groq:") {
             let key = app
                 .state::<Secrets>()
@@ -1876,11 +1892,7 @@ fn transcription_chain<'a>(
     if !managed.tokens.is_disconnected()
         && matches!(managed.store.get(), Ok(Some(credential)) if credential.enabled)
     {
-        cloud.push(Box::new(ManagedEngine::new(
-            app.state::<Http>().0.clone(),
-            managed.tokens.clone(),
-            None,
-        )));
+        cloud.push(make_managed());
     }
     // A saved key is the user's choice of cloud transcription (ADR 0011).
     if let Some(key) = app

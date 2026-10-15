@@ -57,6 +57,8 @@ pub enum FallbackReason {
     ManagedCapacity(String),
     ManagedWaitlisted,
     ManagedSuspended,
+    ManagedAccountRequired,
+    ManagedDisabled,
     Quota(EngineName),
     Unauthorized(EngineName),
     Offline(EngineName),
@@ -65,6 +67,30 @@ pub enum FallbackReason {
     Legacy(String),
 }
 impl FallbackReason {
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::ManagedAllowance => "managed_allowance",
+            Self::ManagedCapacity(_) => "managed_capacity",
+            Self::ManagedWaitlisted => "managed_waitlisted",
+            Self::ManagedSuspended => "managed_suspended",
+            Self::ManagedAccountRequired => "managed_account_required",
+            Self::ManagedDisabled => "managed_disabled",
+            Self::Quota(_) => "quota",
+            Self::Unauthorized(_) => "unauthorized",
+            Self::Offline(_) => "offline",
+            Self::RateLimit(_) => "rate_limit",
+            Self::Other(_) => "other",
+            Self::Legacy(_) => "legacy",
+        }
+    }
+
+    pub fn reset_date(&self) -> Option<&str> {
+        match self {
+            Self::ManagedCapacity(date) if !date.is_empty() => Some(date),
+            _ => None,
+        }
+    }
+
     fn from_saved(value: String) -> Self {
         if value == "Managed allowance exhausted" {
             return Self::ManagedAllowance;
@@ -74,6 +100,12 @@ impl FallbackReason {
         }
         if value == "Managed Account suspended" {
             return Self::ManagedSuspended;
+        }
+        if value == "Managed Account required" {
+            return Self::ManagedAccountRequired;
+        }
+        if value == "Managed transcription turned off" {
+            return Self::ManagedDisabled;
         }
         if let Some(date) = value.strip_prefix("Managed capacity exhausted until ") {
             return Self::ManagedCapacity(date.to_owned());
@@ -117,6 +149,8 @@ impl fmt::Display for FallbackReason {
             Self::ManagedCapacity(date) => write!(f, "Managed capacity exhausted until {date}"),
             Self::ManagedWaitlisted => f.write_str("Managed Account waitlisted"),
             Self::ManagedSuspended => f.write_str("Managed Account suspended"),
+            Self::ManagedAccountRequired => f.write_str("Managed Account required"),
+            Self::ManagedDisabled => f.write_str("Managed transcription turned off"),
             Self::Quota(EngineName::Managed) | Self::RateLimit(EngineName::Managed) => {
                 f.write_str("Managed transcription is busy")
             }

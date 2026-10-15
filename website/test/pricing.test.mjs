@@ -68,6 +68,7 @@ test('pricing shows Free, coming Pro and a way to support the project', async ()
     assert.match(pricing, /covers transcription only[\s\S]*?Correction[\s\S]*?Summary[\s\S]*?Ask/i);
     assert.match(pricing, /falls back to your own keys[\s\S]*?local Whisper/i);
     assert.match(pricing, /Signing in alone does not turn on Managed transcription/i);
+    assert.match(pricing, /used Managed transcription before Accounts[\s\S]*?admitted when (?:it|you) signs? in/i);
 
     assert.doesNotMatch(pricing, /[$€£]\s*\d|\bprice\b/i);
     assert.doesNotMatch(pricing, /<form\b/i);

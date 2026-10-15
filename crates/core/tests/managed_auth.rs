@@ -2,9 +2,9 @@ use meeting_minutes_core::{
     ai::{AiError, HttpClient, HttpRequest, HttpResponse, Method},
     cloud::managed::{
         base_url_from, delete_account, get_account, parse_gateway_error, refresh, request_code,
-        verify_code, verify_code_with_token, GatewayErrorCode, ManagedAuthError, ManagedCredential,
-        ManagedCredentialStore, ManagedToken, MemoryManagedCredentialStore, TokenManager,
-        GATEWAY_URL,
+        sign_in, verify_code, verify_code_with_token, GatewayErrorCode, ManagedAuthError,
+        ManagedCredential, ManagedCredentialStore, ManagedToken, MemoryManagedCredentialStore,
+        TokenManager, GATEWAY_URL,
     },
 };
 use std::{
@@ -106,6 +106,79 @@ fn links_a_legacy_installation_when_verifying_an_email_code() {
     assert_eq!(
         http.requests()[0].headers,
         vec![("Authorization".into(), "Bearer legacy-access".into())]
+    );
+}
+
+#[test]
+fn sign_in_links_a_previous_connection_and_carries_forward_consent() {
+    let http = FakeHttp::new(vec![refresh_reply("legacy-access"), activation_reply()]);
+    let store = Arc::new(MemoryManagedCredentialStore::default());
+    store
+        .set(&ManagedCredential {
+            refresh_token: ManagedToken::new("legacy-refresh").unwrap(),
+            ..credential()
+        })
+        .unwrap();
+    let tokens = TokenManager::new(http.clone(), store.clone(), GATEWAY_URL);
+    let saved = sign_in(
+        http.as_ref(),
+        GATEWAY_URL,
+        store.as_ref(),
+        &tokens,
+        " Person@Example.com ",
+        "123456",
+    )
+    .unwrap();
+    assert_eq!(
+        http.requests()[1].headers,
+        vec![("Authorization".into(), "Bearer legacy-access".into())]
+    );
+    assert_eq!(saved.email.as_deref(), Some("person@example.com"));
+    assert!(saved.enabled);
+    assert_eq!(saved.refresh_token.expose(), "private-refresh");
+    assert_eq!(
+        store.get().unwrap().unwrap().refresh_token.expose(),
+        "private-refresh"
+    );
+}
+
+#[test]
+fn fresh_sign_in_stays_off_and_uses_no_linking_token() {
+    let http = FakeHttp::new(vec![activation_reply()]);
+    let store = Arc::new(MemoryManagedCredentialStore::default());
+    let tokens = TokenManager::new(http.clone(), store.clone(), GATEWAY_URL);
+    let saved = sign_in(
+        http.as_ref(),
+        GATEWAY_URL,
+        store.as_ref(),
+        &tokens,
+        "person@example.com",
+        "123456",
+    )
+    .unwrap();
+    assert!(http.requests()[0].headers.is_empty());
+    assert!(!saved.enabled);
+    assert_eq!(
+        store.get().unwrap().unwrap().email.as_deref(),
+        Some("person@example.com")
+    );
+}
+
+#[test]
+fn reads_suspended_account_state() {
+    let http = FakeHttp::new(vec![reply(
+        200,
+        r#"{"email":"person@example.com","state":"suspended","minutes_used":0,"minutes_remaining":120,"allowance_minutes":120,"resets_at":"2026-11-01T00:00:00.000Z"}"#,
+    )]);
+    assert_eq!(
+        get_account(
+            http.as_ref(),
+            GATEWAY_URL,
+            &ManagedToken::new("access").unwrap()
+        )
+        .unwrap()
+        .state,
+        "suspended"
     );
 }
 
