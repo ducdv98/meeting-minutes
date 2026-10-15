@@ -66,7 +66,7 @@ Sentence case everywhere: headings, buttons, menus. No all-caps except `--text-x
 ## Space, shape and depth
 
 - **Spacing:** 4px base. Scale `4, 8, 12, 16, 20, 24, 32, 40, 48, 64, 96, 128`. App panels use 16–24px padding; website sections use 96–128px vertical space on desktop and 64px on mobile.
-- **Radius:** `--radius-sm` 6px (buttons, inputs, chips), `--radius-md` 8px (cards, popovers, menus), `--radius-lg` 12px (dialogs, product screenshots on the website). Nothing pill-shaped except toggles and the Beta badge.
+- **Radius:** `--radius-sm` 6px (buttons, inputs, chips), `--radius-md` 8px (cards, popovers, menus), `--radius-lg` 12px (dialogs, product screenshots on the website). Nothing pill-shaped except toggles.
 - **Borders:** 1px `--line`. Structure comes first from surface layers, then from dividers; avoid boxing every element.
 - **Shadows:** none on resting surfaces. Popovers and menus: `0 4px 16px rgb(0 0 0 / 0.08)`. Dialogs: `0 12px 40px rgb(0 0 0 / 0.14)`. In dark mode use a `--line-strong` edge instead of a stronger shadow.
 - **Focus:** `2px solid var(--accent)` outline, 2px offset, on every interactive element. Never removed.
@@ -105,7 +105,6 @@ Lucide icons at 16px (app) or 20px (website), 1.5px stroke, `currentColor`. Icon
 
 - **Citation:** an inline chip with the Segment's start time, `--accent` text on `--accent-soft`, `--radius-sm`, tabular numbers (`12:34`). Hover shows the Segment text; click plays the span. It looks the same in Summary, Action items and Answers.
 - **Recording indicator:** a red dot plus elapsed time, always visible while a Recording runs, in the window and the tray. The recording bar uses `--record-soft`.
-- **Beta badge:** `--text-xs`, `--ink-muted` text, `--line-strong` 1px border, pill radius. Next to the wordmark in the app's About view.
 - **States:** loading uses `--page-shadow` skeletons (no spinners longer than 1s without text); empty states use the theme's mark at low opacity, one sentence and one action; errors say what happened and what to do, with Retry where possible.
 
 ## Voice

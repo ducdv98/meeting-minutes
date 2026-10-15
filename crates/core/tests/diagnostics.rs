@@ -365,7 +365,7 @@ fn diagnostics_lists_system_and_setup_even_without_model_or_provider() {
             "[2026-10-13][10:47:02][meeting_minutes_events][INFO] startup".into(),
         ],
     });
-    assert!(text.contains("Meeting Minutes 0.1.0 Beta"));
+    assert!(text.starts_with("Meeting Minutes 0.1.0\nWindows:"));
     assert!(text.contains("Windows 11 24H2"));
     assert!(text.contains("Example CPU"));
     assert!(text.contains("16384 MB"));

@@ -937,7 +937,7 @@ pub fn build_diagnostics(input: &DiagnosticsInput) -> String {
         })
         .map_or("None", String::as_str);
     format!(
-        "Meeting Minutes {} Beta\nWindows: {}\nCPU: {}\nRAM: {} MB\nAudio devices:\n{}\nSelected model: {}\nProvider: {}\nwhisper.cpp system info: {}\nTranscription backend: {}\nLast transcription RTF: {}\nLast processing failure: {}\nRecent log lines:\n{}",
+        "Meeting Minutes {}\nWindows: {}\nCPU: {}\nRAM: {} MB\nAudio devices:\n{}\nSelected model: {}\nProvider: {}\nwhisper.cpp system info: {}\nTranscription backend: {}\nLast transcription RTF: {}\nLast processing failure: {}\nRecent log lines:\n{}",
         input.version,
         input.windows_version,
         input.cpu,

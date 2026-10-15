@@ -6,6 +6,6 @@
 
 Status: ready-for-agent
 
-- [ ] No user-visible "Beta" in the app, README or design docs
-- [ ] The diagnostics test expects "Meeting Minutes 0.x.y" without Beta
+- [x] No user-visible "Beta" in the app, README or design docs
+- [x] The diagnostics test expects "Meeting Minutes 0.x.y" without Beta
 - [ ] Screenshots are regenerated without the workaround

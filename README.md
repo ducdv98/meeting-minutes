@@ -2,16 +2,16 @@
 
 # Meeting Minutes
 
-Meeting Minutes records your calls on a Windows PC and turns them into Meetings in a personal Library. It captures your Microphone and your PC's System audio, so it works with any calling app, and transcribes them locally with Whisper by default. With your own Groq key, it uses `whisper-large-v3`; Gemini can handle fallback transcription. You can then get a Summary with Action items and ask questions about one Meeting; answers cite the parts of the Transcript they come from, and say so when the Transcript doesn't answer the question. It is free during the Beta.
+Meeting Minutes records your calls on a Windows PC and turns them into Meetings in a personal Library. It captures your Microphone and your PC's System audio, so it works with any calling app, and transcribes them locally with Whisper by default. With your own Groq key, it uses `whisper-large-v3`; Gemini can handle fallback transcription. You can then get a Summary with Action items and ask questions about one Meeting; answers cite the parts of the Transcript they come from, and say so when the Transcript doesn't answer the question. It is free.
 
 Your Library stays on your PC. With your own keys, audio goes to Groq for transcription, or to Gemini for fallback transcription; Gemini also receives Transcript text for Correction. Summary, Action items and Ask can use Ollama locally or Gemini, OpenAI or Anthropic under your own key; the app asks before sending a Meeting. Gemini's free tier may use content for training. Keys stay in Windows Credential Manager, and the app has no server of its own.
 
 ## Download
 
-The first Free Beta release is not published yet. When it is out, download it from [meeting-minutes.tech](https://meeting-minutes.tech) or from the [GitHub Releases page](https://github.com/ducdv98/meeting-minutes/releases/latest). The app checks for updates when it starts and asks before installing one.
+The first release is not published yet. When it is out, download it from [meeting-minutes.tech](https://meeting-minutes.tech) or from the [GitHub Releases page](https://github.com/ducdv98/meeting-minutes/releases/latest). The app checks for updates when it starts and asks before installing one.
 
 - **Supported:** Windows 11 x64. Windows 10 may work but is untested.
-- **SmartScreen:** the Beta installer is not code-signed yet, so Windows may say it protected your PC. Download it only from the links above, then choose **More info → Run anyway**. Signing is planned before the app leaves Beta.
+- **SmartScreen:** the installer is not code-signed, so Windows may say it protected your PC. Download it only from the links above, then choose **More info → Run anyway**. To check the download first, see [Verify the installer](https://meeting-minutes.tech/support/#smartscreen).
 
 ## Uninstall
 

@@ -6,6 +6,6 @@
 
 Status: ready-for-agent
 
-- [ ] The button copies diagnostics and opens the new-issue URL in the browser
-- [ ] The issue template asks for steps, expected and actual results, and the pasted diagnostics
-- [ ] The diagnostics still contain no Transcript, Summary or key
+- [x] The button copies diagnostics and opens the new-issue URL in the browser
+- [x] The issue template asks for steps, expected and actual results, and the pasted diagnostics
+- [x] The diagnostics still contain no Transcript, Summary or key

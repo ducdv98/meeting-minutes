@@ -142,14 +142,12 @@ struct Managed {
 #[derive(serde::Serialize)]
 struct AppInfo {
     version: String,
-    channel: &'static str,
 }
 
 #[tauri::command]
 fn app_info(app: AppHandle) -> AppInfo {
     AppInfo {
         version: app.package_info().version.to_string(),
-        channel: "Beta",
     }
 }
 
@@ -2224,6 +2222,8 @@ enum OutsideLink {
     Support,
     Groq,
     Gemini,
+    #[serde(rename = "report_problem")]
+    ReportProblem,
 }
 
 /// Opens an outside link in the default browser or mail app.
@@ -2234,6 +2234,7 @@ fn open_link(link: OutsideLink) -> Result<(), String> {
         OutsideLink::Support => "mailto:admin@meeting-minutes.tech",
         OutsideLink::Groq => "https://console.groq.com/keys",
         OutsideLink::Gemini => "https://aistudio.google.com/app/apikey",
+        OutsideLink::ReportProblem => "https://github.com/ducdv98/meeting-minutes/issues/new?template=bug_report.md&title=Bug%20report%3A%20",
     };
     #[cfg(target_os = "windows")]
     {

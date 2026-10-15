@@ -9,20 +9,31 @@ vi.mock("./diagnostics", () => ({ getDiagnostics: vi.fn() }));
 
 const writeText = vi.fn();
 beforeEach(() => {
-  vi.mocked(appInfo).mockResolvedValue({ version: "0.1.7", channel: "Beta" });
-  vi.mocked(getDiagnostics).mockResolvedValue("Meeting Minutes 0.1.7 (Beta)\n--- recent log ---");
+  vi.mocked(appInfo).mockResolvedValue({ version: "0.1.7" });
+  vi.mocked(getDiagnostics).mockResolvedValue("Meeting Minutes 0.1.7\n--- recent log ---");
   vi.mocked(openLink).mockResolvedValue();
   writeText.mockResolvedValue(undefined);
   Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
 });
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
 
-it("shows the version and channel the app reports", async () => {
+it("shows the app version without a release badge", async () => {
   render(<HelpView />);
   const about = screen.getByRole("region", { name: "About" });
   expect(await within(about).findByText("0.1.7")).toBeTruthy();
-  expect(within(about).getByText("Beta")).toBeTruthy();
+  expect(within(about).queryByText("Beta")).toBeNull();
   expect(within(about).getByText("Duc Dao")).toBeTruthy();
+});
+
+it("copies fresh diagnostics before opening a prefilled GitHub issue", async () => {
+  render(<HelpView />);
+  await screen.findByLabelText("Diagnostics preview");
+  vi.mocked(getDiagnostics).mockResolvedValue("fresh diagnostics");
+  fireEvent.click(screen.getByRole("button", { name: "Report a problem" }));
+  await waitFor(() => expect(openLink).toHaveBeenCalledWith("report_problem"));
+  expect(writeText).toHaveBeenCalledWith("fresh diagnostics");
+  expect(writeText.mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(openLink).mock.invocationCallOrder[0]);
+  expect((await screen.findByRole("status")).textContent).toContain("Paste them into the GitHub issue");
 });
 
 it("copies the diagnostics text and confirms", async () => {
@@ -68,7 +79,7 @@ it("offers the setup guide only when it can open it", () => {
 });
 
 it("retries reading diagnostics after a failure", async () => {
-  vi.mocked(getDiagnostics).mockRejectedValueOnce("log locked").mockResolvedValue("Meeting Minutes 0.1.7 (Beta)");
+  vi.mocked(getDiagnostics).mockRejectedValueOnce("log locked").mockResolvedValue("Meeting Minutes 0.1.7");
   render(<HelpView />);
   expect((await screen.findByRole("alert")).textContent).toContain("log locked");
   fireEvent.click(screen.getByRole("button", { name: "Retry" }));

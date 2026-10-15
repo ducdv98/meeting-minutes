@@ -259,7 +259,6 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 20px; resize: ver
 .shortcuts { display: grid; grid-template-columns: 1fr auto; gap: 10px 16px; font-size: 13px; padding: 14px; }
 .about-head { display: flex; align-items: center; gap: 12px; }
 .about-head .wm { width: 210px; height: 40px; background: var(--wm) left center/contain no-repeat; }
-.beta { display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 999px; border: 1px solid var(--line-strong); font: 500 12px/1 var(--font-text); color: var(--ink-muted); }
 .diag { font: 12px/18px ui-monospace, "Cascadia Mono", Consolas, monospace; color: var(--ink-muted); background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-md); padding: 12px; white-space: pre-wrap; margin: 0; max-height: 170px; overflow: auto; }
 
 /* first run */
@@ -424,7 +423,7 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 20px; resize: ver
 
 <div class="review">
   <div class="review-bar">
-    <div class="title">Meeting Minutes mockup <small>Public beta · ticket 06 · sample data</small></div>
+    <div class="title">Meeting Minutes mockup <small>Ticket 06 · sample data</small></div>
     <div class="seg" role="group" aria-label="Screen">
       <button data-go="library" aria-pressed="false">Library</button>
       <button data-go="meeting" aria-pressed="true">Meeting</button>
@@ -548,7 +547,7 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 20px; resize: ver
                 <button class="tab" role="tab" aria-selected="false" data-tab="ask">Ask</button>
               </div>
               <div class="tab-panel on" data-panel="summary">
-                <div class="sum-sec"><h4>Overview</h4><p>Agreed the first-run flow for the beta: five steps, skippable, with recording allowed while the Whisper model downloads. <a class="cite" data-seg="s1" href="#">00:00</a><a class="cite" data-seg="s9" href="#">01:24</a></p></div>
+                <div class="sum-sec"><h4>Overview</h4><p>Agreed the first-run flow: five steps, skippable, with recording allowed while the Whisper model downloads. <a class="cite" data-seg="s1" href="#">00:00</a><a class="cite" data-seg="s9" href="#">01:24</a></p></div>
                 <div class="sum-sec"><h4>Key points</h4><ul>
                   <li>The ~500 MB model download is the most likely place people give up. <a class="cite" data-seg="s3" href="#">00:21</a></li>
                   <li>Transcription waits for the model; recording does not. <a class="cite" data-seg="s4" href="#">00:34</a><a class="cite" data-seg="s5" href="#">00:42</a></li>
@@ -645,7 +644,7 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 20px; resize: ver
         <!-- Help -->
         <section class="screen" data-screen="help">
           <div class="form-page"><div class="form-inner">
-            <div class="about-head"><div class="wm" role="img" aria-label="Meeting Minutes"></div><span class="beta">Beta</span></div>
+            <div class="about-head"><div class="wm" role="img" aria-label="Meeting Minutes"></div></div>
             <dl class="kv num"><dt>Version</dt><dd>0.1.0 · up to date</dd><dt>Made by</dt><dd>Duc Dao</dd><dt>Support</dt><dd>admin@meeting-minutes.tech</dd><dt>Privacy</dt><dd><span class="textlink">meeting-minutes.tech/privacy</span></dd></dl>
             <div class="fsec">
               <h3>Keyboard shortcuts</h3>
@@ -659,7 +658,7 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 20px; resize: ver
             <div class="fsec">
               <h3>Report a problem</h3>
               <p class="hint">Copy diagnostics and paste them into an email or GitHub issue. They never include your Transcripts, Summaries or keys.</p>
-              <pre class="diag num" id="diagText">Meeting Minutes 0.1.0 (Beta)
+              <pre class="diag num" id="diagText">Meeting Minutes 0.1.0
 Windows 11 Home 24H2 (26100.2033) x64
 CPU: AMD Ryzen 7 7840U · RAM: 32 GB
 Microphone: Headset Microphone (Jabra Evolve2 65)
@@ -747,7 +746,7 @@ Model: small (downloaded) · Provider: ollama
     </div>
     <div class="site" id="site">
       <header class="site-head"><div class="wrap">
-        <a class="wordmark" data-web="web-home" role="img" aria-label="Meeting Minutes home" style="cursor:pointer"></a><span class="beta">Beta</span>
+        <a class="wordmark" data-web="web-home" role="img" aria-label="Meeting Minutes home" style="cursor:pointer"></a>
         <nav class="site-nav"><a data-web="web-privacy" class="hide-sm">Privacy</a><a data-web="web-support" class="hide-sm">Support</a><a class="hide-sm">Changelog</a><a class="btn btn-primary rel-pub" style="color:var(--canvas)"><svg class="i"><use href="#i-download"/></svg> Download</a></nav>
       </div></header>
 
@@ -757,8 +756,8 @@ Model: small (downloaded) · Provider: ollama
           <p class="lede">Record any call on Windows. Meeting Minutes transcribes it on your PC, summarises it, and answers your questions with links to the exact moment.</p>
           <div class="cta">
             <div class="rel-pub" style="display:grid;justify-items:center;gap:10px"><a class="btn btn-primary" style="height:44px;padding:0 20px;font-size:15px;color:var(--canvas)"><svg class="i"><use href="#i-download"/></svg> Download for Windows</a>
-            <small class="num">Version 0.1.0 · 14 MB · Windows 11 · Free Beta · unsigned, <a>see why</a></small></div>
-            <div class="rel-none" hidden><span class="status-line"><span class="dot" style="color:var(--accent)"></span><b>Free Beta for Windows</b> December 2026 (target)</span><small><a>See the roadmap</a></small></div>
+            <small class="num">Version 0.1.0 · 14 MB · Windows 11 · Free · unsigned, <a>see why</a></small></div>
+            <div class="rel-none" hidden><span class="status-line"><span class="dot" style="color:var(--accent)"></span><b>Free for Windows</b> December 2026 (target)</span><small><a>See the roadmap</a></small></div>
           </div>
         </div></section>
         <div class="shot" id="shot" role="img" aria-label="The Meeting view: Transcript on the left, Summary with Citations on the right"><div class="shot-inner" id="shotInner"></div></div>
@@ -809,16 +808,16 @@ Model: small (downloaded) · Provider: ollama
           <div class="roadmap num">
             <div class="rm-row"><span>Windows app, private testing</span><span class="when">October 2026</span><span class="rm-status shipped"><svg class="i"><use href="#i-check"/></svg> Done</span></div>
             <div class="rm-row"><span>Mac app on the App Store</span><span class="when">December 2026 (target)</span><span class="rm-status target"><svg class="i"><use href="#i-clock"/></svg> Target</span></div>
-            <div class="rm-row"><span>Windows Free Beta, public download</span><span class="when">December 2026 (target)</span><span class="rm-status progress"><span class="dot"></span> In progress</span></div>
+            <div class="rm-row"><span>Windows free release, public download</span><span class="when">December 2026 (target)</span><span class="rm-status progress"><span class="dot"></span> In progress</span></div>
           </div>
         </div></section>
 
         <section class="sec alt"><div class="wrap">
           <h2>Questions</h2>
           <div class="faq" id="faq">
-            <div><button aria-expanded="true">Is it free?<span class="plus">+</span></button><div class="ans on">Yes, during the Beta. Transcription runs on your PC, so it costs nothing to use. If you add a cloud key, that provider bills you directly.</div></div>
+            <div><button aria-expanded="true">Is it free?<span class="plus">+</span></button><div class="ans on">Yes. Transcription runs on your PC, so it costs nothing to use. If you add a cloud key, that provider bills you directly.</div></div>
             <div><button aria-expanded="false">Where are my meetings stored?<span class="plus">+</span></button><div class="ans">In Documents\Meeting Minutes, one folder per meeting, with the audio and the Transcript as normal files you can open, back up or delete.</div></div>
-            <div><button aria-expanded="false">Why does Windows warn me when I install it?<span class="plus">+</span></button><div class="ans">The Beta installer isn't code-signed yet, so SmartScreen doesn't know it. Choose More info, then Run anyway. Signing comes before the app leaves Beta.</div></div>
+            <div><button aria-expanded="false">Why does Windows warn me when I install it?<span class="plus">+</span></button><div class="ans">The installer isn't code-signed yet, so SmartScreen doesn't know it. Choose More info, then Run anyway. Signing is planned.</div></div>
             <div><button aria-expanded="false">Which languages does it understand?<span class="plus">+</span></button><div class="ans">English and Vietnamese. You can set the language per meeting or let it detect.</div></div>
             <div><button aria-expanded="false">Do I need a powerful PC?<span class="plus">+</span></button><div class="ans">Any Windows 11 PC from the last few years works. The setup guide picks a model that suits your hardware; faster PCs can use more accurate models.</div></div>
             <div><button aria-expanded="false">If I uninstall it, do I lose my meetings?<span class="plus">+</span></button><div class="ans">No. Uninstalling never touches Documents\Meeting Minutes. You can also remove the downloaded models if you want the space back.</div></div>
@@ -829,7 +828,7 @@ Model: small (downloaded) · Provider: ollama
           <h2 style="font:600 28px/36px var(--font-display);letter-spacing:-.02em">Try it on your next call</h2>
           <div class="cta">
             <a class="btn btn-primary rel-pub" style="height:44px;padding:0 20px;font-size:15px;color:var(--canvas)"><svg class="i"><use href="#i-download"/></svg> Download for Windows</a>
-            <span class="status-line rel-none" hidden><b>Free Beta for Windows</b> December 2026 (target)</span>
+            <span class="status-line rel-none" hidden><b>Free for Windows</b> December 2026 (target)</span>
           </div>
         </div></section>
       </div>
@@ -837,7 +836,7 @@ Model: small (downloaded) · Provider: ollama
       <div class="spage" data-web-page="web-privacy">
         <article class="doc">
           <h1>Privacy policy</h1>
-          <div class="updated">Last updated October 2026 · Applies to Meeting Minutes 0.1.0 (Beta) for Windows</div>
+          <div class="updated">Last updated October 2026 · Applies to Meeting Minutes 0.1.0 for Windows</div>
           <h2>The short version</h2>
           <p>Your meetings stay on your PC. The app has no account and no analytics. It only connects to the internet for the four reasons listed below, and it sends meeting content only when you click.</p>
           <h2>What the app connects to</h2>
@@ -862,14 +861,14 @@ Model: small (downloaded) · Provider: ollama
       <div class="spage" data-web-page="web-support">
         <article class="doc">
           <h1>Support</h1>
-          <div class="updated">Free Beta · replies within a few days</div>
+          <div class="updated">Free support · replies within a few days</div>
           <h2>Write to us</h2>
           <div class="copybox"><code>admin@meeting-minutes.tech</code><button class="btn btn-secondary" style="height:30px" id="copyMail"><svg class="i"><use href="#i-copy"/></svg> Copy</button></div>
           <p>Or open an issue on GitHub. Both work; GitHub is public, email is not.</p>
           <h2>Include diagnostics</h2>
           <ol class="steps"><li>In the app, open Help.</li><li>Choose Copy diagnostics.</li><li>Paste it into your message. It includes versions, devices and recent log lines, never your Transcripts or keys.</li></ol>
           <h2>Windows says it protected your PC</h2>
-          <p>The Beta installer isn't signed yet. Choose <b>More info</b>, then <b>Run anyway</b>. Only do this for the installer downloaded from this site.</p>
+          <p>The installer isn't signed yet. Choose <b>More info</b>, then <b>Run anyway</b>. Only do this for the installer downloaded from this site.</p>
           <h2>Uninstalling</h2>
           <p>Use Settings → Apps in Windows. Your meetings in Documents\Meeting Minutes are always kept. Tick the box in the uninstaller if you also want to remove downloaded models and settings.</p>
         </article>

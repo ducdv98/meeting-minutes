@@ -51,8 +51,6 @@ const shots = {
   async diagnostics(page) {
     await page.getByRole("button", { name: "Help" }).click();
     await page.getByLabel("Diagnostics preview").waitFor();
-    // The release channel badge is going away with Beta; hide it while it renders empty.
-    await page.evaluate(() => document.querySelectorAll("main > div span:empty").forEach((element) => { if (element.className.includes("rounded-full")) element.remove(); }));
   },
   async library(page) {},
 };
