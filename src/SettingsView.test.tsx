@@ -3,12 +3,12 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import SettingsView, { type SettingsTabId } from "./SettingsView";
 import type { AiSettings } from "./ai";
 import { acknowledgeCloudNotice, firstRunInfo, getSettings, installedModels, modelDownloadStatus, onModelDownloadStatus, updateSettings, type Settings } from "./processing";
-import { aiStatus, deleteApiKey, listAiModels, managedConnect, managedDisconnect, managedStatus, saveApiKey, testCloudApiKey, testLanguageModel, updateLanguageModels, type AiStatus } from "./ai";
+import { aiStatus, deleteApiKey, listAiModels, managedSendCode, managedSignIn, managedDisconnect, managedStatus, saveApiKey, testCloudApiKey, testLanguageModel, updateLanguageModels, type AiStatus } from "./ai";
 import { openLink } from "./app-info";
 import { CLOUD_NOTICE_SUMMARY, CLOUD_NOTICE_TEXT, PRIVACY_INTRO } from "./privacy-text";
 
 vi.mock("./processing", async (importOriginal) => ({ ...(await importOriginal<typeof import("./processing")>()), firstRunInfo: vi.fn(), getSettings: vi.fn(), updateSettings: vi.fn(), installedModels: vi.fn(), acknowledgeCloudNotice: vi.fn(), modelDownloadStatus: vi.fn(), onModelDownloadStatus: vi.fn() }));
-vi.mock("./ai", async (importOriginal) => ({ ...(await importOriginal<typeof import("./ai")>()), aiStatus: vi.fn(), listAiModels: vi.fn(), managedStatus: vi.fn(), managedConnect: vi.fn(), managedDisconnect: vi.fn(), saveApiKey: vi.fn(), deleteApiKey: vi.fn(), updateLanguageModels: vi.fn(), testLanguageModel: vi.fn(), testCloudApiKey: vi.fn() }));
+vi.mock("./ai", async (importOriginal) => ({ ...(await importOriginal<typeof import("./ai")>()), aiStatus: vi.fn(), listAiModels: vi.fn(), managedStatus: vi.fn(), managedSendCode: vi.fn(), managedSignIn: vi.fn(), managedDisconnect: vi.fn(), saveApiKey: vi.fn(), deleteApiKey: vi.fn(), updateLanguageModels: vi.fn(), testLanguageModel: vi.fn(), testCloudApiKey: vi.fn() }));
 vi.mock("./app-info", () => ({ openLink: vi.fn() }));
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.resetAllMocks(); });
 beforeEach(() => { vi.mocked(firstRunInfo).mockResolvedValue({ discrete_gpu: false, library_location: "D:\\Meetings" }); vi.mocked(installedModels).mockResolvedValue([]); vi.mocked(managedStatus).mockResolvedValue({ connected: false, revoked: false }); vi.mocked(modelDownloadStatus).mockResolvedValue([]); vi.mocked(onModelDownloadStatus).mockResolvedValue(() => {}); });
@@ -90,57 +90,48 @@ it("keeps Saved in the header across tabs and fades it out after two seconds", a
   expect(screen.queryByText("Saved")).toBeNull();
 });
 
-it("connects Managed transcription and shows Connected", async () => {
+it("signs in to an Account from Settings", async () => {
   vi.mocked(getSettings).mockResolvedValue(base);
   vi.mocked(aiStatus).mockResolvedValue(empty);
-  vi.mocked(managedConnect).mockResolvedValue({ connected: true, revoked: false });
+  vi.mocked(managedSendCode).mockResolvedValue();
+  vi.mocked(managedSignIn).mockResolvedValue({ connected: true, revoked: false, email: "person@example.com", enabled: false });
   render(<SettingsView initialTab="general" />);
   await openTab("Speech-to-text");
-  const section = await screen.findByRole("region", { name: "Managed transcription (experimental)" });
-  fireEvent.click(within(section).getByRole("button", { name: "Have an invite code?" }));
-  fireEvent.change(within(section).getByLabelText("Invite code"), { target: { value: " code " } });
-  fireEvent.click(within(section).getByRole("button", { name: "Connect" }));
-  await waitFor(() => expect(managedConnect).toHaveBeenCalledWith(" code "));
-  expect(await within(section).findByText("Connected")).toBeTruthy();
-  expect(within(section).queryByLabelText("Invite code")).toBeNull();
+  const section = await screen.findByRole("region", { name: "Account" });
+  fireEvent.change(within(section).getByLabelText("Email address"), { target: { value: "person@example.com" } });
+  fireEvent.click(within(section).getByRole("button", { name: "Send code" }));
+  await waitFor(() => expect(managedSendCode).toHaveBeenCalledWith("person@example.com"));
+  fireEvent.change(within(section).getByLabelText("Six-digit code"), { target: { value: "123456" } });
+  fireEvent.click(within(section).getByRole("button", { name: "Sign in" }));
+  expect(await within(section).findByText("Signed in as person@example.com")).toBeTruthy();
 });
 
-it("shows the invite error when Managed transcription rejects a code", async () => {
+it("shows a specific sign-in error", async () => {
   vi.mocked(getSettings).mockResolvedValue(base);
   vi.mocked(aiStatus).mockResolvedValue(empty);
-  vi.mocked(managedConnect).mockRejectedValue("This invite code is used, expired or unknown. Ask for a new one.");
+  vi.mocked(managedSendCode).mockResolvedValue();
+  vi.mocked(managedSignIn).mockRejectedValue("That code is incorrect. Check the six digits and try again.");
   render(<SettingsView initialTab="general" />);
   await openTab("Speech-to-text");
-  const section = await screen.findByRole("region", { name: "Managed transcription (experimental)" });
-  fireEvent.click(within(section).getByRole("button", { name: "Have an invite code?" }));
-  fireEvent.change(within(section).getByLabelText("Invite code"), { target: { value: "bad-code" } });
-  fireEvent.click(within(section).getByRole("button", { name: "Connect" }));
-  expect((await within(section).findByRole("alert")).textContent).toBe("This invite code is used, expired or unknown. Ask for a new one.");
+  const section = await screen.findByRole("region", { name: "Account" });
+  fireEvent.change(within(section).getByLabelText("Email address"), { target: { value: "person@example.com" } });
+  fireEvent.click(within(section).getByRole("button", { name: "Send code" }));
+  fireEvent.change(await within(section).findByLabelText("Six-digit code"), { target: { value: "000000" } });
+  fireEvent.click(within(section).getByRole("button", { name: "Sign in" }));
+  expect((await within(section).findByRole("alert")).textContent).toBe("That code is incorrect. Check the six digits and try again.");
 });
 
-it("disconnects Managed transcription and returns to an empty invite field", async () => {
+it("signs out and clears the Account UI", async () => {
   vi.mocked(getSettings).mockResolvedValue(base);
   vi.mocked(aiStatus).mockResolvedValue(empty);
-  vi.mocked(managedStatus).mockResolvedValue({ connected: true, revoked: false });
-  vi.mocked(managedDisconnect).mockResolvedValue({ connected: false, revoked: false });
+  vi.mocked(managedStatus).mockResolvedValue({ connected: true, revoked: false, email: "person@example.com", enabled: false });
+  vi.mocked(managedDisconnect).mockResolvedValue({ connected: false, revoked: false, email: null, enabled: false });
   render(<SettingsView initialTab="general" />);
   await openTab("Speech-to-text");
-  const section = await screen.findByRole("region", { name: "Managed transcription (experimental)" });
-  fireEvent.click(await within(section).findByRole("button", { name: "Disconnect" }));
-  await waitFor(() => expect(managedDisconnect).toHaveBeenCalledTimes(1));
-  fireEvent.click(within(section).getByRole("button", { name: "Have an invite code?" }));
-  expect((await within(section).findByLabelText("Invite code") as HTMLInputElement).value).toBe("");
-});
-
-it("explains when Managed transcription was revoked", async () => {
-  vi.mocked(getSettings).mockResolvedValue(base);
-  vi.mocked(aiStatus).mockResolvedValue(empty);
-  vi.mocked(managedStatus).mockResolvedValue({ connected: false, revoked: true });
-  render(<SettingsView initialTab="general" />);
-  await openTab("Speech-to-text");
-  const section = await screen.findByRole("region", { name: "Managed transcription (experimental)" });
-  expect(await within(section).findByText("Managed transcription was disconnected.")).toBeTruthy();
-  expect(within(section).getByLabelText("Invite code")).toBeTruthy();
+  const section = await screen.findByRole("region", { name: "Account" });
+  fireEvent.click(await within(section).findByRole("button", { name: "Sign out" }));
+  await waitFor(() => expect(managedDisconnect).toHaveBeenCalledOnce());
+  expect(await within(section).findByLabelText("Email address")).toBeTruthy();
 });
 
 it("saves, tests and removes Groq and OpenAI keys on Keys, and shows the cloud notice once", async () => {

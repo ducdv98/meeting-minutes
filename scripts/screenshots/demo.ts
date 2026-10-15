@@ -51,7 +51,7 @@ mockIPC((cmd, args) => {
     case "import_status": return { current: null, queued: 0, errors: [] };
     case "get_settings": return settings;
     case "ai_status": return aiStatus;
-    case "managed_status": return { connected: false, revoked: false };
+    case "managed_status": return { connected: false, revoked: false, email: null, enabled: false };
     case "installed_models": return ["large-v3-turbo-q5_0"];
     case "list_participant_names": return ["Alex", "Priya", "Sam"];
     case "list_ai_models": return ["qwen3:8b"];

@@ -6,7 +6,7 @@
 
 Status: ready-for-agent
 
-- [ ] Email → code → signed in, with clear errors for a wrong code, an expired code and rate limiting
-- [ ] Managed transcription stays off until the user turns it on
-- [ ] Sign out clears the stored credentials
-- [ ] No Invite code UI remains
+- [x] Email → code → signed in, with clear errors for a wrong code, an expired code and rate limiting
+- [x] Managed transcription stays off until the user turns it on
+- [x] Sign out clears the stored credentials
+- [x] No Invite code UI remains

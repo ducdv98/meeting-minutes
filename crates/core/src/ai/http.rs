@@ -14,6 +14,7 @@ use std::{
 pub enum Method {
     Get,
     Post,
+    Delete,
 }
 pub struct HttpRequest {
     pub method: Method,
@@ -65,6 +66,7 @@ impl HttpClient for UreqClient {
         let mut call = match request.method {
             Method::Get => agent.get(&request.url),
             Method::Post => agent.post(&request.url),
+            Method::Delete => agent.delete(&request.url),
         };
         for (name, value) in &request.headers {
             call = call.set(name, value);

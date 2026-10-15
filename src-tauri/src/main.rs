@@ -316,6 +316,8 @@ impl ManagedCredentialStore for KeyringManagedStore {
             .map(|(client_id, refresh_token)| ManagedCredential {
                 client_id: client_id.to_owned(),
                 refresh_token,
+                email: value["email"].as_str().map(str::to_owned),
+                enabled: value["enabled"].as_bool().unwrap_or(true),
             }))
     }
 
@@ -323,6 +325,8 @@ impl ManagedCredentialStore for KeyringManagedStore {
         let value = serde_json::json!({
             "client_id": credential.client_id,
             "refresh_token": credential.refresh_token.expose(),
+            "email": credential.email,
+            "enabled": credential.enabled,
         });
         Self::entry()?
             .set_password(&value.to_string())
@@ -638,7 +642,8 @@ fn transcribe_meeting(
                     .is_some()
         } else if name == "managed" {
             let managed = app.state::<Managed>();
-            !managed.tokens.is_disconnected() && matches!(managed.store.get(), Ok(Some(_)))
+            !managed.tokens.is_disconnected()
+                && matches!(managed.store.get(), Ok(Some(credential)) if credential.enabled)
         } else {
             MODELS.iter().any(|candidate| candidate.name == name)
         };
@@ -898,12 +903,21 @@ fn ai_status(
 struct ManagedStatus {
     connected: bool,
     revoked: bool,
+    email: Option<String>,
+    enabled: bool,
 }
 
 fn current_managed_status(managed: &Managed) -> Result<ManagedStatus, String> {
+    let credential = managed.store.get()?;
     Ok(ManagedStatus {
-        connected: managed.store.get()?.is_some(),
+        connected: credential.is_some(),
         revoked: managed.tokens.is_disconnected(),
+        email: credential
+            .as_ref()
+            .and_then(|credential| credential.email.clone()),
+        enabled: credential
+            .as_ref()
+            .is_some_and(|credential| credential.enabled),
     })
 }
 
@@ -912,34 +926,77 @@ fn managed_status(managed: State<'_, Managed>) -> Result<ManagedStatus, String> 
     current_managed_status(&managed)
 }
 
-fn managed_connect_error(error: managed::GatewayError) -> String {
-    if error.status == Some(401) || error.code == GatewayErrorCode::Unauthorized {
-        "This invite code is used, expired or unknown. Ask for a new one.".into()
-    } else if error.retryable || error.status.is_none() {
-        "Could not reach Managed transcription. Check your connection and try again.".into()
-    } else {
-        "Managed transcription could not connect.".into()
+fn account_error(error: managed::GatewayError) -> String {
+    match error.code {
+        GatewayErrorCode::InvalidEmail => "Enter a valid email address.".into(),
+        GatewayErrorCode::CodeInvalid => {
+            "That code is incorrect. Check the six digits and try again.".into()
+        }
+        GatewayErrorCode::CodeExpired => "That code has expired. Request a new code.".into(),
+        GatewayErrorCode::TooManyAttempts => "Too many attempts. Request a new code.".into(),
+        GatewayErrorCode::EmailUnavailable => {
+            "Email is temporarily unavailable. Try sending a code again later.".into()
+        }
+        GatewayErrorCode::RateLimited => format!(
+            "Too many requests. Wait {} seconds and try again.",
+            error
+                .retry_after
+                .map(|wait| wait.as_millis().div_ceil(1000).max(1))
+                .unwrap_or(60)
+        ),
+        GatewayErrorCode::NoAccount => {
+            "This connection has no Account. Sign in with an email address first.".into()
+        }
+        GatewayErrorCode::Unauthorized => "Your sign-in expired. Sign in again.".into(),
+        _ if error.retryable || error.status.is_none() => {
+            "Could not reach the Account service. Check your connection and try again.".into()
+        }
+        _ => "The Account request failed. Try again.".into(),
     }
 }
 
 #[tauri::command]
-async fn managed_connect(app: AppHandle, invite_code: String) -> Result<ManagedStatus, String> {
+async fn managed_send_code(app: AppHandle, email: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let invite_code = invite_code.trim();
-        if invite_code.is_empty() {
-            return Err("Enter an invite code.".into());
+        let email = email.trim();
+        if email.is_empty() {
+            return Err("Enter a valid email address.".into());
         }
         let managed = app.state::<Managed>();
         let http = app.state::<Http>();
-        let activation = managed::activate(http.0.as_ref(), &managed.base, invite_code)
-            .map_err(managed_connect_error)?;
+        managed::request_code(http.0.as_ref(), &managed.base, email).map_err(account_error)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn managed_sign_in(
+    app: AppHandle,
+    email: String,
+    code: String,
+) -> Result<ManagedStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let email = email.trim().to_lowercase();
+        if email.is_empty() {
+            return Err("Enter a valid email address.".into());
+        }
+        if code.len() != 6 || !code.bytes().all(|digit| digit.is_ascii_digit()) {
+            return Err("Enter the six-digit code from your email.".into());
+        }
+        let managed = app.state::<Managed>();
+        let http = app.state::<Http>();
+        let activation = managed::verify_code(http.0.as_ref(), &managed.base, &email, &code)
+            .map_err(account_error)?;
         managed
             .store
             .set(&ManagedCredential {
                 client_id: activation.client_id,
                 refresh_token: activation.refresh_token,
+                email: Some(email),
+                enabled: false,
             })
-            .map_err(|_| "Managed transcription could not connect.".to_owned())?;
+            .map_err(|_| "Could not save your Account sign-in.".to_owned())?;
         managed.tokens.reset();
         current_managed_status(&managed)
     })
@@ -955,7 +1012,51 @@ async fn managed_disconnect(app: AppHandle) -> Result<ManagedStatus, String> {
         managed
             .store
             .delete()
-            .map_err(|_| "Managed transcription could not disconnect.".to_owned())?;
+            .map_err(|_| "Could not sign out of your Account.".to_owned())?;
+        managed.tokens.reset();
+        current_managed_status(&managed)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn managed_set_enabled(app: AppHandle, enabled: bool) -> Result<ManagedStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let managed = app.state::<Managed>();
+        let mut credential = managed
+            .store
+            .get()?
+            .ok_or("Sign in before enabling Managed transcription.")?;
+        credential.enabled = enabled;
+        managed.store.set(&credential)?;
+        current_managed_status(&managed)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn managed_delete_account(app: AppHandle) -> Result<ManagedStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let managed = app.state::<Managed>();
+        if managed
+            .store
+            .get()?
+            .and_then(|credential| credential.email)
+            .is_none()
+        {
+            return Err("Sign in to an Account before deleting it.".into());
+        }
+        let token = managed.tokens.access_token().map_err(|error| match error {
+            managed::ManagedAuthError::Gateway(error) => account_error(error),
+            _ => "Could not access your Account. Sign in again or check your connection.".into(),
+        })?;
+        let http = app.state::<Http>();
+        managed::delete_account(http.0.as_ref(), &managed.base, &token).map_err(account_error)?;
+        managed.store.delete().map_err(|_| {
+            "Account deleted, but local sign-out failed. Use Sign out to clear this PC.".to_owned()
+        })?;
         managed.tokens.reset();
         current_managed_status(&managed)
     })
@@ -1736,7 +1837,9 @@ fn transcription_chain<'a>(
             None => processing::EngineChain::new(vec![], model, local),
         });
     }
-    if !managed.tokens.is_disconnected() && matches!(managed.store.get(), Ok(Some(_))) {
+    if !managed.tokens.is_disconnected()
+        && matches!(managed.store.get(), Ok(Some(credential)) if credential.enabled)
+    {
         cloud.push(Box::new(ManagedEngine::new(
             app.state::<Http>().0.clone(),
             managed.tokens.clone(),
@@ -1780,7 +1883,7 @@ fn transcription_chain<'a>(
 fn start_background(app: &AppHandle) {
     let managed = app.state::<Managed>();
     let has_cloud_engine = (!managed.tokens.is_disconnected()
-        && matches!(managed.store.get(), Ok(Some(_))))
+        && matches!(managed.store.get(), Ok(Some(credential)) if credential.enabled))
         || matches!(
             app.state::<Secrets>().0.get(ProviderKind::Groq),
             Ok(Some(_))
@@ -3359,8 +3462,11 @@ fn main() {
             delete_model_download,
             ai_status,
             managed_status,
-            managed_connect,
+            managed_send_code,
+            managed_sign_in,
             managed_disconnect,
+            managed_set_enabled,
+            managed_delete_account,
             list_ai_models,
             test_cloud_api_key,
             test_speech_model,

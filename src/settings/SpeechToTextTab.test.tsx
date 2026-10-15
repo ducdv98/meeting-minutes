@@ -1,12 +1,12 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { SpeechToTextTab } from "./SpeechToTextTab";
-import { managedConnect, managedDisconnect, managedStatus } from "../ai";
+import { managedDeleteAccount, managedDisconnect, managedSendCode, managedSetEnabled, managedSignIn, managedStatus } from "../ai";
 import { cancelModelDownload, deleteModelDownload, modelDownloadStatus, onModelDownloadStatus, startModelDownload, testSpeechModel, type ModelDownloadStatus } from "../processing";
 import { MANAGED_PRIVACY_STATEMENT, MANAGED_PRIVACY_SUMMARY } from "../privacy-text";
 import type { Settings } from "../processing";
 
-vi.mock("../ai", async (importOriginal) => ({ ...(await importOriginal<typeof import("../ai")>()), managedStatus: vi.fn(), managedConnect: vi.fn(), managedDisconnect: vi.fn() }));
+vi.mock("../ai", async (importOriginal) => ({ ...(await importOriginal<typeof import("../ai")>()), managedStatus: vi.fn(), managedSendCode: vi.fn(), managedSignIn: vi.fn(), managedDisconnect: vi.fn(), managedSetEnabled: vi.fn(), managedDeleteAccount: vi.fn() }));
 vi.mock("../processing", async (importOriginal) => ({ ...(await importOriginal<typeof import("../processing")>()), testSpeechModel: vi.fn(), modelDownloadStatus: vi.fn(), onModelDownloadStatus: vi.fn(), startModelDownload: vi.fn(), cancelModelDownload: vi.fn(), deleteModelDownload: vi.fn() }));
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
 beforeEach(() => {
@@ -20,33 +20,63 @@ function renderTab() {
   return render(<SpeechToTextTab settings={settings} save={vi.fn()} installed={[]} vocabulary="" setVocabulary={vi.fn()} saveVocabulary={vi.fn()} providerStatus={null} onManageKeys={vi.fn()} />);
 }
 
-it("shows the privacy statement before Connect, then connects after the invite link opens", async () => {
+it("signs in with an email code while Managed transcription stays off until consent", async () => {
   vi.mocked(managedStatus).mockResolvedValue({ connected: false, revoked: false });
-  vi.mocked(managedConnect).mockResolvedValue({ connected: true, revoked: false });
+  vi.mocked(managedSendCode).mockResolvedValue();
+  vi.mocked(managedSignIn).mockResolvedValue({ connected: true, revoked: false, email: "person@example.com", enabled: false });
+  vi.mocked(managedSetEnabled).mockResolvedValue({ connected: true, revoked: false, email: "person@example.com", enabled: true });
   renderTab();
-  const section = screen.getByRole("region", { name: "Managed transcription (experimental)" });
-  await waitFor(() => expect(managedStatus).toHaveBeenCalledOnce());
-  expect(within(section).queryByLabelText("Invite code")).toBeNull();
-  expect(within(section).getByText(MANAGED_PRIVACY_SUMMARY)).toBeTruthy();
-  expect(MANAGED_PRIVACY_SUMMARY).toContain("text is kept up to 5 minutes");
-  expect(MANAGED_PRIVACY_SUMMARY).not.toContain("nothing is stored");
-  const details = within(section).getByRole("button", { name: "Details" });
+  const account = screen.getByRole("region", { name: "Account" });
+  const managed = screen.getByRole("region", { name: "Managed transcription" });
+  expect(within(managed).getByText(MANAGED_PRIVACY_SUMMARY)).toBeTruthy();
+  const details = within(managed).getByRole("button", { name: "Details" });
   fireEvent.click(details);
-  expect(details.getAttribute("aria-expanded")).toBe("true");
-  expect(within(section).getByText(MANAGED_PRIVACY_STATEMENT)).toBeTruthy();
-  fireEvent.click(within(section).getByRole("button", { name: "Have an invite code?" }));
-  fireEvent.change(within(section).getByLabelText("Invite code"), { target: { value: " code " } });
-  fireEvent.click(within(section).getByRole("button", { name: "Connect" }));
-  await waitFor(() => expect(managedConnect).toHaveBeenCalledWith(" code "));
-  expect(await within(section).findByText("Connected")).toBeTruthy();
+  expect(within(managed).getByText(MANAGED_PRIVACY_STATEMENT)).toBeTruthy();
+  fireEvent.change(within(account).getByLabelText("Email address"), { target: { value: "person@example.com" } });
+  fireEvent.click(within(account).getByRole("button", { name: "Send code" }));
+  await waitFor(() => expect(managedSendCode).toHaveBeenCalledWith("person@example.com"));
+  fireEvent.change(within(account).getByLabelText("Six-digit code"), { target: { value: "123456" } });
+  fireEvent.click(within(account).getByRole("button", { name: "Sign in" }));
+  await waitFor(() => expect(managedSignIn).toHaveBeenCalledWith("person@example.com", "123456"));
+  expect(within(account).getByText("Signed in as person@example.com")).toBeTruthy();
+  expect(screen.getByText("New Meetings use: Local Whisper · small")).toBeTruthy();
+  fireEvent.click(within(managed).getByRole("switch", { name: "Enable Managed transcription" }));
+  await waitFor(() => expect(managedSetEnabled).toHaveBeenCalledWith(true));
+  expect(screen.getByText("New Meetings use: Managed transcription")).toBeTruthy();
 });
 
-it("opens the Invite code field when Managed transcription was revoked", async () => {
-  vi.mocked(managedStatus).mockResolvedValue({ connected: false, revoked: true });
+it("shows a legacy connection and keeps its tokens available while signing in", async () => {
+  vi.mocked(managedStatus).mockResolvedValue({ connected: true, revoked: false, email: null, enabled: true });
   renderTab();
-  const section = screen.getByRole("region", { name: "Managed transcription (experimental)" });
-  expect(await within(section).findByText("Managed transcription was disconnected.")).toBeTruthy();
-  expect(within(section).getByLabelText("Invite code")).toBeTruthy();
+  const account = screen.getByRole("region", { name: "Account" });
+  expect(await within(account).findByText("Connected (legacy invite)")).toBeTruthy();
+  expect(screen.getByText("New Meetings use: Managed transcription")).toBeTruthy();
+  fireEvent.click(within(account).getByRole("button", { name: "Sign in" }));
+  expect(within(account).getByLabelText("Email address")).toBeTruthy();
+});
+
+it("deletes an Account only after confirmation and leaves local Meetings alone", async () => {
+  vi.mocked(managedStatus).mockResolvedValue({ connected: true, revoked: false, email: "person@example.com", enabled: false });
+  vi.mocked(managedDeleteAccount).mockResolvedValue({ connected: false, revoked: false, email: null, enabled: false });
+  renderTab();
+  const account = screen.getByRole("region", { name: "Account" });
+  fireEvent.click(await within(account).findByRole("button", { name: "Delete account" }));
+  expect(screen.getByText(/email address and Managed transcription usage history/)).toBeTruthy();
+  expect(screen.getByText(/All Meetings and Transcripts on this PC stay here/)).toBeTruthy();
+  expect(managedDeleteAccount).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("dialog").querySelector("button:last-child")!);
+  await waitFor(() => expect(managedDeleteAccount).toHaveBeenCalledOnce());
+  expect(await within(account).findByLabelText("Email address")).toBeTruthy();
+});
+
+it("keeps the Account signed in when deletion fails", async () => {
+  vi.mocked(managedStatus).mockResolvedValue({ connected: true, revoked: false, email: "person@example.com", enabled: false });
+  vi.mocked(managedDeleteAccount).mockRejectedValue("Could not reach the Account service. Check your connection and try again.");
+  renderTab();
+  fireEvent.click(await screen.findByRole("button", { name: "Delete account" }));
+  fireEvent.click(screen.getByRole("dialog").querySelector("button:last-child")!);
+  expect(await screen.findByText("Could not reach the Account service. Check your connection and try again.")).toBeTruthy();
+  expect(screen.getByText("Signed in as person@example.com")).toBeTruthy();
 });
 
 it("tests and adds a Groq model before using it automatically", async () => {
@@ -84,14 +114,19 @@ it("updates the Transcription order when connection, key, and download state cha
   expect(within(order).getAllByText("Ready")).toHaveLength(2);
   view.rerender(<SpeechToTextTab {...props} installed={["small"]} providerStatus={status} />);
   expect(screen.getByText("New Meetings use: Local Whisper · small")).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "Have an invite code?" }));
-  fireEvent.change(screen.getByLabelText("Invite code"), { target: { value: "code" } });
-  vi.mocked(managedConnect).mockResolvedValue({ connected: true, revoked: false });
-  await waitFor(() => expect(screen.getByRole("button", { name: "Connect" }).hasAttribute("disabled")).toBe(false));
-  fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+  vi.mocked(managedSendCode).mockResolvedValue();
+  vi.mocked(managedSignIn).mockResolvedValue({ connected: true, revoked: false, email: "person@example.com", enabled: false });
+  vi.mocked(managedSetEnabled).mockResolvedValue({ connected: true, revoked: false, email: "person@example.com", enabled: true });
+  vi.mocked(managedDisconnect).mockResolvedValue({ connected: false, revoked: false, email: null, enabled: false });
+  fireEvent.change(screen.getByLabelText("Email address"), { target: { value: "person@example.com" } });
+  fireEvent.click(screen.getByRole("button", { name: "Send code" }));
+  fireEvent.change(await screen.findByLabelText("Six-digit code"), { target: { value: "123456" } });
+  fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+  expect(await screen.findByText("Signed in as person@example.com")).toBeTruthy();
+  expect(screen.getByText("New Meetings use: Local Whisper · small")).toBeTruthy();
+  fireEvent.click(screen.getByRole("switch", { name: "Enable Managed transcription" }));
   expect(await screen.findByText("New Meetings use: Managed transcription")).toBeTruthy();
-  vi.mocked(managedDisconnect).mockResolvedValue({ connected: false, revoked: false });
-  fireEvent.click(screen.getByRole("button", { name: "Disconnect" }));
+  fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
   expect(await screen.findByText("New Meetings use: Local Whisper · small")).toBeTruthy();
 });
 

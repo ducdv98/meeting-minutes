@@ -1,9 +1,9 @@
 use meeting_minutes_core::{
     ai::{AiError, HttpClient, HttpRequest, HttpResponse, Method},
     cloud::managed::{
-        activate, base_url_from, parse_gateway_error, refresh, GatewayErrorCode, ManagedAuthError,
-        ManagedCredential, ManagedCredentialStore, ManagedToken, MemoryManagedCredentialStore,
-        TokenManager, GATEWAY_URL,
+        base_url_from, delete_account, parse_gateway_error, refresh, request_code, verify_code,
+        GatewayErrorCode, ManagedAuthError, ManagedCredential, ManagedCredentialStore,
+        ManagedToken, MemoryManagedCredentialStore, TokenManager, GATEWAY_URL,
     },
 };
 use std::{
@@ -64,6 +64,8 @@ fn credential() -> ManagedCredential {
     ManagedCredential {
         client_id: "private-client".into(),
         refresh_token: ManagedToken::new("private-refresh").unwrap(),
+        email: None,
+        enabled: true,
     }
 }
 
@@ -83,9 +85,74 @@ fn manager(
 }
 
 #[test]
-fn activate_sends_invite_code_and_returns_credentials() {
+fn requests_an_email_code_and_verifies_into_the_existing_token_shape() {
+    let http = FakeHttp::new(vec![
+        reply(202, r#"{"message":"sent"}"#),
+        activation_reply(),
+    ]);
+    request_code(http.as_ref(), GATEWAY_URL, "person@example.com").unwrap();
+    let activation =
+        verify_code(http.as_ref(), GATEWAY_URL, "person@example.com", "123456").unwrap();
+    assert_eq!(activation.client_id, "private-client");
+    assert_eq!(activation.refresh_token.expose(), "private-refresh");
+    let requests = http.requests();
+    assert_eq!(requests[0].url, format!("{GATEWAY_URL}/v1/auth/code"));
+    assert_eq!(
+        requests[0].body.as_ref().unwrap().json().unwrap(),
+        &serde_json::json!({"email":"person@example.com"})
+    );
+    assert_eq!(requests[1].url, format!("{GATEWAY_URL}/v1/auth/verify"));
+    assert_eq!(
+        requests[1].body.as_ref().unwrap().json().unwrap(),
+        &serde_json::json!({"email":"person@example.com","code":"123456"})
+    );
+}
+
+#[test]
+fn deletes_account_with_bearer_token_and_accepts_an_empty_success() {
+    let http = FakeHttp::new(vec![reply(204, "")]);
+    delete_account(
+        http.as_ref(),
+        GATEWAY_URL,
+        &ManagedToken::new("private-access").unwrap(),
+    )
+    .unwrap();
+    let requests = http.requests();
+    assert!(matches!(requests[0].method, Method::Delete));
+    assert_eq!(requests[0].url, format!("{GATEWAY_URL}/v1/account"));
+    assert_eq!(
+        requests[0].headers,
+        vec![("Authorization".into(), "Bearer private-access".into())]
+    );
+    assert!(requests[0].body.is_none());
+}
+
+#[test]
+fn distinguishes_account_errors_even_when_the_status_is_401() {
+    for (status, code, expected) in [
+        (401, "CODE_INVALID", GatewayErrorCode::CodeInvalid),
+        (401, "CODE_EXPIRED", GatewayErrorCode::CodeExpired),
+        (429, "TOO_MANY_ATTEMPTS", GatewayErrorCode::TooManyAttempts),
+        (409, "NO_ACCOUNT", GatewayErrorCode::NoAccount),
+    ] {
+        let error = parse_gateway_error(
+            status,
+            &format!(r#"{{"error":{{"code":"{code}","retryable":false}}}}"#),
+        );
+        assert_eq!(error.code, expected);
+    }
+}
+
+#[test]
+fn verify_code_returns_credentials() {
     let http = FakeHttp::new(vec![activation_reply()]);
-    let result = activate(http.as_ref(), "https://test.example/", "private-invite").unwrap();
+    let result = verify_code(
+        http.as_ref(),
+        "https://test.example/",
+        "person@example.com",
+        "123456",
+    )
+    .unwrap();
     assert_eq!(result.client_id, "private-client");
     assert_eq!(result.access_token.expose(), "private-access");
     assert_eq!(result.refresh_token.expose(), "private-refresh");
@@ -93,29 +160,30 @@ fn activate_sends_invite_code_and_returns_credentials() {
     let requests = http.requests();
     assert_eq!(requests.len(), 1);
     assert!(matches!(requests[0].method, Method::Post));
-    assert_eq!(requests[0].url, "https://test.example/v1/auth/activate");
+    assert_eq!(requests[0].url, "https://test.example/v1/auth/verify");
     assert_eq!(
         requests[0].body.as_ref().unwrap().json().unwrap(),
-        &serde_json::json!({ "invite_code": "private-invite" })
+        &serde_json::json!({ "email": "person@example.com", "code": "123456" })
     );
     let printed = format!("{result:?}");
     for secret in [
         "private-client",
         "private-access",
         "private-refresh",
-        "private-invite",
+        "123456",
     ] {
         assert!(!printed.contains(secret));
     }
 }
 
 #[test]
-fn activate_401_is_unauthorized() {
+fn verify_code_401_is_unauthorized() {
     let http = FakeHttp::new(vec![reply(
         401,
         r#"{"error":{"code":"UNAUTHORIZED","message":"used","retryable":false}}"#,
     )]);
-    let error = activate(http.as_ref(), GATEWAY_URL, "private-invite").unwrap_err();
+    let error =
+        verify_code(http.as_ref(), GATEWAY_URL, "person@example.com", "123456").unwrap_err();
     assert_eq!(error.status, Some(401));
     assert_eq!(error.code, GatewayErrorCode::Unauthorized);
     assert!(!error.retryable);
@@ -232,16 +300,23 @@ fn parses_gateway_error_envelope_and_retry_after() {
 #[test]
 fn non_json_and_transport_failures_are_retryable() {
     let html = FakeHttp::new(vec![reply(502, "<html>proxy error</html>")]);
-    let error = activate(html.as_ref(), GATEWAY_URL, "private-invite").unwrap_err();
+    let error =
+        verify_code(html.as_ref(), GATEWAY_URL, "person@example.com", "123456").unwrap_err();
     assert!(error.retryable);
     assert_eq!(error.code, GatewayErrorCode::Unknown);
     assert!(!format!("{error:?} {error}").contains("proxy error"));
 
-    let offline = FakeHttp::new(vec![Err(AiError::Unreachable("private-invite".into()))]);
-    let error = activate(offline.as_ref(), GATEWAY_URL, "private-invite").unwrap_err();
+    let offline = FakeHttp::new(vec![Err(AiError::Unreachable("123456".into()))]);
+    let error = verify_code(
+        offline.as_ref(),
+        GATEWAY_URL,
+        "person@example.com",
+        "123456",
+    )
+    .unwrap_err();
     assert!(error.retryable);
     assert_eq!(error.status, None);
-    assert!(!format!("{error:?} {error}").contains("private-invite"));
+    assert!(!format!("{error:?} {error}").contains("123456"));
 }
 
 #[test]

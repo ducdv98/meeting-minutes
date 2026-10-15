@@ -177,6 +177,8 @@ fn engine(http: Arc<FakeHttp>, source: Option<Source>) -> ManagedEngine {
         .set(&ManagedCredential {
             client_id: "client".into(),
             refresh_token: ManagedToken::new("refresh-secret").unwrap(),
+            email: None,
+            enabled: true,
         })
         .unwrap();
     let tokens = Arc::new(TokenManager::new(
@@ -581,6 +583,8 @@ fn disconnecting_during_a_retry_wait_sends_nothing_more() {
         .set(&ManagedCredential {
             client_id: "client".into(),
             refresh_token: ManagedToken::new("refresh-secret").unwrap(),
+            email: None,
+            enabled: true,
         })
         .unwrap();
     let tokens = Arc::new(TokenManager::new(

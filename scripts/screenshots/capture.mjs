@@ -5,9 +5,10 @@ import { createServer } from "vite";
 import { chromium } from "playwright";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { mkdir } from "node:fs/promises";
+import { mkdir, realpath } from "node:fs/promises";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "../..");
+const nodeModules = await realpath(join(root, "node_modules"));
 const gallery = process.argv.includes("--gallery");
 // Gallery images are launch material, not website assets.
 const out = join(root, gallery ? ".scratch/v1-launch/gallery" : "website/src/assets/screens");
@@ -15,7 +16,7 @@ const viewport = gallery ? { width: 1270, height: 760 } : { width: 1200, height:
 const deviceScaleFactor = gallery ? 1 : 2;
 const DEMO = "Website launch sync";
 
-const server = await createServer({ root, configFile: join(root, "vite.config.ts"), server: { port: 0 }, logLevel: "error" });
+const server = await createServer({ root, configFile: join(root, "vite.config.ts"), server: { port: 0, fs: { allow: [root, nodeModules] } }, logLevel: "error" });
 await server.listen();
 const url = `${server.resolvedUrls.local[0]}scripts/screenshots/`;
 
@@ -74,7 +75,7 @@ for (const theme of ["light", "dark"]) {
   for (const [name, prepare] of Object.entries(shots)) {
     const page = await browser.newPage({ viewport, deviceScaleFactor, colorScheme: theme, reducedMotion: "reduce" });
     page.on("console", (message) => { if (message.type() === "warning" || message.type() === "error") errors.push(`${name}: ${message.text()}`); });
-    await page.route("http://asset.localhost/**", (route) => route.fulfill({ status: 404 }));
+    await page.route("http://asset.localhost/**", (route) => route.fulfill({ status: 204 }));
     await page.goto(url);
     await page.getByRole("navigation", { name: "Meetings" }).getByRole("button", { name: DEMO, exact: true }).waitFor();
     await prepare(page);

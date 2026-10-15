@@ -66,6 +66,12 @@ impl fmt::Display for ManagedToken {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GatewayErrorCode {
     InvalidRequest,
+    InvalidEmail,
+    CodeInvalid,
+    CodeExpired,
+    TooManyAttempts,
+    EmailUnavailable,
+    NoAccount,
     InvalidAudio,
     Unauthorized,
     IdempotencyConflict,
@@ -83,6 +89,12 @@ impl GatewayErrorCode {
     fn from_code(code: &str) -> Self {
         match code {
             "INVALID_REQUEST" => Self::InvalidRequest,
+            "INVALID_EMAIL" => Self::InvalidEmail,
+            "CODE_INVALID" => Self::CodeInvalid,
+            "CODE_EXPIRED" => Self::CodeExpired,
+            "TOO_MANY_ATTEMPTS" => Self::TooManyAttempts,
+            "EMAIL_UNAVAILABLE" => Self::EmailUnavailable,
+            "NO_ACCOUNT" => Self::NoAccount,
             "INVALID_AUDIO" => Self::InvalidAudio,
             "UNAUTHORIZED" => Self::Unauthorized,
             "IDEMPOTENCY_CONFLICT" => Self::IdempotencyConflict,
@@ -127,12 +139,13 @@ pub fn parse_gateway_error(status: u16, body: &str) -> GatewayError {
             .is_some();
     GatewayError {
         status: Some(status),
-        code: if status == 401 {
-            GatewayErrorCode::Unauthorized
-        } else {
-            code.map(GatewayErrorCode::from_code)
-                .unwrap_or(GatewayErrorCode::Unknown)
-        },
+        code: code
+            .map(GatewayErrorCode::from_code)
+            .unwrap_or(if status == 401 {
+                GatewayErrorCode::Unauthorized
+            } else {
+                GatewayErrorCode::Unknown
+            }),
         retryable: if valid {
             error
                 .and_then(|value| value.get("retryable"))
@@ -240,16 +253,35 @@ impl fmt::Debug for AccessGrant {
     }
 }
 
-pub fn activate(
+pub fn request_code(http: &dyn HttpClient, base: &str, email: &str) -> Result<(), GatewayError> {
+    let response = http
+        .send(HttpRequest {
+            method: Method::Post,
+            url: format!("{}/v1/auth/code", base.trim_end_matches('/')),
+            headers: vec![],
+            body: Some(HttpBody::Json(json!({ "email": email }))),
+        })
+        .map_err(|_| transport_error())?;
+    if response.status == 202 {
+        Ok(())
+    } else if response.status == 200 {
+        Err(transport_error())
+    } else {
+        read_response(response).map(|_| ())
+    }
+}
+
+pub fn verify_code(
     http: &dyn HttpClient,
     base: &str,
-    invite_code: &str,
+    email: &str,
+    code: &str,
 ) -> Result<Activation, GatewayError> {
     let reply = auth_reply(post(
         http,
         base,
-        "/v1/auth/activate",
-        json!({ "invite_code": invite_code }),
+        "/v1/auth/verify",
+        json!({ "email": email, "code": code }),
     )?)?;
     let client_id = reply
         .client_id
@@ -265,6 +297,31 @@ pub fn activate(
         refresh_token,
         expires_in: Duration::from_secs(reply.expires_in),
     })
+}
+
+pub fn delete_account(
+    http: &dyn HttpClient,
+    base: &str,
+    access_token: &ManagedToken,
+) -> Result<(), GatewayError> {
+    let response = http
+        .send(HttpRequest {
+            method: Method::Delete,
+            url: format!("{}/v1/account", base.trim_end_matches('/')),
+            headers: vec![(
+                "Authorization".into(),
+                format!("Bearer {}", access_token.expose()),
+            )],
+            body: None,
+        })
+        .map_err(|_| transport_error())?;
+    if response.status == 204 {
+        Ok(())
+    } else if response.status == 200 {
+        Err(transport_error())
+    } else {
+        read_response(response).map(|_| ())
+    }
 }
 
 pub fn refresh(
@@ -288,6 +345,8 @@ pub fn refresh(
 pub struct ManagedCredential {
     pub client_id: String,
     pub refresh_token: ManagedToken,
+    pub email: Option<String>,
+    pub enabled: bool,
 }
 
 impl fmt::Debug for ManagedCredential {
@@ -815,6 +874,12 @@ impl UploadFailure {
         match self {
             Self::Gateway(error) => match error.code {
                 GatewayErrorCode::InvalidRequest => "INVALID_REQUEST",
+                GatewayErrorCode::InvalidEmail => "INVALID_EMAIL",
+                GatewayErrorCode::CodeInvalid => "CODE_INVALID",
+                GatewayErrorCode::CodeExpired => "CODE_EXPIRED",
+                GatewayErrorCode::TooManyAttempts => "TOO_MANY_ATTEMPTS",
+                GatewayErrorCode::EmailUnavailable => "EMAIL_UNAVAILABLE",
+                GatewayErrorCode::NoAccount => "NO_ACCOUNT",
                 GatewayErrorCode::InvalidAudio => "INVALID_AUDIO",
                 GatewayErrorCode::Unauthorized => "UNAUTHORIZED",
                 GatewayErrorCode::IdempotencyConflict => "IDEMPOTENCY_CONFLICT",

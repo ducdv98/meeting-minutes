@@ -6,5 +6,5 @@
 
 Status: ready-for-agent
 
-- [ ] A confirmation explains what is deleted and what stays
-- [ ] After deletion the app is signed out and Meetings remain
+- [x] A confirmation explains what is deleted and what stays
+- [x] After deletion the app is signed out and Meetings remain
