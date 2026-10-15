@@ -35,6 +35,7 @@ struct Upload {
 #[derive(Clone, Copy)]
 enum Reply {
     Ok,
+    Language(&'static str),
     Empty,
     Error(u16, &'static str),
     Transport,
@@ -143,7 +144,7 @@ impl HttpClient for FakeHttp {
             .pop_front()
             .unwrap_or(Reply::Ok)
         {
-            reply @ (Reply::Ok | Reply::Empty) => {
+            reply @ (Reply::Ok | Reply::Empty | Reply::Language(_)) => {
                 let offset: u64 = upload.fields["offset_ms"].parse().unwrap();
                 let duration: u64 = upload.fields["duration_ms"].parse().unwrap();
                 let segments = if matches!(reply, Reply::Empty) {
@@ -151,18 +152,18 @@ impl HttpClient for FakeHttp {
                 } else {
                     vec![json!({"start_ms":offset+100,"end_ms":offset+200,"text":"speech"})]
                 };
-                response(
-                    200,
-                    json!({
-                        "request_id": upload.fields["request_id"],
-                        "status": "completed",
-                        "model": "whisper-large-v3",
-                        "duration_ms": duration + 37,
-                        "source": upload.fields["source"],
-                        "segments": segments
-                    })
-                    .to_string(),
-                )
+                let mut body = json!({
+                    "request_id": upload.fields["request_id"],
+                    "status": "completed",
+                    "model": "whisper-large-v3",
+                    "duration_ms": duration + 37,
+                    "source": upload.fields["source"],
+                    "segments": segments
+                });
+                if let Reply::Language(language) = reply {
+                    body["language"] = json!(language);
+                }
+                response(200, body.to_string())
             }
             Reply::Error(status, body) => response(status, body.into()),
             Reply::Transport => Err(AiError::Unreachable("offline".into())),
@@ -201,6 +202,89 @@ fn transcribe(
         Some("private vocabulary"),
         &AtomicBool::new(false),
     )
+}
+
+#[test]
+fn managed_detects_vietnamese_from_the_opening() {
+    let http = FakeHttp::new([Reply::Language("vi")], false);
+    let mut engine = engine(http.clone(), None);
+    let audio = vec![0.1; 31 * 16_000];
+
+    assert_eq!(
+        engine
+            .detect_language(&audio, &AtomicBool::new(false))
+            .unwrap(),
+        Some(Language::Vi)
+    );
+    let uploads = http.uploads();
+    assert_eq!(uploads.len(), 1);
+    assert_eq!(uploads[0].fields["language"], "auto");
+    assert_eq!(uploads[0].fields["duration_ms"], "30000");
+}
+
+#[test]
+fn managed_missing_or_unsupported_detection_falls_back() {
+    for reply in [Reply::Ok, Reply::Language("xx")] {
+        let http = FakeHttp::new([reply], false);
+        let mut engine = engine(http.clone(), None);
+        assert_eq!(
+            engine
+                .detect_language(&[0.1; 160], &AtomicBool::new(false))
+                .unwrap(),
+            None
+        );
+        assert_eq!(http.uploads()[0].fields["language"], "auto");
+    }
+}
+
+#[test]
+fn managed_reuses_detected_opening_and_sends_language_for_remaining_audio() {
+    let http = FakeHttp::new([Reply::Language("vi"), Reply::Ok], false);
+    let mut engine = engine(http.clone(), None);
+    let mut audio = vec![0.0; 16_000];
+    audio.extend(vec![0.1; 31 * 16_000]);
+    audio[31 * 16_000 - 1600..31 * 16_000].fill(0.0);
+    let cancel = AtomicBool::new(false);
+
+    assert_eq!(
+        engine.detect_language(&audio[16_000..], &cancel).unwrap(),
+        Some(Language::Vi)
+    );
+    let segments = engine
+        .transcribe_span(&audio, Language::Vi, None, &cancel)
+        .unwrap();
+
+    let uploads = http.uploads();
+    assert_eq!(uploads.len(), 2);
+    assert_eq!(uploads[0].fields["duration_ms"], "30000");
+    assert_eq!(uploads[1].fields["offset_ms"], "31000");
+    assert_eq!(uploads[1].fields["duration_ms"], "1000");
+    assert_eq!(uploads[1].fields["language"], "vi");
+    assert_eq!(segments[0].start_ms, 1100);
+    assert_eq!(segments[1].start_ms, 31100);
+}
+
+#[test]
+fn managed_transcribes_continuous_speech_across_detection_boundary() {
+    let http = FakeHttp::new([Reply::Language("vi"), Reply::Ok], false);
+    let mut engine = engine(http.clone(), None);
+    let audio = vec![0.1; 31 * 16_000];
+    let cancel = AtomicBool::new(false);
+
+    assert_eq!(
+        engine.detect_language(&audio, &cancel).unwrap(),
+        Some(Language::Vi)
+    );
+    let segments = engine
+        .transcribe_span(&audio, Language::Vi, None, &cancel)
+        .unwrap();
+
+    let uploads = http.uploads();
+    assert_eq!(uploads.len(), 2);
+    assert_eq!(uploads[1].fields["offset_ms"], "0");
+    assert_eq!(uploads[1].fields["duration_ms"], "31000");
+    assert_eq!(uploads[1].fields["language"], "vi");
+    assert_eq!(segments.len(), 1);
 }
 
 #[test]

@@ -1727,10 +1727,7 @@ impl Processor {
 #[cfg(test)]
 mod chosen_model_tests {
     use super::*;
-    use crate::{
-        model_downloads::ModelDownloads,
-        models::{self, MODELS, VAD_MODEL},
-    };
+    use crate::{model_downloads::ModelDownloads, models::MODELS};
     use std::sync::{atomic::AtomicUsize, mpsc, Mutex};
     use std::thread;
 
@@ -1783,8 +1780,12 @@ mod chosen_model_tests {
         fn name(&self) -> &str {
             "Managed"
         }
-        fn needs_detected_language(&self) -> bool {
-            true
+        fn detect_language(
+            &mut self,
+            _: &[f32],
+            _: &AtomicBool,
+        ) -> Result<Option<Language>, EngineError> {
+            Ok(Some(Language::Vi))
         }
         fn transcribe_span(
             &mut self,
@@ -1822,7 +1823,7 @@ mod chosen_model_tests {
     }
 
     #[test]
-    fn managed_auto_without_local_download_uses_english() {
+    fn managed_auto_without_local_download_uses_detected_vietnamese() {
         let dir = tempfile::tempdir().unwrap();
         let downloads = ModelDownloads::new(dir.path().into());
         let seen = Arc::new(Mutex::new(None));
@@ -1848,13 +1849,13 @@ mod chosen_model_tests {
         });
         assert_eq!(
             received.recv_timeout(Duration::from_secs(2)).unwrap(),
-            (Language::En, Some(Language::En))
+            (Language::Vi, Some(Language::Vi))
         );
         handle.join().unwrap();
     }
 
     #[test]
-    fn managed_auto_waits_for_active_local_download_then_detects() {
+    fn managed_auto_does_not_wait_for_active_local_download() {
         let dir = tempfile::tempdir().unwrap();
         let downloads = ModelDownloads::new(dir.path().into());
         downloads.start("base").unwrap();
@@ -1874,15 +1875,6 @@ mod chosen_model_tests {
             sent.send(chain.detect_language(&[0.5; 16], &AtomicBool::new(false)))
                 .unwrap();
         });
-        assert!(received.recv_timeout(Duration::from_millis(50)).is_err());
-        std::fs::File::create(models::model_path(dir.path(), &MODELS[0]))
-            .unwrap()
-            .set_len(MODELS[0].size)
-            .unwrap();
-        std::fs::File::create(models::model_path(dir.path(), &VAD_MODEL))
-            .unwrap()
-            .set_len(VAD_MODEL.size)
-            .unwrap();
         assert_eq!(
             received
                 .recv_timeout(Duration::from_secs(2))

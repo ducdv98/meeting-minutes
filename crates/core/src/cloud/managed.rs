@@ -4,7 +4,7 @@ use crate::{
     cloud::{encode_flac, CloudEngine, EngineError},
     diagnostics::{log_event, LogEvent},
     processing::cloud_span_bounds,
-    transcript::{Language, RawSegment},
+    transcript::{shift_segment_times, Language, RawSegment},
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -477,6 +477,12 @@ const MAX_RETRIES: usize = 3;
 const MAX_WAIT: Duration = Duration::from_secs(60);
 type Sleeper = Box<dyn FnMut(Duration, &AtomicBool) -> bool + Send>;
 
+struct DetectedOpening {
+    samples: Vec<f32>,
+    segments: Vec<RawSegment>,
+    language: Language,
+}
+
 pub struct ManagedEngine {
     http: Arc<dyn HttpClient>,
     tokens: Arc<TokenManager>,
@@ -484,6 +490,7 @@ pub struct ManagedEngine {
     source: Option<Source>,
     boundary: String,
     sleeper: Sleeper,
+    detected_opening: Option<DetectedOpening>,
 }
 
 impl ManagedEngine {
@@ -515,6 +522,7 @@ impl ManagedEngine {
             source,
             boundary: boundary.into(),
             sleeper: Box::new(default_sleep),
+            detected_opening: None,
         }
     }
 
@@ -529,9 +537,9 @@ impl ManagedEngine {
         &mut self,
         samples: &[f32],
         offset_ms: u64,
-        language: Language,
+        language: Option<Language>,
         cancel: &AtomicBool,
-    ) -> Result<Vec<RawSegment>, EngineError> {
+    ) -> Result<(Vec<RawSegment>, Option<Language>), EngineError> {
         if cancel.load(Ordering::SeqCst) {
             return Err(EngineError::Cancelled);
         }
@@ -576,16 +584,19 @@ impl ManagedEngine {
                 Ok((200, raw)) => match serde_json::from_slice::<UploadReply>(&raw) {
                     // duration_ms is the gateway's own measurement, so it is not compared.
                     Ok(reply) if reply.request_id == request_id.to_string() => {
-                        return Ok(reply
-                            .segments
-                            .into_iter()
-                            .map(|segment| RawSegment {
-                                start_ms: segment.start_ms,
-                                end_ms: segment.end_ms,
-                                text: segment.text,
-                                words: Vec::new(),
-                            })
-                            .collect());
+                        return Ok((
+                            reply
+                                .segments
+                                .into_iter()
+                                .map(|segment| RawSegment {
+                                    start_ms: segment.start_ms,
+                                    end_ms: segment.end_ms,
+                                    text: segment.text,
+                                    words: Vec::new(),
+                                })
+                                .collect(),
+                            reply.language.as_deref().and_then(Language::from_code),
+                        ));
                     }
                     _ => UploadFailure::InvalidResponse,
                 },
@@ -630,12 +641,24 @@ impl CloudEngine for ManagedEngine {
         "Managed transcription"
     }
 
-    fn needs_detected_language(&self) -> bool {
-        true
-    }
-
     fn set_source(&mut self, source: Option<Source>) {
         self.source = source;
+    }
+
+    fn detect_language(
+        &mut self,
+        samples_16k: &[f32],
+        cancel: &AtomicBool,
+    ) -> Result<Option<Language>, EngineError> {
+        self.detected_opening = None;
+        let opening = &samples_16k[..samples_16k.len().min(30 * 16_000)];
+        let (segments, language) = self.upload(opening, 0, None, cancel)?;
+        self.detected_opening = language.map(|language| DetectedOpening {
+            samples: opening.to_vec(),
+            segments,
+            language,
+        });
+        Ok(language)
     }
 
     fn transcribe_span(
@@ -649,16 +672,62 @@ impl CloudEngine for ManagedEngine {
         if samples_16k.is_empty() {
             return Ok(segments);
         }
-        for span in cloud_span_bounds(samples_16k, PIECE_SAMPLES, CUT_SEARCH_SAMPLES) {
+        let mut start = 0;
+        if let Some(opening) = self.detected_opening.take() {
+            let first_sound = samples_16k
+                .iter()
+                .position(|sample| sample.abs() > 0.01)
+                .unwrap_or(0);
+            let offset = if samples_16k.starts_with(&opening.samples) {
+                Some(0)
+            } else if samples_16k
+                .get(first_sound..)
+                .is_some_and(|samples| samples.starts_with(&opening.samples))
+            {
+                Some(first_sound)
+            } else {
+                None
+            };
+            let safe_end = opening
+                .samples
+                .iter()
+                .rev()
+                .take(1600)
+                .all(|sample| sample.abs() <= 0.01);
+            // A longer span can reuse the opening only when the split lands in silence.
+            if opening.language == language
+                && (safe_end
+                    || offset
+                        .is_some_and(|offset| offset + opening.samples.len() == samples_16k.len()))
+            {
+                if let Some(offset) = offset {
+                    let offset_ms = offset as u64 * 1000 / 16_000;
+                    segments.extend(opening.segments.into_iter().map(|mut segment| {
+                        shift_segment_times(
+                            &mut segment.start_ms,
+                            &mut segment.end_ms,
+                            &mut segment.words,
+                            offset_ms,
+                        );
+                        segment
+                    }));
+                    start = offset + opening.samples.len();
+                }
+            }
+        }
+        for span in cloud_span_bounds(&samples_16k[start..], PIECE_SAMPLES, CUT_SEARCH_SAMPLES) {
             // Keep the gateway limit even if the splitter's selection changes later.
             for piece in (span.start..span.end).step_by(PIECE_SAMPLES) {
                 let end = (piece + PIECE_SAMPLES).min(span.end);
-                segments.extend(self.upload(
-                    &samples_16k[piece..end],
-                    piece as u64 * 1000 / 16_000,
-                    language,
-                    cancel,
-                )?);
+                segments.extend(
+                    self.upload(
+                        &samples_16k[start + piece..start + end],
+                        (start + piece) as u64 * 1000 / 16_000,
+                        Some(language),
+                        cancel,
+                    )?
+                    .0,
+                );
             }
         }
         Ok(segments)
@@ -668,6 +737,7 @@ impl CloudEngine for ManagedEngine {
 #[derive(Deserialize)]
 struct UploadReply {
     request_id: String,
+    language: Option<String>,
     segments: Vec<UploadSegment>,
 }
 
@@ -693,7 +763,7 @@ fn multipart(
     source: &str,
     offset_ms: u64,
     duration_ms: u64,
-    language: Language,
+    language: Option<Language>,
 ) -> Vec<u8> {
     let mut body = Vec::with_capacity(audio.len() + 1024);
     let mut field = |name: &str, value: &str| {
@@ -703,7 +773,7 @@ fn multipart(
     field("source", source);
     field("offset_ms", &offset_ms.to_string());
     field("duration_ms", &duration_ms.to_string());
-    field("language", language.code());
+    field("language", language.map_or("auto", Language::code));
     field("model", "whisper-large-v3");
     body.extend_from_slice(format!("--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"span.flac\"\r\nContent-Type: audio/flac\r\n\r\n").as_bytes());
     body.extend_from_slice(audio);
@@ -725,7 +795,7 @@ mod language_tests {
                 "microphone",
                 0,
                 1000,
-                language,
+                Some(language),
             );
             let text = String::from_utf8(body).unwrap();
             assert!(text.contains(&format!("name=\"language\"\r\n\r\n{}\r\n", language.code())));
