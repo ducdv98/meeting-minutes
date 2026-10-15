@@ -1,6 +1,6 @@
 # Ticket 14 design: Ask a Meeting with cited Answers
 
-Ticket: .scratch/windows-mvp/issues/14-ask.md. Spec: ../spec.md ("Ask (Meetless rules)", "AI providers"). Vocabulary: CONTEXT.md
+Ticket: .scratch/windows-mvp/issues/14-ask.md. Spec: ../spec.md ("Ask (cited Answers)", "AI providers"). Vocabulary: CONTEXT.md
 (Ask, Answer, Insufficient evidence, Incomplete, Unverified, Citation). Uses `citation` from 13-core-design.md and ticket 12's
 `TextProvider` / `generate_json` / `Disclosure` / cloud consent.
 

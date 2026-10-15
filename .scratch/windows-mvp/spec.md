@@ -42,7 +42,7 @@ Record (Microphone + System audio) → Stop → Meeting saved to Library → loc
 - Re-transcribing creates a new Revision; editing a Segment's text keeps its ID and Revision.
 - Summary in fixed sections: Overview, Key points, Decisions, Action items (owner/due date when stated). Every item needs ≥1 valid Citation; items without one are dropped.
 
-### Ask (Meetless rules)
+### Ask (cited Answers)
 - Scoped to one Meeting's current Transcript Revision; nothing from other Meetings is sent.
 - Answers cite Segment IDs; app checks each ID exists in that Meeting and Revision. Visible times are derived from stored ms ranges only.
 - Explicit Insufficient evidence result when the Transcript has no support.

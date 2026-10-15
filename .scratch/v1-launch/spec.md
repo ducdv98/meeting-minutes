@@ -23,7 +23,7 @@ Windows only. The installer stays **unsigned**: the app is free and open source,
 - **Clean-machine bug bash:** a pass on a fresh Windows machine. Crash and data-loss bugs block the launch.
 
 ### Cleanup
-- Remove "Meetless" from the working tree: rewrite ADR 0001 neutrally, and remove it from the other ADRs, research docs and `.scratch`. Git history stays as it is.
+- Remove the reference product's name from the working tree: rewrite ADR 0001 neutrally, and remove the name from the other ADRs, research docs and `.scratch`. Git history stays as it is.
 - Remove "Beta" from the app (the About channel, the badge, the diagnostics header), the README, the visual identity doc and the mockup.
 - Delete the roadmap section and every target date, on the site and in the README.
 - Add an Apache-2.0 LICENSE after a dependency license check. Only then may the site and launch copy say "open source".
