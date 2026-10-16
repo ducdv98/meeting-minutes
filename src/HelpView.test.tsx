@@ -17,12 +17,14 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
 
-it("shows the app version without a release badge", async () => {
+it("shows the app version and copyright", async () => {
   render(<HelpView />);
   const about = screen.getByRole("region", { name: "About" });
   expect(await within(about).findByText("0.1.7")).toBeTruthy();
   expect(within(about).queryByText("Beta")).toBeNull();
-  expect(within(about).getByText("Duc Dao")).toBeTruthy();
+  expect(within(about).getByText("Copyright")).toBeTruthy();
+  expect(within(about).getByText("© 2026 Meeting Minutes · Duc Dao")).toBeTruthy();
+  expect(within(about).queryByText("Made by")).toBeNull();
 });
 
 it("copies fresh diagnostics before opening a prefilled GitHub issue", async () => {

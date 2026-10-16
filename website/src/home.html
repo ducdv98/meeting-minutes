@@ -1,6 +1,6 @@
 <section class="hero"><div class="wrap">
   <h1>Your meetings, written down.</h1>
-  <p class="lede">Record a call on Windows. Meeting Minutes transcribes it locally or with your own cloud key, then links Answers to Transcript Segments.</p>
+  <p class="lede">Record a call on Windows or Import audio. Meeting Minutes transcribes it locally or with your own cloud key, then links Answers to Transcript Segments.</p>
   <div class="cta">{{HERO_ACTION}}</div>
 </div></section>
 <div class="hero-shot wrap">{{SCREEN_MEETING}}</div>
@@ -9,14 +9,14 @@
   <h2>Everything a meeting leaves behind, without taking notes</h2>
   <div class="three">
     <div><h3>Record any call</h3><p>Zoom, Teams, Meet or a phone on speaker. It records your Microphone and what your PC plays, so there is nothing to install in the meeting.</p></div>
-    <div><h3>Transcription your way</h3><p>English, Vietnamese, Spanish, French, German, Portuguese, Italian, Japanese, Korean, Chinese and Hindi. Auto-detect the Meeting language, use local Whisper, or add your own Groq or Gemini key for cloud transcription.</p></div>
+    <div><h3>Transcription your way</h3><p>English, Vietnamese, Spanish, French, German, Portuguese, Italian, Japanese, Korean, Chinese and Hindi. Auto-detect the Meeting language, use local Whisper, or add your own Groq or Gemini key for cloud transcription. Download or delete local models in Settings, or re-transcribe with one chosen Speech-to-text model.</p></div>
     <div><h3>Answers you can check</h3><p>Summary items and Answers include Citations to Transcript Segments. Click a Citation to hear the source.</p></div>
   </div>
 </div></section>
 
 <section class="section alt"><div class="wrap">
   <h2>See what matters in each Meeting</h2>
-  <div class="split"><div class="copy"><h3>Ask about one Meeting</h3><p>What did we decide? Who owns the next step? Answers must cite Segments from that Meeting. The app flags invalid Citations and shows “Insufficient evidence” when nothing in the Transcript supports an answer.</p></div>{{SCREEN_ASK}}</div>
+  <div class="split"><div class="copy"><h3>Ask about one Meeting</h3><p>What did we decide? Who owns the next step? Choose a Language model for each Ask or Summary. Answers must cite Segments from that Meeting. The app flags invalid Citations and shows “Insufficient evidence” when nothing in the Transcript supports an answer.</p></div>{{SCREEN_ASK}}</div>
   <div class="split flip"><div class="copy"><h3>A Transcript you can fix</h3><p>See who spoke, you or the other side. Correct a word and the Citations still point to the right place. Play any Segment with one click.</p></div>{{SCREEN_TRANSCRIPT}}</div>
   <div class="split"><div class="copy"><h3>Find a moment in your Library</h3><p>Search keywords across your Meetings’ Transcripts. Open a result to jump to the matching Segment.</p></div>{{SCREEN_SEARCH}}</div>
 </div></section>
@@ -24,7 +24,7 @@
 <section class="section privacy-section"><div class="wrap">
   <h2>Private by default, in plain words</h2>
   <div class="privacy-grid">
-    <div><h3>Your Library stays on your PC</h3><p>Your Meeting files stay in your Library. With your keys, Groq can receive audio for transcription; Gemini can receive audio for fallback transcription or Transcript text for Correction.</p></div>
+    <div><h3>Your Library stays on your PC</h3><p>Your Meeting files stay in your Library as plain files. The Privacy tab in the app shows where data can leave your PC. With your keys, Groq can receive audio for transcription; Gemini can receive audio for fallback transcription or Transcript text for Correction.</p></div>
     <div><h3>Your own cloud keys</h3><p>Summary, Action items and Ask can use Gemini, OpenAI or Anthropic. The app asks before sending a Meeting. Gemini's free tier may use content for training.</p></div>
     <div><h3>Managed transcription is experimental</h3><p>You can request a Managed key, which is issued by hand. Saving it in Settings allows audio to go to the Meeting Minutes service. The app has no telemetry. <a href="/request-a-key/">Request a key</a>.</p></div>
   </div>
@@ -40,7 +40,7 @@
     <div class="faq-item"><h3><button aria-expanded="true" aria-controls="faq-upload">Does anything get uploaded?<span class="plus" aria-hidden="true">+</span></button></h3><div class="answer" id="faq-upload"><div class="answer-inner">Local Processing stays on your PC. With a Groq key, audio goes to Groq for transcription; Gemini can receive audio for fallback transcription and Transcript text for Correction. If you save a Managed key, audio goes to the Meeting Minutes service for transcription, which forwards it to Groq. The app asks before sending a Meeting for a cloud Summary or Ask. Model downloads and update checks also use the internet. <a href="/privacy/">Read the privacy policy</a>.</div></div></div>
     <div class="faq-item"><h3><button aria-expanded="true" aria-controls="faq-warn">Why does Windows warn me when I install it?<span class="plus" aria-hidden="true">+</span></button></h3><div class="answer" id="faq-warn"><div class="answer-inner">The installer is unsigned. See the <a href="/support/#smartscreen">SmartScreen instructions</a> before installing.</div></div></div>
     <div class="faq-item"><h3><button aria-expanded="true" aria-controls="faq-lang">Which languages does it understand?<span class="plus" aria-hidden="true">+</span></button></h3><div class="answer" id="faq-lang"><div class="answer-inner">English, Vietnamese, Spanish, French, German, Portuguese, Italian, Japanese, Korean, Chinese and Hindi. Choose one for a Meeting or let the app detect it automatically.</div></div></div>
-    <div class="faq-item"><h3><button aria-expanded="true" aria-controls="faq-pc">Do I need a powerful PC?<span class="plus" aria-hidden="true">+</span></button></h3><div class="answer" id="faq-pc"><div class="answer-inner">The setup guide recommends a transcription model for your hardware. Larger models need more memory and time.</div></div></div>
+    <div class="faq-item"><h3><button aria-expanded="true" aria-controls="faq-pc">Do I need a powerful PC?<span class="plus" aria-hidden="true">+</span></button></h3><div class="answer" id="faq-pc"><div class="answer-inner">First-run setup can be skipped. The guide recommends a transcription model for your hardware, and you can download or delete local models later in Settings. Larger models need more memory and time.</div></div></div>
     <div class="faq-item"><h3><button aria-expanded="true" aria-controls="faq-uninstall">How do I uninstall it, and do I keep my meetings?<span class="plus" aria-hidden="true">+</span></button></h3><div class="answer" id="faq-uninstall"><div class="answer-inner">Uninstall it from Windows Settings → Apps. Your Library in Documents\Meeting Minutes stays. The uninstaller offers a separate option to remove app data.</div></div></div>
   </div>
 </div></section>

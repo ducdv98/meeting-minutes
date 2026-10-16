@@ -11,11 +11,11 @@ node --test website/test/
 node website/build.mjs --draft --offline
 ```
 
-Serve `website/dist/` with any static file server. The draft build uses neutral “Screenshot” frames where assets are missing. `--offline` gives an empty release list; `--fixture path/to/releases.json` loads a GitHub Releases API array for local checks. `--output path/to/directory` writes to another directory. Omit both release flags to fetch Releases from GitHub. `GITHUB_TOKEN` is used if set.
+Serve `website/dist/` with any static file server. The draft build uses neutral “Screenshot” frames where assets are missing. `--offline` gives an empty release list; `--fixture website/test/release-fixture.json` loads a GitHub Releases API array for local checks. A checksum asset in a fixture uses `fixture_path`, relative to the JSON file, or inline `content` for its `.sha256` contents. `--output path/to/directory` writes to another directory. Omit both release flags to fetch Releases from GitHub. `GITHUB_TOKEN` is used if set.
 
 The Request a key page uses a pre-filled email draft. It has no form backend. The pricing page describes the Managed key allowance without promising a specific number of minutes during the experiment.
 
-Run `node website/build.mjs --check-ready` to list what blocks publishing; it exits successfully and writes `ready=true` or `ready=false` to `GITHUB_OUTPUT` when set. The privacy page must be the real policy (no `PRIVACY_STUB_TICKET_14` marker). Before the first published Release, missing screenshots don't block: the published site leaves those images out and is text-only. Once a Release is published, all twelve screenshots listed in [`src/assets/screens/README.md`](src/assets/screens/README.md) are required. If the newest published Release has no NSIS `.exe` asset, the build uses the newest published Release that does.
+Run `node website/build.mjs --check-ready` to list what blocks publishing; it exits successfully and writes `ready=true` or `ready=false` to `GITHUB_OUTPUT` when set. The privacy page must be the real policy (no `PRIVACY_STUB_TICKET_14` marker). Once a Release is published, all twelve screenshots listed in [`src/assets/screens/README.md`](src/assets/screens/README.md) are required. A published Release needs a valid NSIS `.exe` and a matching readable `.sha256` asset. The build fails when either is missing or invalid; it does not expose an older installer.
 
 ## One-time owner setup
 
@@ -26,6 +26,6 @@ The site is served by a static-only Cloudflare Worker (`wrangler.jsonc`) on the 
 3. Keep **Web Analytics** and **Bot Fight Mode** off for the zone: the privacy policy promises no analytics, and Bot Fight Mode sets a `__cf_bm` cookie.
 4. Run the **Website** workflow (or push to `main`). While screenshots are missing, the deploy job lists them in the run summary and skips deploying. After the first deploy, open https://meeting-minutes.tech/ and check HTTPS.
 
-Publishing a Release triggers the website workflow so the download URL, version, size and Changelog refresh from GitHub Releases. Do not deploy a `--draft` build.
+Publishing a Release triggers the website workflow so the download URL, version, size, SHA-256 and Changelog refresh from GitHub Releases. Do not deploy a `--draft` build.
 
-The Changelog shows the cloud transcription work as **In development** above the published Release notes. It does not imply a public download is available.
+The Changelog shows only published Release notes. The hero download links to the selected NSIS installer and displays its SHA-256, version, size and Windows requirement. Release notes are maintained in `RELEASE_NOTES/v1.0.0.md` and copied into the draft Release before the workflow appends verification details.

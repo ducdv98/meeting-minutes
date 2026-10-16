@@ -1,19 +1,19 @@
 <article class="doc"><h1>Support</h1><p class="updated">Help with Meeting Minutes for Windows</p>
-  <h2>Write to us</h2><p>Email Duc Dao at <a href="mailto:admin@meeting-minutes.tech">admin@meeting-minutes.tech</a>.</p>
+  <h2>Write to us</h2><p>Contact: <a href="mailto:admin@meeting-minutes.tech">admin@meeting-minutes.tech</a>.</p>
   <div class="copybox"><span id="support-email" tabindex="-1">admin@meeting-minutes.tech</span><button class="button secondary copy-button" type="button" data-copy="support-email">Copy</button></div><p class="copy-result" role="status" aria-live="polite"></p>
   <p>Or <a href="https://github.com/ducdv98/meeting-minutes/issues">open an issue on GitHub</a>. GitHub issues are public; email is private.</p>
   <h2>Managed transcription</h2><p>Managed transcription is experimental. <a href="/request-a-key/">Request a key</a> if you would like to try it. Keys are issued by hand; we cannot promise a reply or turnaround time.</p>
   <h2>Include diagnostics</h2><ol class="steps"><li><div>In the app, open Help.</div></li><li><div>Choose Copy diagnostics.</div></li><li><div>Paste it into your message. It includes versions, devices and recent log lines, not Transcript text or keys.</div></li></ol>
   <div class="support-shot">{{SCREEN_DIAGNOSTICS}}</div>
-  <h2>Choose a transcription model</h2><p>The first-run guide recommends a model for your PC. You can review the choice before downloading it.</p>
+  <h2>Choose a transcription model</h2><p>First-run setup can be skipped. The guide recommends a model for your PC. You can review the choice before downloading it, then download or delete local models in Settings.</p>
   <div class="support-shot">{{SCREEN_FIRSTRUN_MODEL}}</div>
   <h2 id="smartscreen">Windows says it protected your PC</h2><p>Meeting Minutes is free and its source is public. The installer is unsigned because we do not use a paid code-signing certificate. Windows SmartScreen may warn you. Download it only from this site or the <a href="https://github.com/ducdv98/meeting-minutes/releases">GitHub Releases page</a>. After checking the file and deciding you trust it, choose <strong>More info</strong> and <strong>Run anyway</strong> if Windows offers those options.</p>
-  <h2>Verify the installer</h2><ol class="steps">
+  <h2>Verify your download</h2><ol class="steps">
     <li><div>Download the installer and its matching <code>.sha256</code> file from the same GitHub Release.</div></li>
-    <li><div>In PowerShell, run this command, replacing <code>installer.exe</code> with the downloaded file name. Compare the hash with the first value in the <code>.sha256</code> file.
-      <pre class="command"><code>Get-FileHash ".\installer.exe" -Algorithm SHA256</code></pre></div></li>
+    <li><div>In PowerShell, run this command, replacing <code>&lt;installer&gt;</code> with the downloaded file name. Compare the hash with the first value in the <code>.sha256</code> file.
+      <pre class="command"><code>Get-FileHash .\&lt;installer&gt; -Algorithm SHA256</code></pre></div></li>
     <li><div>With the <a href="https://cli.github.com/">GitHub CLI</a>, run this command using the same file name. This checks that GitHub's release workflow produced that installer.
-      <pre class="command"><code>gh attestation verify ".\installer.exe" --repo ducdv98/meeting-minutes</code></pre></div></li>
+      <pre class="command"><code>gh attestation verify &lt;installer&gt; --repo ducdv98/meeting-minutes</code></pre></div></li>
   </ol>
   <p>You can also <a href="https://github.com/ducdv98/meeting-minutes#develop-and-build-on-windows">build it yourself</a> from the public source.</p>
   <h2>Uninstalling</h2><p>Use Settings → Apps in Windows. Your Library in Documents\Meeting Minutes is kept. The uninstaller offers an unticked option to remove downloaded models, settings and the search index.</p>

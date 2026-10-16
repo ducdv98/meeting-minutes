@@ -67,7 +67,7 @@ export default function HelpView({ onOpenGuide }: { onOpenGuide?: () => void }) 
         <Wordmark className="h-10 w-[210px]" />
         <dl className="m-0 grid grid-cols-[180px_1fr] gap-x-4 gap-y-2 text-sm tabular-nums">
           <dt className="text-ink-muted">Version</dt><dd className="m-0">{info ? info.version : infoFailed ? "Unknown" : <Skeleton className="h-4 w-16" />}</dd>
-          <dt className="text-ink-muted">Made by</dt><dd className="m-0">Duc Dao</dd>
+          <dt className="text-ink-muted">Copyright</dt><dd className="m-0">© 2026 Meeting Minutes · Duc Dao</dd>
           <dt className="text-ink-muted">Support</dt><dd className="m-0"><button type="button" className={linkClass} onClick={() => void open("support")}>admin@meeting-minutes.tech</button></dd>
           <dt className="text-ink-muted">Privacy</dt><dd className="m-0"><button type="button" className={linkClass} onClick={() => void open("privacy")}>meeting-minutes.tech/privacy</button></dd>
         </dl>

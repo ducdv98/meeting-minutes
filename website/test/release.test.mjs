@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { escapeHtml, formatSize, publishedReleases, releasePageState, renderNotes } from '../lib/release.mjs';
+import { escapeHtml, formatSize, parseInstallerChecksum, publishedReleases, releasePageState, renderNotes } from '../lib/release.mjs';
 
 const release = (overrides = {}) => ({
   tag_name: 'v0.1.0', published_at: '2026-12-01T12:00:00Z', draft: false,
@@ -18,7 +18,17 @@ test('published release exposes its actual installer and size', () => {
     version: 'v0.1.0', date: '2026-12-01',
     url: 'https://github.com/ducdv98/meeting-minutes/releases/download/v0.1.0/Meeting-Minutes.exe',
     size: '14 MB',
+    installerName: 'Meeting-Minutes.exe',
+    checksumAsset: null,
   });
+});
+
+test('checksum must name the selected installer and contain one SHA-256', () => {
+  const hash = 'a'.repeat(64);
+  assert.equal(parseInstallerChecksum(`${hash}  Meeting-Minutes.exe\n`, 'Meeting-Minutes.exe'), hash);
+  assert.throws(() => parseInstallerChecksum(`${hash}  other.exe`, 'Meeting-Minutes.exe'), /Invalid SHA-256/);
+  assert.throws(() => parseInstallerChecksum('not a hash', 'Meeting-Minutes.exe'), /Invalid SHA-256/);
+  assert.throws(() => parseInstallerChecksum(`${hash}  Meeting-Minutes.exe\n${hash}  other.exe`, 'Meeting-Minutes.exe'), /Invalid SHA-256/);
 });
 
 test('drafts and prereleases are ignored and published releases sort newest first', () => {
@@ -47,12 +57,12 @@ test('deceptive installer URL is rejected', () => {
   assert.equal(releasePageState([release({ assets: [{ name: 'Meeting-Minutes.exe', browser_download_url: deceptive }] })]).latest, null);
 });
 
-test('newest published release without an installer falls back to the newest one with an installer', () => {
+test('newest published release without an installer does not expose an older download', () => {
   const older = release({ tag_name: 'v0.1.0', published_at: '2026-12-01T12:00:00Z' });
   const newer = release({ tag_name: 'v0.2.0', published_at: '2027-01-01T12:00:00Z', assets: [] });
   const state = releasePageState([older, newer]);
   assert.deepEqual(state.published, [newer, older]);
-  assert.equal(state.latest.version, 'v0.1.0');
+  assert.equal(state.latest, null);
 });
 
 test('size formatting handles small and invalid sizes', () => {

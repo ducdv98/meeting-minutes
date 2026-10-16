@@ -86,11 +86,15 @@ export function releasePageState(releases) {
     try {
       const url = new URL(asset.browser_download_url);
       return url.origin === 'https://github.com' && !url.username && !url.password &&
-        url.pathname.startsWith(`/${REPO}/releases/download/`) && /\.exe$/i.test(url.pathname);
+        !url.search && !url.hash && /\.exe$/i.test(url.pathname);
     } catch { return false; }
   };
-  const downloadable = published.find(release => release.assets?.some(hasInstaller));
-  const installer = downloadable?.assets.find(hasInstaller);
+  const downloadable = published[0];
+  const installer = downloadable?.assets.find(asset => hasInstaller(asset) &&
+    asset.browser_download_url === `${prefix}${encodeURIComponent(downloadable.tag_name)}/${encodeURIComponent(asset.name)}`);
+  const checksum = installer && downloadable.assets.find(asset =>
+    asset.name === `${installer.name}.sha256` && typeof asset.browser_download_url === 'string' &&
+    asset.browser_download_url === `${prefix}${encodeURIComponent(downloadable.tag_name)}/${encodeURIComponent(asset.name)}`);
   return {
     published,
     latest: downloadable && installer ? {
@@ -98,6 +102,14 @@ export function releasePageState(releases) {
       date: downloadable.published_at.slice(0, 10),
       url: installer.browser_download_url,
       size: formatSize(installer.size),
+      installerName: installer.name,
+      checksumAsset: checksum ?? null,
     } : null,
   };
+}
+
+export function parseInstallerChecksum(contents, installerName) {
+  const match = String(contents).replace(/^\uFEFF/, '').trim().match(/^([0-9a-f]{64})  (.+)$/i);
+  if (!match || match[2] !== installerName) throw new Error(`Invalid SHA-256 for ${installerName}: expected a 64-character hash and matching installer filename`);
+  return match[1].toLowerCase();
 }

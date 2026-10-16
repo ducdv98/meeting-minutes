@@ -48,17 +48,17 @@ test('pricing and home describe experimental hand-issued Managed keys', async ()
     assert.match(home, /Is it free\?[\s\S]*?id="faq-free"[\s\S]*?request a key/i);
     assert.match(home, /id="faq-upload"[\s\S]*?Managed key[\s\S]*?Meeting Minutes service/);
     assert.match(llms, /^Request a key: https:\/\/meeting-minutes\.tech\/request-a-key\/$/m);
-    assert.match(llms, /Managed key, issued by hand/i);
+    assert.match(llms, /hand-issued Managed key/i);
     assert.doesNotMatch(llms, /optional Account|waitlist/i);
 
     const plans = [...pricing.matchAll(/<article class="plan-card">([\s\S]*?)<\/article>/g)].map(match => match[1]);
     assert.equal(plans.length, 2, 'Free and Pro are the plan cards');
-    assert.match(plans[0], /<h2>Free plan<\/h2>[\s\S]*?Windows app is coming/i);
+    assert.match(plans[0], /<h2>Free plan<\/h2>[\s\S]*?Download unavailable/i);
     assert.match(plans[0], /\$0 forever/);
     assert.match(plans[0], /local Processing[\s\S]*?your own provider keys/i);
     assert.match(plans[0], /Managed transcription[\s\S]*?Keys are issued by hand/i);
     assert.match(plans[0], /href="\/request-a-key\/"/);
-    assert.match(plans[1], /<h2>Pro plan<\/h2>[\s\S]*?Coming soon/i);
+    assert.match(plans[1], /<h2>Pro plan<\/h2>[\s\S]*?Planned/i);
     assert.match(pricing, /Processed audio minutes/i);
     assert.match(pricing, /each Source counts separately/i);
     assert.match(pricing, /resets on the first of each month \(UTC\)[\s\S]*?without rollover/i);
@@ -103,19 +103,14 @@ test('Free plan is available when a Windows Release is published', async () => {
   const temp = await mkdtemp(join(tmpdir(), 'meeting-minutes-pricing-release-'));
   const output = join(temp, 'site');
   try {
-    const fixture = join(temp, 'releases.json');
-    await writeFile(fixture, JSON.stringify([{
-      tag_name: 'v0.1.0', published_at: '2026-12-01T12:00:00Z', draft: false,
-      prerelease: false, body: 'Initial release', assets: [{ name: 'Meeting-Minutes.exe', size: 14680064,
-        browser_download_url: 'https://github.com/ducdv98/meeting-minutes/releases/download/v0.1.0/Meeting-Minutes.exe' }],
-    }]));
+    const fixture = join(repo, 'website/test/release-fixture.json');
     await run(process.execPath, ['website/build.mjs', '--draft', '--fixture', fixture, '--output', output], { cwd: repo });
     const pricing = await readFile(join(output, 'pricing', 'index.html'), 'utf8');
     const free = pricing.match(/<article class="plan-card">([\s\S]*?)<\/article>/)?.[1];
     assert.ok(free);
     assert.match(free, /<h2>Free plan<\/h2>[\s\S]*?<p class="plan-status">Available now<\/p>/);
     assert.match(free, /Keys are issued by hand/i);
-    assert.doesNotMatch(free, /Windows app is coming/);
+    assert.doesNotMatch(free, /Download unavailable/);
   } finally {
     await rm(temp, { recursive: true, force: true });
   }

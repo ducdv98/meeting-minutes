@@ -1,7 +1,7 @@
 import { readFile, writeFile, mkdir, rm, copyFile, access } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { escapeHtml, releasePageState, renderNotes } from './lib/release.mjs';
+import { escapeHtml, parseInstallerChecksum, releasePageState, renderNotes } from './lib/release.mjs';
 
 const root = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(root, '..');
@@ -83,34 +83,53 @@ let releaseData;
 try { releaseData = await getReleases(); }
 catch (error) { console.error(error.message); process.exit(1); }
 const { latest, published } = releasePageState(releaseData);
+if (published.length && !latest) missing.push(`Published Release ${published[0].tag_name} has no valid NSIS .exe asset`);
 
-// Before the first Release the site may go live text-only: missing screenshots are left out.
-// Once people can download the app, every screenshot is required.
-const blockers = [...missing, ...(latest ? missingScreens : [])];
+let checksum = null;
+if (latest) {
+  if (!latest.checksumAsset) missing.push(`SHA-256 asset missing for ${latest.installerName}`);
+  else {
+    try {
+      let contents;
+      if (fixture) {
+        if (typeof latest.checksumAsset.content === 'string') contents = latest.checksumAsset.content;
+        else if (typeof latest.checksumAsset.fixture_path === 'string')
+          contents = await readFile(resolve(dirname(fixture), latest.checksumAsset.fixture_path), 'utf8');
+        else throw new Error('checksum fixture needs content or fixture_path');
+      } else {
+        const response = await fetch(latest.checksumAsset.browser_download_url);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        contents = await response.text();
+      }
+      checksum = parseInstallerChecksum(contents, latest.installerName);
+    } catch (error) { missing.push(`SHA-256 unreadable for ${latest.installerName}: ${error.message}`); }
+  }
+}
+
+const blockers = [...missing, ...(published.length ? missingScreens : [])];
 if (checkReady) {
   const ready = blockers.length === 0;
   console.log(ready ? 'Website is ready to publish.' : `Website cannot publish yet:\n- ${blockers.join('\n- ')}`);
-  if (ready && missingScreens.length) console.log(`Publishing without screenshots until the first Release:\n- ${missingScreens.join('\n- ')}`);
   if (process.env.GITHUB_OUTPUT) await writeFile(process.env.GITHUB_OUTPUT, `ready=${ready}\n`, { flag: 'a' });
   process.exit(0);
 }
-if (blockers.length && !draft) {
-  console.error(`Non-draft website build blocked:\n- ${blockers.join('\n- ')}\nUse --draft only for local previews.`);
+const releaseBlocked = published.length > 0 && (!latest || !checksum);
+if (blockers.length && (!draft || releaseBlocked)) {
+  console.error(`Website build blocked:\n- ${blockers.join('\n- ')}${releaseBlocked ? '' : '\nUse --draft only for local previews.'}`);
   process.exit(1);
 }
 const releaseButton = latest ? `<a class="button primary" href="${escapeHtml(latest.url)}">Download for Windows</a>` : '';
-const coming = '<span class="status-line">Windows app is coming</span>';
+const unavailable = '<span class="status-line">No public download available</span>';
 const heroAction = latest
-  ? `${releaseButton}<small>Version ${escapeHtml(latest.version)} · ${escapeHtml(latest.size)} · Windows 11 · Free · unsigned, <a href="/support/#smartscreen">see why</a></small>`
-  : coming;
-const closingAction = latest ? releaseButton : coming;
+  ? `${releaseButton}<small>Version ${escapeHtml(latest.version)} · ${escapeHtml(latest.size)} · Windows 11, 64-bit · Free</small><small class="checksum">SHA-256: <code>${checksum}</code></small><small>Unsigned installer: <a href="/support/#smartscreen">see the SmartScreen note</a></small>`
+  : unavailable;
+const closingAction = latest ? releaseButton : unavailable;
 const headerAction = latest ? `<a class="button primary header-download" href="${escapeHtml(latest.url)}">Download for Windows <span>${escapeHtml(latest.version)}</span></a>` : '';
 
 function screen(name, alt) {
   const light = `assets/screens/${name}-light.png`;
   const dark = `assets/screens/${name}-dark.png`;
   if (missingScreens.some(item => item.includes(`/${name}-`))) {
-    // Drafts show where a screenshot will go; a published text-only site leaves it out.
     return draft ? `<div class="screenshot placeholder" role="img" aria-label="${escapeHtml(alt)}. Screenshot pending"><span>Screenshot</span></div>` : '';
   }
   return `<picture class="screenshot"><source media="(prefers-color-scheme: dark)" srcset="/${dark}"><img src="/${light}" alt="${escapeHtml(alt)}" loading="lazy"></picture>`;
@@ -124,7 +143,7 @@ const substitutions = {
   '{{SCREEN_SEARCH}}': screen('search', 'Library search results with matching Transcript Segments'),
   '{{SCREEN_DIAGNOSTICS}}': screen('diagnostics', 'Help menu with Copy diagnostics selected'),
   '{{SCREEN_FIRSTRUN_MODEL}}': screen('firstrun-model', 'First-run guide recommending a transcription model'),
-  '{{FREE_STATUS}}': published.length ? 'Available now' : 'Windows app is coming',
+  '{{FREE_STATUS}}': latest ? 'Available now' : 'Download unavailable',
 };
 function replace(text) {
   for (const [key, value] of Object.entries(substitutions)) text = text.replaceAll(key, value);
@@ -148,9 +167,9 @@ function shell(title, description, body, current = '') {
 <nav class="site-nav" aria-label="Main navigation">${nav}${headerAction}</nav>
 <details class="mobile-menu"><summary aria-label="Open menu">Menu</summary><nav aria-label="Mobile navigation">${nav}${headerAction}</nav></details></div></header>
 <main id="main">${body}</main>
-<footer class="site-foot"><div class="wrap footer-grid"><div>${brand()}<p>A meeting recorder for Windows that keeps your Library on your PC. Made by Duc Dao.</p></div>
+<footer class="site-foot"><div class="wrap footer-grid"><div>${brand()}<p>Meeting Minutes. A local-first meeting recorder for Windows.</p></div>
 <nav aria-label="Footer navigation">${nav}<a href="/request-a-key/">Request a key</a><a href="https://github.com/ducdv98/meeting-minutes">GitHub</a></nav>
-<div class="legal"><span>© 2026 Duc Dao</span><a href="mailto:admin@meeting-minutes.tech">admin@meeting-minutes.tech</a></div></div></footer></body></html>`;
+<div class="legal"><span>© 2026 Meeting Minutes · Duc Dao</span><a href="mailto:admin@meeting-minutes.tech">admin@meeting-minutes.tech</a></div></div></footer></body></html>`;
 }
 
 async function write(path, value) { await mkdir(dirname(path), { recursive: true }); await writeFile(path, value); }
@@ -162,16 +181,15 @@ const support = replace(await readFile(join(src, 'support.html'), 'utf8'));
 const requestKey = await readFile(join(src, 'request-a-key.html'), 'utf8');
 const privacy = await readFile(join(src, 'privacy.html'), 'utf8').catch(() => '<article class="doc"><h1>Privacy policy</h1><p>Draft pending ticket 14.</p></article>');
 const entries = published.map(release => `<article class="release"><h2>${escapeHtml(release.tag_name)}</h2><time datetime="${escapeHtml(release.published_at.slice(0, 10))}">${escapeHtml(new Intl.DateTimeFormat('en', { dateStyle: 'long', timeZone: 'UTC' }).format(new Date(release.published_at)))}</time><div class="notes">${renderNotes(release.body) || '<p>No release notes provided.</p>'}</div></article>`).join('');
-const cloudEntry = '<article class="release"><h2>Cloud transcription · In development</h2><time datetime="2026-10-13">October 13, 2026</time><div class="notes"><p>Adding transcription with your own Groq key, Gemini fallback and Correction. Local Whisper remains available.</p></div></article>';
-const changelog = `<article class="doc"><h1>Changelog</h1><p class="updated">Work in progress and published releases, newest first.</p>${cloudEntry}${entries || '<p>No public releases yet. The Windows app is coming.</p>'}</article>`;
+const changelog = `<article class="doc"><h1>Changelog</h1><p class="updated">Published Release notes, newest first.</p>${entries || '<p>No published Releases yet.</p>'}</article>`;
 await write(join(dist, 'index.html'), shell('Home', 'Record any call on Windows. Keep a Transcript on your PC and get Answers with Citations.', home));
-await write(join(dist, 'pricing', 'index.html'), shell('Pricing', 'Free local Processing and your own keys. Managed transcription is experimental: request a key. Pro is coming soon.', pricing, '/pricing/'));
+await write(join(dist, 'pricing', 'index.html'), shell('Pricing', 'Free local Processing and your own keys. Managed transcription is experimental: request a key. Pro is planned.', pricing, '/pricing/'));
 await write(join(dist, 'request-a-key', 'index.html'), shell('Request a key', 'Request a Managed key for experimental transcription. Keys are issued by hand.', requestKey, '/request-a-key/'));
 await write(join(dist, 'support', 'index.html'), shell('Support', 'Get help with Meeting Minutes, diagnostics, installation and uninstalling.', support, '/support/'));
 await write(join(dist, 'privacy', 'index.html'), shell('Privacy', 'How Meeting Minutes handles your meetings and data.', privacy, '/privacy/'));
 await write(join(dist, 'changelog', 'index.html'), shell('Changelog', 'Meeting Minutes updates and published releases.', changelog, '/changelog/'));
 await write(join(dist, '404.html'), shell('Page not found', 'This page could not be found.', '<article class="doc"><h1>Page not found</h1><p>The page you requested does not exist. <a href="/">Go to the home page</a>.</p></article>'));
-await write(join(dist, 'llms.txt'), `# Meeting Minutes\n\nMeeting Minutes is a local-first Windows 11 app by Duc Dao. It records Microphone and System audio from meetings and transcribes English, Vietnamese, Spanish, French, German, Portuguese, Italian, Japanese, Korean, Chinese and Hindi. Auto-detect the Meeting language or choose one per Meeting. Transcription runs locally by default; with the user's own keys, audio can go to Groq or Gemini. Gemini can receive Transcript text for Correction. The app provides cited Summaries and Answers. Managed transcription is experimental: request a Managed key, issued by hand. No telemetry.\n\n${latest ? `Free for Windows: ${latest.version}, published ${latest.date}; download: ${latest.url}.` : 'Windows app is coming.'}\n\nHome: https://meeting-minutes.tech/\nPricing: https://meeting-minutes.tech/pricing/\nRequest a key: https://meeting-minutes.tech/request-a-key/\nPrivacy: https://meeting-minutes.tech/privacy/\nSupport: https://meeting-minutes.tech/support/\nChangelog: https://meeting-minutes.tech/changelog/\nRepository: https://github.com/ducdv98/meeting-minutes\nContact: admin@meeting-minutes.tech\n`);
+await write(join(dist, 'llms.txt'), `# Meeting Minutes\n\nMeeting Minutes. A local-first meeting recorder for Windows. It records Microphone and System audio, supports Import, and keeps each Meeting in a plain-file Library. First-run setup can be skipped. English, Vietnamese, Spanish, French, German, Portuguese, Italian, Japanese, Korean, Chinese and Hindi. Auto-detect the Meeting language or choose one per Meeting. Local Whisper models can be downloaded or deleted in Settings; your own Groq or Gemini key also enables cloud transcription. Re-transcribe with one chosen Speech-to-text model. Choose a Language model for each Summary or Ask, with Citations to Transcript Segments. A hand-issued Managed key enables experimental Managed transcription. The Privacy tab shows where data can leave the PC. No telemetry.\n\n${latest ? `Free for Windows: ${latest.version}, published ${latest.date}; download: ${latest.url}; SHA-256: ${checksum}.` : 'No public download available.'}\n\nHome: https://meeting-minutes.tech/\nPricing: https://meeting-minutes.tech/pricing/\nRequest a key: https://meeting-minutes.tech/request-a-key/\nPrivacy: https://meeting-minutes.tech/privacy/\nSupport: https://meeting-minutes.tech/support/\nChangelog: https://meeting-minutes.tech/changelog/\nRepository: https://github.com/ducdv98/meeting-minutes\nContact: admin@meeting-minutes.tech\n© 2026 Meeting Minutes · Duc Dao\n`);
 
 const ranges = { latin: 'U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD',
   'latin-ext': 'U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20CF,U+2113,U+2C60-2C7F,U+A720-A7FF',

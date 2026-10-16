@@ -1,0 +1,21 @@
+[
+  {
+    "tag_name": "v1.0.0",
+    "published_at": "2026-10-16T12:00:00Z",
+    "draft": false,
+    "prerelease": false,
+    "body": "## First release\n\nRecord both Sources.",
+    "assets": [
+      {
+        "name": "Meeting-Minutes_1.0.0_x64-setup.exe",
+        "size": 14680064,
+        "browser_download_url": "https://github.com/ducdv98/meeting-minutes/releases/download/v1.0.0/Meeting-Minutes_1.0.0_x64-setup.exe"
+      },
+      {
+        "name": "Meeting-Minutes_1.0.0_x64-setup.exe.sha256",
+        "browser_download_url": "https://github.com/ducdv98/meeting-minutes/releases/download/v1.0.0/Meeting-Minutes_1.0.0_x64-setup.exe.sha256",
+        "fixture_path": "release-fixture.sha256"
+      }
+    ]
+  }
+]
