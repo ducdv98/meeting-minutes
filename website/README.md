@@ -13,7 +13,7 @@ node website/build.mjs --draft --offline
 
 Serve `website/dist/` with any static file server. The draft build uses neutral “Screenshot” frames where assets are missing. `--offline` gives an empty release list; `--fixture path/to/releases.json` loads a GitHub Releases API array for local checks. `--output path/to/directory` writes to another directory. Omit both release flags to fetch Releases from GitHub. `GITHUB_TOKEN` is used if set.
 
-The Free plan's provisional monthly Managed transcription allowance is `freeCloudMinutes` in `website/build.mjs`. Change that one constant when the final allowance is set; the build substitutes it into the pricing page.
+The Request a key page uses a pre-filled email draft. It has no form backend. The pricing page describes the Managed key allowance without promising a specific number of minutes during the experiment.
 
 Run `node website/build.mjs --check-ready` to list what blocks publishing; it exits successfully and writes `ready=true` or `ready=false` to `GITHUB_OUTPUT` when set. The privacy page must be the real policy (no `PRIVACY_STUB_TICKET_14` marker). Before the first published Release, missing screenshots don't block: the published site leaves those images out and is text-only. Once a Release is published, all twelve screenshots listed in [`src/assets/screens/README.md`](src/assets/screens/README.md) are required. If the newest published Release has no NSIS `.exe` asset, the build uses the newest published Release that does.
 

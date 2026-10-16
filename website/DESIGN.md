@@ -31,21 +31,25 @@ In this order:
    - Below: a large real screenshot of the Meeting view (Transcript, Summary with Citations), `--radius-lg`, 1px `--line` edge, no device frame, light screenshot in light mode and dark in dark.
 2. **What it does.** Three short blocks in a row (stacked on mobile), each a `--heading-sm` title and one or two sentences, no icons in bubbles: Record any call (Microphone and System audio, any meeting app). Transcription your way (the eleven Meeting languages with Auto-detect; local Whisper by default, or the user's own Groq or Gemini key). Answers with Citations (every Summary item and Answer points to the moment it came from).
 3. **Product sections.** Two or three 5/7 text-and-screenshot rows, each showing one real feature: Ask with cited Answers; the Transcript with Speaker labels and playback; Library search. Screenshots of real UI only.
-4. **Privacy, plainly.** A `--panel` section: what stays on the PC (the Library folder), what goes to a provider under the user's own key (audio to Groq or Gemini for transcription and Transcript text to Gemini for Correction once a key is added; Transcript text to Gemini, OpenAI or Anthropic for Summary and Ask only when the user clicks), that Gemini's free tier may use content for training, no telemetry, no account. Link to the privacy policy.
+4. **Privacy, plainly.** A `--panel` section: what stays on the PC (the Library folder), what goes to a provider under the user's own key (audio to Groq or Gemini for transcription and Transcript text to Gemini for Correction once a key is added; Transcript text to Gemini, OpenAI or Anthropic for Summary and Ask only when the user clicks), that Gemini's free tier may use content for training, no telemetry, and optional experimental Managed transcription through a hand-issued key. Link to the privacy policy and Request a key.
 5. **Works with any call app.** One sentence: it records what the PC plays and what the microphone hears, so Zoom, Teams, Google Meet and others work without an integration. Text only, no third-party logos.
 6. **FAQ.** Full-width accordion rows with 1px `--line` dividers and a `+` that rotates to `×`. Questions: Is it free? Where are my meetings stored? Does anything get uploaded? Why does Windows warn me when I install it? Which languages does it understand? Do I need a powerful PC? How do I uninstall it, and do I keep my meetings?
 7. **Closing call to action.** Centred: one line in `--heading-lg` and the same primary action as the hero (or the Windows app is coming status when nothing is published).
-8. **Footer.** Wordmark, one sentence, links (Pricing, Privacy, Support, Changelog, GitHub), "Made by Duc Dao", `admin@meeting-minutes.tech`, and the year.
+8. **Footer.** Wordmark, one sentence, links (Pricing, Request a key, Privacy, Support, Changelog, GitHub), "Made by Duc Dao", `admin@meeting-minutes.tech`, and the year.
 
 Do not add customer logos, metrics, testimonials or use-case pages.
 
 ### Pricing
 
-Two plan cards: Free plan and Pro plan. Free shows $0 forever and “Available now” for local Processing and the user's own provider keys. An optional Account and its limited Managed transcription allowance are marked “Planned” within Free; Pro is marked “Coming soon” and has no price. A reading-width section explains Processed audio minutes, the monthly reset and transcription fallback. Cards use the site's surface, border and spacing tokens, stack at mobile widths, and use text for every availability state. No purchase or registration action appears until those flows exist.
+Two plan cards: Free plan and Pro plan. Free shows $0 forever and the Windows app's actual release availability for local Processing and the user's own provider keys. Managed transcription is experimental: the user can request a Managed key, issued by hand; the card does not promise access, a reply time or a fixed allowance. Pro is marked “Coming soon” and has no price. A reading-width section explains Processed audio minutes, the monthly reset and transcription fallback. Cards use the site's surface, border and spacing tokens, stack at mobile widths, and use text for every availability state. No purchase or registration action appears until those flows exist.
+
+### Request a key
+
+A reading-width page explains that Managed transcription is experimental and keys are issued by hand, without a promised response or turnaround time. Labelled, required email and “How will you use it?” fields open a pre-filled email draft to `admin@meeting-minutes.tech` through JavaScript. A plain `mailto:` link stays available when JavaScript or the form does not work. The site has no form backend. Link here from home, pricing and support.
 
 ### Privacy
 
-A plain reading page in the reading width: `--heading-lg` title, last-updated date, then sections with `--heading-sm` headings. The content is written from the app code.
+A plain reading page in the reading width: `--heading-lg` title, last-updated date, then sections with `--heading-sm` headings. Cover the request email, key and usage data, and Managed transcription audio sent to the service. The content is written from the app code and managed-key decision.
 
 ### Support
 
@@ -57,7 +61,7 @@ One entry per published Release, newest first: version, date and notes, generate
 
 ### `llms.txt`
 
-A plain-text summary of the product and its availability, the maker and the contact, with links to each page.
+A plain-text summary of the product and its availability, the maker and the contact, with links to each page, including Request a key.
 
 ## Components
 
@@ -83,7 +87,7 @@ WCAG AA contrast (guaranteed by the identity tokens), semantic headings in order
 
 ## Implementation
 
-- A static site in `website/`, built in CI and deployed to `meeting-minutes.tech`. No client-side framework is needed; keep JavaScript to the accordion, theme handling and nothing else.
+- A static site in `website/`, built in CI and deployed to `meeting-minutes.tech`. No client-side framework is needed; keep JavaScript to the accordion, theme handling, the request email draft and small page interactions.
 - Fonts self-hosted (Be Vietnam Pro, Inter). No third-party scripts, trackers, analytics or font CDNs, matching the app's privacy promise.
 - The latest published Release (version, date, size, installer URL) and the changelog are fetched from the GitHub API at build time, not in the browser.
 - Light and dark follow the system; no theme toggle needed.

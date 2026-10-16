@@ -49,30 +49,20 @@ test('public copy explains when Meeting content goes to cloud providers', async 
   assert.match(policy, /Windows Credential Manager/);
 });
 
-test('privacy page explains current Account sign-in and Managed transcription', async () => {
+test('privacy page explains key requests and key-based Managed transcription', async () => {
   const policy = await readFile(policyPath, 'utf8');
+  assert.match(policy, /Last updated 16 October 2026/);
+  assert.match(policy, /Request a key[\s\S]*?email draft[\s\S]*?no form backend/i);
+  assert.match(policy, /email address and your description of how you will use Managed transcription/i);
+  assert.match(policy, /keys are issued by hand[\s\S]*?do not promise a response or turnaround time/i);
   assert.match(policy, /https:\/\/transcribe\.meeting-minutes\.tech/);
-  assert.match(policy, /verified email address[\s\S]*?six-digit code/i);
-  assert.match(policy, /Signing in alone does not enable Managed transcription/i);
-  assert.match(policy, /Meeting Minutes service[\s\S]*?forwards? (?:the )?audio to Groq/i);
+  assert.match(policy, /sends the Managed key directly with each request and audio spans as FLAC/i);
+  assert.match(policy, /Saving a Managed key is your consent[\s\S]*?no audio is uploaded/i);
+  assert.match(policy, /monthly usage allowance measured in Processed audio minutes/i);
+  assert.match(policy, /Windows Credential Manager[\s\S]*?one Managed key/i);
   assert.match(policy, /Audio is deleted after processing/i);
   assert.match(policy, /transcribed text.{0,100}deleted within 10 minutes/i);
-  assert.match(policy, /Windows Credential Manager[\s\S]*?client ID, refresh token, Account email address and enabled flag/i);
-  assert.match(policy, /Resend[\s\S]*?email address/i);
-  assert.match(policy, /waitlisted[\s\S]*?emailed when admitted/i);
-  assert.match(policy, /Sign out deletes this installation/i);
-  assert.doesNotMatch(policy, /Choosing Disconnect/i);
-});
-
-test('privacy page describes stored Account data, admission order and deletion as current', async () => {
-  const policy = await readFile(policyPath, 'utf8');
-  assert.match(policy, /<h2>Accounts and Managed transcription<\/h2>/);
-  assert.match(policy, /verified email address/i);
-  assert.match(policy, /monthly usage counters?[^.]*Processed audio minutes/i);
-  assert.match(policy, /admitted in order of verification[^.]*capacity lasts/i);
-  assert.match(policy, /Delete account in the app[\s\S]*?This removes your email address, usage history and every installation.s tokens/i);
-  assert.doesNotMatch(policy, /planned: accounts|account registration is planned|will use a verified email/i);
-  assert.doesNotMatch(policy, /invite codes?/i);
+  assert.doesNotMatch(policy, /Sign-in|six-digit code|Delete account|waitlisted|refresh token|admission order/i);
 });
 
 test('privacy page names every URL host in app source and runtime config', async () => {

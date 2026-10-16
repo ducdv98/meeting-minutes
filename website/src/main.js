@@ -61,3 +61,14 @@ if ('IntersectionObserver' in window && !window.matchMedia('(prefers-reduced-mot
     screenshotObserver.observe(screenshot);
   }
 }
+
+const keyRequest = document.getElementById('key-request');
+keyRequest?.addEventListener('submit', event => {
+  event.preventDefault();
+  const email = keyRequest.elements.email.value.trim();
+  const use = keyRequest.elements.use.value.trim();
+  if (!email || !use) { keyRequest.reportValidity(); return; }
+  const subject = encodeURIComponent('Managed key request');
+  const body = encodeURIComponent(`Email: ${email}\n\nHow I will use Managed transcription:\n${use}`);
+  window.location.href = `mailto:admin@meeting-minutes.tech?subject=${subject}&body=${body}`;
+});

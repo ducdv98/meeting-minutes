@@ -1,37 +1,34 @@
 <section class="section pricing-intro"><div class="wrap">
   <h1>Pricing</h1>
-  <p class="lead">Use Meeting Minutes for free with local Processing or your own provider keys. An optional Account adds Managed transcription when you have Managed access.</p>
+  <p class="lead">Use Meeting Minutes for free with local Processing or your own provider keys. Managed transcription is experimental: <a href="/request-a-key/">request a key</a>.</p>
   <div class="pricing-plans">
     <article class="plan-card">
       <h2>Free plan</h2>
       <p class="plan-status">{{FREE_STATUS}}</p>
-      <p>Local Processing and cloud Processing with your own provider keys. No Account needed and no app-imposed usage limit. Your provider may charge separately.</p>
+      <p class="plan-price">$0 forever</p>
+      <p>Local Processing and cloud Processing with your own provider keys have no app-imposed usage limit. Your provider may charge separately.</p>
       <div class="plan-addition">
-        <h3>Optional Account</h3>
-        <p>An Account with Managed access includes {{FREE_CLOUD_MINUTES}} free cloud minutes a month for Managed transcription. Accounts are admitted in order of verification while capacity lasts; later Accounts wait to be admitted.</p>
-        <p>An installation that used Managed transcription before Accounts is admitted when it signs in with an email address.</p>
+        <h3>Experimental Managed transcription</h3>
+        <p>Request a Managed key for access to the Meeting Minutes transcription service. Keys are issued by hand. A key carries a monthly Managed transcription allowance; availability is limited during the experiment.</p>
+        <p><a class="button secondary" href="/request-a-key/">Request a key</a></p>
       </div>
     </article>
     <article class="plan-card">
       <h2>Pro plan</h2>
       <p class="plan-status">Coming soon</p>
-      <p>Pro is planned with a larger Managed transcription allowance.</p>
+      <p>Pro is planned with a larger Managed transcription allowance. It is not available to purchase yet.</p>
       <p><a class="button secondary" href="https://github.com/ducdv98/meeting-minutes/discussions">I'd pay for Pro</a></p>
     </article>
-    <article class="plan-card">
-      <h2>Support the project</h2>
-      <p>Help support the work on Meeting Minutes.</p>
-      <p><a class="button secondary" href="https://github.com/sponsors/ducdv98">GitHub Sponsors</a></p>
-    </article>
   </div>
+  <p class="section-link">Want to support the work? <a class="textlink" href="https://github.com/sponsors/ducdv98">GitHub Sponsors <span aria-hidden="true">→</span></a></p>
 </div></section>
 
 <section class="section alt pricing-details"><div class="wrap">
   <h2>How the allowance works</h2>
   <div class="pricing-copy">
-    <p>The allowance is measured in Processed audio minutes. Each Source counts separately, so a Meeting with Microphone and System audio uses minutes for both. An Import counts as one stream. Re-transcribing the same audio counts again.</p>
-    <p>The Managed transcription allowance resets on the first of each month (UTC), without rollover. It covers transcription only, not Correction, Summary or Ask.</p>
+    <p>Managed transcription usage is measured in Processed audio minutes. Each Source counts separately, so a Meeting with Microphone and System audio uses minutes for both. An Import counts as one stream. Re-transcribing the same audio counts again.</p>
+    <p>The key's allowance resets on the first of each month (UTC), without rollover. It covers transcription only, not Correction, Summary or Ask. The app shows remaining minutes when the service reports them.</p>
     <p>When the allowance runs out or the service is unavailable, the app falls back to your own keys, then local Whisper.</p>
-    <p>Signing in alone does not turn on Managed transcription. You choose to enable it separately before audio is sent to the service.</p>
+    <p>Saving a Managed key in Settings is your consent to send audio to the Meeting Minutes service. No audio is uploaded through Managed transcription before you save a key.</p>
   </div>
 </div></section>
