@@ -55,7 +55,7 @@ The identity of one user, tied to an email address verified by a one-time code a
 _Avoid_: Install, Invite code
 
 **Managed access**:
-Permission for an Account to use Managed transcription. Accounts are admitted automatically in order of verification while service capacity lasts; the rest are **Waitlisted** and told when they are admitted. Registration alone does not grant access or consent to upload audio.
+Permission to use Managed transcription, granted by holding a **Managed key**. During the experimental period the operator issues keys by hand to people who ask; Accounts, automatic admission and the Waitlist are deferred until later.
 
 **Managed transcription allowance**:
 The monthly amount of Managed transcription an Account with Managed access may use at no charge, measured in Processed audio minutes and reset on the first day of each month in UTC without rollover. It covers transcription of audio, not Correction, Summary or Ask.
@@ -77,11 +77,15 @@ The spoken language of a Meeting, one of the app's supported languages, chosen b
 Turning a Meeting's audio into a Transcript, then a Summary and Action items. Processing starts automatically after Stop, in the cloud when the user has connected Managed transcription or set up a provider key, and locally otherwise. One Meeting's Transcript may come partly from each.
 
 **Managed transcription**:
-Cloud transcription run by the Meeting Minutes service, enabled by a user with an Account and Managed access. Enabling it is the user's consent to sending audio to the cloud; signing in alone is not.
+Cloud transcription run by the Meeting Minutes service, experimental for now and enabled by a user who holds a Managed key. Saving the key is the user's consent to sending audio to the cloud, as with a provider key. Its one Speech-to-text model is **mm-transcription-internal**.
 _Avoid_: Gateway, relay, hosted Groq
 
+**Managed key**:
+The key the operator issues, after the user asks for it through the request form on the website, that gives access to Managed transcription. The user pastes it into Settings and it is kept like a provider key. It carries its own monthly Managed transcription allowance.
+_Avoid_: Invite code, license key, token
+
 **Provider**:
-A cloud service or local runtime that runs a model for the app: Managed transcription, Groq, Gemini, OpenAI, Anthropic, Ollama or local Whisper. A cloud Provider other than Managed transcription is used only with the user's own key.
+A cloud service or local runtime that runs a model for the app: Managed transcription, Groq, Gemini, OpenAI, Anthropic, Ollama or local Whisper. A cloud Provider other than Managed transcription is used only with the user's own key; Managed transcription is used only with a Managed key.
 _Avoid_: Vendor, backend, engine
 
 **Speech-to-text model**:
