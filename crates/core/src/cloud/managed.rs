@@ -64,8 +64,29 @@ impl fmt::Display for ManagedToken {
     }
 }
 
+#[derive(Clone, PartialEq, Eq)]
+pub struct ManagedKey(String);
+
+impl ManagedKey {
+    pub fn new(value: impl Into<String>) -> Option<Self> {
+        let value = value.into();
+        (!value.is_empty()).then_some(Self(value))
+    }
+
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Debug for ManagedKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("ManagedKey(***)")
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GatewayErrorCode {
+    InvalidKey,
     InvalidRequest,
     InvalidEmail,
     CodeInvalid,
@@ -93,6 +114,7 @@ pub enum GatewayErrorCode {
 impl GatewayErrorCode {
     fn from_code(code: &str) -> Self {
         match code {
+            "INVALID_KEY" | "KEY_REVOKED" | "REVOKED_KEY" => Self::InvalidKey,
             "INVALID_REQUEST" => Self::InvalidRequest,
             "INVALID_EMAIL" => Self::InvalidEmail,
             "CODE_INVALID" => Self::CodeInvalid,
@@ -494,6 +516,106 @@ impl ManagedCredentialStore for MemoryManagedCredentialStore {
     }
 }
 
+/// A Managed key is stored as one secret, independently of the retired Account credential.
+pub trait ManagedKeyStore: Send + Sync {
+    fn get(&self) -> Result<Option<ManagedKey>, String>;
+    fn set(&self, key: &ManagedKey) -> Result<(), String>;
+    fn delete(&self) -> Result<(), String>;
+}
+
+#[derive(Default)]
+pub struct MemoryManagedKeyStore(Mutex<Option<ManagedKey>>);
+
+impl ManagedKeyStore for MemoryManagedKeyStore {
+    fn get(&self) -> Result<Option<ManagedKey>, String> {
+        self.0
+            .lock()
+            .map(|key| key.clone())
+            .map_err(|error| error.to_string())
+    }
+
+    fn set(&self, key: &ManagedKey) -> Result<(), String> {
+        *self.0.lock().map_err(|error| error.to_string())? = Some(key.clone());
+        Ok(())
+    }
+
+    fn delete(&self) -> Result<(), String> {
+        *self.0.lock().map_err(|error| error.to_string())? = None;
+        Ok(())
+    }
+}
+
+/// Shared by all Managed engines so a rejected key is skipped on later runs.
+pub struct ManagedKeyState {
+    store: Arc<dyn ManagedKeyStore>,
+    status: Mutex<KeyStatus>,
+}
+
+#[derive(Default)]
+struct KeyStatus {
+    observed: Option<ManagedKey>,
+    invalid: bool,
+    remaining_minutes: Option<f64>,
+}
+
+impl ManagedKeyState {
+    pub fn new(store: Arc<dyn ManagedKeyStore>) -> Self {
+        Self {
+            store,
+            status: Mutex::new(KeyStatus::default()),
+        }
+    }
+
+    pub fn key(&self) -> Result<Option<ManagedKey>, EngineError> {
+        let key = self.store.get().map_err(|_| EngineError::Other)?;
+        let mut status = self.status.lock().map_err(|_| EngineError::Other)?;
+        if status.observed != key {
+            status.observed = key.clone();
+            status.invalid = false;
+            status.remaining_minutes = None;
+        }
+        if status.invalid {
+            Err(EngineError::ManagedKeyInvalid)
+        } else {
+            Ok(key)
+        }
+    }
+
+    pub fn is_invalid(&self) -> bool {
+        matches!(self.key(), Err(EngineError::ManagedKeyInvalid))
+    }
+
+    pub fn reject(&self, key: &ManagedKey) {
+        if let Ok(mut status) = self.status.lock() {
+            if status.observed.as_ref() == Some(key) {
+                status.invalid = true;
+                status.remaining_minutes = None;
+            }
+        }
+    }
+
+    pub fn store(&self) -> &dyn ManagedKeyStore {
+        self.store.as_ref()
+    }
+
+    pub fn remaining_minutes(&self) -> Option<f64> {
+        self.status
+            .lock()
+            .ok()
+            .and_then(|status| status.remaining_minutes)
+    }
+
+    fn update_remaining_minutes(&self, key: &ManagedKey, value: Option<f64>) {
+        if let Some(value) = value.filter(|value| value.is_finite() && *value >= 0.0) {
+            if let Ok(mut status) = self.status.lock() {
+                if status.observed.as_ref() == Some(key) && !status.invalid {
+                    status.remaining_minutes = Some(value);
+                }
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ManagedAuthError {
     Disconnected,
@@ -646,7 +768,7 @@ struct DetectedOpening {
 
 pub struct ManagedEngine {
     http: Arc<dyn HttpClient>,
-    tokens: Arc<TokenManager>,
+    keys: Arc<ManagedKeyState>,
     base: String,
     source: Option<Source>,
     boundary: String,
@@ -658,12 +780,12 @@ pub struct ManagedEngine {
 impl ManagedEngine {
     pub fn new(
         http: Arc<dyn HttpClient>,
-        tokens: Arc<TokenManager>,
+        keys: Arc<ManagedKeyState>,
         source: Option<Source>,
     ) -> Self {
         Self::with_boundary(
             http,
-            tokens,
+            keys,
             base_url(),
             source,
             format!("mm-{}", Uuid::new_v4()),
@@ -672,14 +794,14 @@ impl ManagedEngine {
 
     pub fn with_boundary(
         http: Arc<dyn HttpClient>,
-        tokens: Arc<TokenManager>,
+        keys: Arc<ManagedKeyState>,
         base: impl Into<String>,
         source: Option<Source>,
         boundary: impl Into<String>,
     ) -> Self {
         Self {
             http,
-            tokens,
+            keys,
             base: base.into(),
             source,
             boundary: boundary.into(),
@@ -723,7 +845,6 @@ impl ManagedEngine {
             duration_ms,
             language,
         );
-        let mut refreshed = false;
         let mut retry = 0;
         loop {
             if cancel.load(Ordering::SeqCst) {
@@ -732,18 +853,15 @@ impl ManagedEngine {
             if !(self.enabled_check)() {
                 return Err(EngineError::ManagedDisabled);
             }
-            // Asked again before every attempt, so a Disconnect stops the next one.
-            let token = self.tokens.access_token().map_err(|error| {
-                log_failure(auth_code(&error), request_id);
-                auth_error(error)
-            })?;
+            // Read the secret before each attempt so removal or editing takes effect immediately.
+            let key = self.keys.key()?.ok_or(EngineError::ManagedDisabled)?;
             if !(self.enabled_check)() {
                 return Err(EngineError::ManagedDisabled);
             }
             let request = HttpRequest {
                 method: Method::Post,
                 url: format!("{}/v1/transcriptions", self.base.trim_end_matches('/')),
-                headers: vec![("Authorization".into(), format!("Bearer {}", token.expose()))],
+                headers: vec![("Authorization".into(), format!("Bearer {}", key.expose()))],
                 body: Some(HttpBody::Multipart {
                     boundary: self.boundary.clone(),
                     bytes: body.clone(),
@@ -757,6 +875,8 @@ impl ManagedEngine {
                 Ok((200, raw)) => match serde_json::from_slice::<UploadReply>(&raw) {
                     // duration_ms is the gateway's own measurement, so it is not compared.
                     Ok(reply) if reply.request_id == request_id.to_string() => {
+                        self.keys
+                            .update_remaining_minutes(&key, reply.minutes_remaining);
                         return Ok((
                             reply
                                 .segments
@@ -773,17 +893,7 @@ impl ManagedEngine {
                     }
                     _ => UploadFailure::InvalidResponse,
                 },
-                Ok((401, _)) if !refreshed => {
-                    log_failure("UNAUTHORIZED", request_id);
-                    self.tokens.refresh_now().map_err(|error| {
-                        log_failure(auth_code(&error), request_id);
-                        auth_error(error)
-                    })?;
-                    refreshed = true;
-                    // Refresh does not consume a retry or change the piece's request ID.
-                    continue;
-                }
-                Ok((401, _)) => UploadFailure::Unauthorized,
+                Ok((401, _)) => UploadFailure::InvalidKey,
                 Ok((status, raw)) => {
                     let raw = String::from_utf8_lossy(&raw);
                     UploadFailure::Gateway(parse_gateway_error(status, &raw))
@@ -792,6 +902,14 @@ impl ManagedEngine {
                 Err(_) => UploadFailure::Transport,
             };
             log_failure(failure.code(), request_id);
+            if matches!(&failure, UploadFailure::Gateway(error) if error.code == GatewayErrorCode::AllowanceExhausted)
+            {
+                self.keys.update_remaining_minutes(&key, Some(0.0));
+            }
+            if failure.invalid_key() {
+                self.keys.reject(&key);
+                return Err(EngineError::ManagedKeyInvalid);
+            }
             if !failure.retryable() {
                 return Err(failure.engine_error());
             }
@@ -900,6 +1018,8 @@ impl CloudEngine for ManagedEngine {
 struct UploadReply {
     request_id: String,
     language: Option<String>,
+    #[serde(alias = "remaining_minutes")]
+    minutes_remaining: Option<f64>,
     segments: Vec<UploadSegment>,
 }
 
@@ -936,7 +1056,7 @@ fn multipart(
     field("offset_ms", &offset_ms.to_string());
     field("duration_ms", &duration_ms.to_string());
     field("language", language.map_or("auto", Language::code));
-    field("model", "whisper-large-v3");
+    field("model", "mm-transcription-internal");
     body.extend_from_slice(format!("--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"span.flac\"\r\nContent-Type: audio/flac\r\n\r\n").as_bytes());
     body.extend_from_slice(audio);
     body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
@@ -969,13 +1089,14 @@ enum UploadFailure {
     Gateway(GatewayError),
     Transport,
     InvalidResponse,
-    Unauthorized,
+    InvalidKey,
 }
 
 impl UploadFailure {
     fn code(&self) -> &'static str {
         match self {
             Self::Gateway(error) => match error.code {
+                GatewayErrorCode::InvalidKey => "UNAUTHORIZED",
                 GatewayErrorCode::InvalidRequest => "INVALID_REQUEST",
                 GatewayErrorCode::InvalidEmail => "INVALID_EMAIL",
                 GatewayErrorCode::CodeInvalid => "CODE_INVALID",
@@ -1001,14 +1122,14 @@ impl UploadFailure {
             },
             Self::Transport => "TRANSPORT",
             Self::InvalidResponse => "INVALID_RESPONSE",
-            Self::Unauthorized => "UNAUTHORIZED",
+            Self::InvalidKey => "UNAUTHORIZED",
         }
     }
 
     fn retryable(&self) -> bool {
         match self {
             Self::Transport | Self::InvalidResponse => true,
-            Self::Unauthorized => false,
+            Self::InvalidKey => false,
             Self::Gateway(error) => {
                 matches!(
                     error.code,
@@ -1029,9 +1150,14 @@ impl UploadFailure {
         }
     }
 
+    fn invalid_key(&self) -> bool {
+        matches!(self, Self::InvalidKey)
+            || matches!(self, Self::Gateway(error) if matches!(error.code, GatewayErrorCode::InvalidKey | GatewayErrorCode::Unauthorized))
+    }
+
     fn engine_error(&self) -> EngineError {
         match self {
-            Self::Unauthorized => EngineError::Unauthorized,
+            Self::InvalidKey => EngineError::ManagedKeyInvalid,
             // Only no reply at all is Offline: a reply means the network works, so the chain
             // moves on to the next engine instead of pausing.
             Self::Transport => EngineError::Offline,
@@ -1063,27 +1189,13 @@ impl UploadFailure {
                 | GatewayErrorCode::RequestInProgress
                 | GatewayErrorCode::ProviderUnavailable
                 | GatewayErrorCode::TranscriptionTimeout => EngineError::QuotaExhausted,
-                GatewayErrorCode::Unauthorized => EngineError::Unauthorized,
+                GatewayErrorCode::InvalidKey | GatewayErrorCode::Unauthorized => {
+                    EngineError::ManagedKeyInvalid
+                }
                 GatewayErrorCode::Unknown if self.retryable() => EngineError::QuotaExhausted,
                 _ => EngineError::Other,
             },
         }
-    }
-}
-
-fn auth_error(error: ManagedAuthError) -> EngineError {
-    match error {
-        ManagedAuthError::Disconnected => EngineError::Unauthorized,
-        ManagedAuthError::Gateway(error) => UploadFailure::Gateway(error).engine_error(),
-        ManagedAuthError::CredentialStoreUnavailable => EngineError::Other,
-    }
-}
-
-fn auth_code(error: &ManagedAuthError) -> &'static str {
-    match error {
-        ManagedAuthError::Disconnected => "UNAUTHORIZED",
-        ManagedAuthError::Gateway(error) => UploadFailure::Gateway(error.clone()).code(),
-        ManagedAuthError::CredentialStoreUnavailable => "UNKNOWN",
     }
 }
 
