@@ -519,6 +519,40 @@ fn managed_allowance_midway_uses_groq_for_remaining_spans() {
 }
 
 #[test]
+fn invalid_managed_key_falls_through_once_and_is_saved_for_the_run() {
+    let managed = call_log();
+    let groq = call_log();
+    let mut engine = chain(
+        vec![
+            tracking_cloud(
+                "Managed transcription",
+                vec![Err(EngineError::ManagedKeyInvalid)],
+                None,
+                managed.clone(),
+                Arc::new(AtomicUsize::new(0)),
+            ),
+            tracking_cloud(
+                "Groq",
+                vec![],
+                Some(Language::En),
+                groq.clone(),
+                Arc::new(AtomicUsize::new(0)),
+            ),
+        ],
+        Arc::new(AtomicUsize::new(0)),
+    );
+    for _ in 0..3 {
+        run(&mut engine, &[0.1; 16_000]).unwrap();
+    }
+    assert_eq!(managed.lock().unwrap().len(), 1);
+    assert_eq!(groq.lock().unwrap().len(), 3);
+    assert_eq!(
+        engine.chain_report().fallback_reason,
+        Some(FallbackReason::ManagedKeyInvalid)
+    );
+}
+
+#[test]
 fn managed_account_required_and_disabled_use_the_next_provider() {
     for (error, reason) in [
         (

@@ -61,7 +61,7 @@ impl EngineError {
             Self::RateLimited { .. } => "rate_limit",
             Self::QuotaExhausted => "quota",
             Self::ManagedAllowanceExhausted => "allowance_exhausted",
-            Self::ManagedKeyInvalid => "unauthorized",
+            Self::ManagedKeyInvalid => "invalid_key",
             Self::ManagedCapacityExhausted(_) => "capacity_exhausted",
             Self::ManagedWaitlisted => "waitlisted",
             Self::ManagedSuspended => "account_suspended",

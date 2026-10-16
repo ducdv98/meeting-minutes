@@ -110,6 +110,7 @@ fn fallback_for_error(name: &str, error: &EngineError) -> FallbackReason {
     let engine = EngineName::from(name);
     match error {
         EngineError::ManagedAllowanceExhausted => FallbackReason::ManagedAllowance,
+        EngineError::ManagedKeyInvalid => FallbackReason::ManagedKeyInvalid,
         EngineError::ManagedCapacityExhausted(date) => {
             FallbackReason::ManagedCapacity(date.clone())
         }
@@ -484,6 +485,7 @@ impl<'a> EngineChain<'a> {
                             error,
                             EngineError::QuotaExhausted
                                 | EngineError::ManagedAllowanceExhausted
+                                | EngineError::ManagedKeyInvalid
                                 | EngineError::ManagedCapacityExhausted(_)
                                 | EngineError::ManagedWaitlisted
                                 | EngineError::ManagedSuspended
@@ -612,6 +614,7 @@ impl SpeechEngine for EngineChain<'_> {
                         error,
                         EngineError::QuotaExhausted
                             | EngineError::ManagedAllowanceExhausted
+                            | EngineError::ManagedKeyInvalid
                             | EngineError::ManagedCapacityExhausted(_)
                             | EngineError::ManagedWaitlisted
                             | EngineError::ManagedSuspended

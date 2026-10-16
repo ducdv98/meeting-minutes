@@ -42,6 +42,30 @@ fn diagnostics_count_failure_kinds_without_provider_content() {
 }
 
 #[test]
+fn diagnostics_preserves_invalid_managed_key_failure_kind() {
+    let event = LogEvent::engine_failure("Managed transcription", &EngineError::ManagedKeyInvalid);
+    assert_eq!(
+        event.to_string(),
+        "engine_failure engine=managed kind=invalid_key"
+    );
+    let report = build_diagnostics(&DiagnosticsInput {
+        version: "0.1.0".into(),
+        windows_version: "Windows".into(),
+        cpu: "CPU".into(),
+        ram_mb: 1024,
+        audio_devices: Ok(vec![]),
+        selected_model: None,
+        provider: None,
+        whisper_system_info: None,
+        transcription_backend: None,
+        recent_log_lines: vec![format!(
+            "[2026-10-13][10:47:02][meeting_minutes_events][INFO] {event}"
+        )],
+    });
+    assert!(report.contains("engine_failure engine=managed kind=invalid_key"));
+}
+
+#[test]
 fn diagnostics_keeps_cloud_audio_time_and_fallback_without_content() {
     let event = LogEvent::cloud_span(
         "Groq",

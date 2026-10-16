@@ -9,7 +9,7 @@ import { cancelProcessing, dismissProcessing, enqueueTranscription, getSettings,
 import TranscriptView from "./TranscriptView";
 import DraftView from "./DraftView";
 import { editSegment, labelParticipantName, participantList, speakerName } from "./transcript";
-import { aiStatus, managedStatus, type AiStatus, type LanguageModelSettings } from "./ai";
+import { aiStatus, type AiStatus, type LanguageModelSettings } from "./ai";
 import { MEETING_LANGUAGES, meetingLanguageName } from "./languages";
 import ConfirmDelete from "./ConfirmDelete";
 import SummaryPanel from "./SummaryPanel";
@@ -54,12 +54,12 @@ function meetingDateTime(value: string): string {
 
 const draftKey = (segment: DraftSegment) => `${segment.start_ms}:${segment.end_ms}:${segment.speaker}:${segment.text}`;
 
-function fallbackNotice(transcript: Transcript, managedKeyInvalid: boolean): string {
+function fallbackNotice(transcript: Transcript): string {
   const destination = transcript.model.at(-1);
   const processedWith = destination === "Groq" || destination === "Gemini" ? destination : "local Whisper";
   const reason = transcript.fallback_reason;
   const kind = transcript.fallback_kind;
-  if (kind === "managed_key_invalid" || reason === "Managed key is invalid or revoked" || (managedKeyInvalid && reason === "Managed transcription is unavailable")) return `Your Managed key is invalid or revoked. Save a new key in Settings; the rest was transcribed with ${processedWith}.`;
+  if (kind === "managed_key_invalid" || reason === "Managed key is invalid or revoked") return `Your Managed key is invalid or revoked. Save a new key in Settings; the rest was transcribed with ${processedWith}.`;
   if (kind === "managed_allowance" || reason === "Managed allowance exhausted") return `Your free Managed transcription minutes ran out this month; the rest was transcribed with ${processedWith}.`;
   if (kind === "managed_waitlisted" || kind === "managed_suspended" || kind === "managed_account_required" || reason?.startsWith("Managed Account ")) return `Managed transcription is unavailable; the rest was transcribed with ${processedWith}.`;
   if (kind === "managed_disabled" || reason === "Managed transcription turned off") return `Managed transcription was turned off; the rest was transcribed with ${processedWith}.`;
@@ -98,7 +98,6 @@ export default function MeetingView({ id, onBack, onRenamed, onOpenSettings, ope
   const [positionMs, setPositionMs] = useState(0);
   const [highlight, setHighlight] = useState<Citation | null>(null);
   const [transcript, setTranscript] = useState<Transcript | null>(null);
-  const [managedKeyInvalid, setManagedKeyInvalid] = useState(false);
   const [draft, setDraft] = useState<DraftSegment[]>([]);
   const [transcribeOpen, setTranscribeOpen] = useState(false);
   const [job, setJob] = useState<ProcessingJob | null>(null);
@@ -125,14 +124,6 @@ export default function MeetingView({ id, onBack, onRenamed, onOpenSettings, ope
     const row = Array.from(scroll.querySelectorAll<HTMLElement>("[data-segment-start]")).find((item) => Number(item.dataset.segmentStart) === nearest.start_ms);
     if (row) scroll.scrollTop += row.getBoundingClientRect().top - scroll.getBoundingClientRect().top - anchor.offset;
     draftScrollAnchor.current = null;
-  }, [transcript]);
-
-  useEffect(() => {
-    setManagedKeyInvalid(false);
-    if (!transcript?.fallback_reason || !(transcript.model.includes("Managed transcription") || transcript.fallback_reason === "Managed transcription is unavailable")) return;
-    let active = true;
-    managedStatus().then((status) => { if (active) setManagedKeyInvalid(status.revoked); }, () => {});
-    return () => { active = false; };
   }, [transcript]);
 
   useEffect(() => {
@@ -359,7 +350,7 @@ export default function MeetingView({ id, onBack, onRenamed, onOpenSettings, ope
             {transcript && !job && <Button variant="ghost" disabled={recordingMeetingId === id} onClick={() => setTranscribeOpen(true)}><RefreshCw size={16} strokeWidth={1.5} />Transcribe again with…</Button>}
           </div>
           {transcript && !showingDraft && <p className="sr-only">Transcript revision {transcript.revision} · model {transcript.model.join(", ")} · {transcript.segments.length} segments · {meetingLanguageName(transcript.language)}</p>}
-          {transcript?.fallback_reason && !showingDraft && <p role="status" className="mb-3 text-sm text-ink-muted">{fallbackNotice(transcript, managedKeyInvalid)}</p>}
+          {transcript?.fallback_reason && !showingDraft && <p role="status" className="mb-3 text-sm text-ink-muted">{fallbackNotice(transcript)}</p>}
           {transcript && !showingDraft && detail.correction_notice && <p role="status" className="mb-4 text-sm text-ink-muted">{detail.correction_notice}</p>}
           {transcript && !showingDraft && meetingParticipants.length > 0 && <div className="mb-4 grid gap-2 rounded-md border border-line bg-raised p-3"><h3 className="m-0 text-sm font-medium">Participants</h3><datalist id="participant-names">{suggestions.map((name) => <option key={name} value={name} />)}</datalist><div className="flex flex-wrap gap-3">{meetingParticipants.map((name) => { const labels = speakerLabels.filter((label) => labelParticipantName(label, detail.participants, yourName, isVoiceNote) === name); const removable = Object.values(detail.participants).includes(name) || Object.values(detail.segment_participants?.segments ?? {}).includes(name); return <div key={name} className="grid min-w-[130px] flex-1 gap-1 text-xs text-ink-muted"><label>{labels.length ? labels.map(speakerName).join(", ") : name} Participant<Input aria-label={`${labels.length === 1 ? speakerName(labels[0]) : name} Participant`} list="participant-names" value={participantDrafts[name] ?? name} onChange={(event) => setParticipantDrafts((current) => ({ ...current, [name]: event.target.value }))} onBlur={() => void saveParticipant(name)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); event.currentTarget.blur(); } }} /></label>{labels.length > 0 && <span className="text-ink-faint">Speaker labels: {labels.map(speakerName).join(", ")}</span>}{removable && <Button variant="ghost" className="justify-self-start px-0 text-xs" onClick={() => void removeName(name)}>Remove {name}</Button>}</div>; })}</div></div>}
           {job && job.stage !== "failed" && <div role="status" className="mb-4"><LoadingRows rows={2} /><p className="text-sm text-ink-muted">{processingStageLabel(job)}</p>{job.stage !== "queued" && <div role="progressbar" aria-label={processingStageLabel(job)} aria-valuenow={Math.round(job.progress * 100)} aria-valuemin={0} aria-valuemax={100} className="mt-2 h-1.5 max-w-md rounded-sm bg-page-shadow"><div className="h-full rounded-sm bg-accent" style={{ width: `${Math.round(job.progress * 100)}%` }} /></div>}<Button variant="ghost" className="mt-2" onClick={() => void cancelJob()}>Cancel processing</Button></div>}

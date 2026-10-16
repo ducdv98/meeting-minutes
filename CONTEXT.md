@@ -1,6 +1,6 @@
 # Meeting Minutes
 
-A single-user, local-first Windows app that records calls from any meeting app, turns them into timed transcripts, and answers cited questions about one meeting at a time. An optional Account gives access to Managed transcription; Meetings remain local, without sharing or sync.
+A single-user, local-first Windows app that records calls from any meeting app, turns them into timed transcripts, and answers cited questions about one meeting at a time. A Managed key gives access to experimental Managed transcription; Meetings remain local, without sharing or sync.
 
 ## Language
 
@@ -47,18 +47,18 @@ The reminder that other participants may need to consent to being recorded, plus
 ### Access
 
 **Free plan**:
-The permanent app offering, with no app-imposed usage limit on local Processing or cloud Processing through the user's own provider keys. An Account is optional and adds a limited Managed transcription allowance after admission.
+The permanent app offering, with no app-imposed usage limit on local Processing or cloud Processing through the user's own provider keys. It does not require an Account; a Managed key carries its own limited Managed transcription allowance.
 _Avoid_: Free tier, Registered tier
 
 **Account**:
-The identity of one user, tied to an email address verified by a one-time code and shared across their installations, required to use free or paid Managed transcription. The user can delete it from the app.
+The planned identity of one user across installations. Accounts are deferred while Managed transcription is experimental and do not grant Managed access during this period.
 _Avoid_: Install, Invite code
 
 **Managed access**:
 Permission to use Managed transcription, granted by holding a **Managed key**. During the experimental period the operator issues keys by hand to people who ask; Accounts, automatic admission and the Waitlist are deferred until later.
 
 **Managed transcription allowance**:
-The monthly amount of Managed transcription an Account with Managed access may use at no charge, measured in Processed audio minutes and reset on the first day of each month in UTC without rollover. It covers transcription of audio, not Correction, Summary or Ask.
+The monthly amount of Managed transcription a Managed key may use at no charge, measured in Processed audio minutes and reset on the first day of each month in UTC without rollover. It covers transcription of audio, not Correction, Summary or Ask.
 _Avoid_: Gateway quota, cloud credits
 
 **Processed audio minute**:
@@ -101,7 +101,7 @@ The fixed order of Providers that Processing tries for transcription, each with 
 _Avoid_: Engine chain, fallback chain
 
 **Invite code**:
-A one-time code from the operator that connected one install of the app to experimental Managed transcription before Accounts. Retired in 1.0; its holders register an Account and are admitted first.
+A one-time code from the operator that formerly connected one install of the app to experimental Managed transcription. Retired in 1.0 in favor of Managed keys.
 _Avoid_: License key, account, token
 
 **Transcript**:

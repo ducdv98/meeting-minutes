@@ -58,6 +58,7 @@ test('privacy page explains key requests and key-based Managed transcription', a
   assert.match(policy, /https:\/\/transcribe\.meeting-minutes\.tech/);
   assert.match(policy, /sends the Managed key directly with each request and audio spans as FLAC/i);
   assert.match(policy, /Saving a Managed key is your consent[\s\S]*?no audio is uploaded/i);
+  assert.match(policy, /Managed cloud privacy notice beside the key field[\s\S]*?one-time cloud notice when you save your first Groq, Gemini, OpenAI or Anthropic key/i);
   assert.match(policy, /monthly usage allowance measured in Processed audio minutes/i);
   assert.match(policy, /Windows Credential Manager[\s\S]*?one Managed key/i);
   assert.match(policy, /Audio is deleted after processing/i);

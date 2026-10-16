@@ -654,6 +654,7 @@ fn managed_engine_name_and_fallback_round_trip_with_old_transcripts() {
     );
     for reason in [
         FallbackReason::ManagedAllowance,
+        FallbackReason::ManagedKeyInvalid,
         FallbackReason::ManagedCapacity("2026-11-01".into()),
         FallbackReason::ManagedWaitlisted,
         FallbackReason::ManagedSuspended,
@@ -666,6 +667,10 @@ fn managed_engine_name_and_fallback_round_trip_with_old_transcripts() {
             reason
         );
     }
+    assert_eq!(
+        FallbackReason::ManagedKeyInvalid.kind(),
+        "managed_key_invalid"
+    );
     assert_eq!(
         FallbackReason::ManagedAccountRequired.kind(),
         "managed_account_required"

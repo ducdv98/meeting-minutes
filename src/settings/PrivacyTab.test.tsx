@@ -66,6 +66,7 @@ it("refreshes Managed status on each visit and uses the shared disclosure text",
   fireEvent.click(within(managed).getByRole("button", { name: "Details" }));
   expect(within(managed).getByText(MANAGED_PRIVACY_STATEMENT)).toBeTruthy();
   expect(MANAGED_PRIVACY_STATEMENT).toContain("deleted within 10 minutes");
+  expect(MANAGED_PRIVACY_STATEMENT).toContain("never audio, transcript text or Managed keys");
   const groq = screen.getByRole("region", { name: "Groq" });
   fireEvent.click(within(groq).getByRole("button", { name: "Details" }));
   expect(within(groq).getByText(PRIVACY_DESTINATIONS.groq.details)).toBeTruthy();

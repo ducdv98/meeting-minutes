@@ -8,7 +8,8 @@ export type Speaker = "me" | "remote" | "unknown";
 export interface Segment { id: string; start_ms: number; end_ms: number; text: string; speaker: Speaker }
 export type DraftSegment = Omit<Segment, "id">;
 export interface TranscriptDraftEvent { meeting_id: string; segments: DraftSegment[] }
-export interface Transcript { schema_version: number; revision: number; created_at: string; model: string[]; fallback_reason?: string | null; fallback_kind?: string | null; fallback_reset_date?: string | null; language: Language; language_detected: boolean; duration_ms: number; segments: Segment[] }
+export type FallbackKind = "managed_allowance" | "managed_key_invalid" | "managed_capacity" | "managed_waitlisted" | "managed_suspended" | "managed_account_required" | "managed_disabled" | "quota" | "unauthorized" | "offline" | "rate_limit" | "other" | "legacy";
+export interface Transcript { schema_version: number; revision: number; created_at: string; model: string[]; fallback_reason?: string | null; fallback_kind?: FallbackKind | null; fallback_reset_date?: string | null; language: Language; language_detected: boolean; duration_ms: number; segments: Segment[] }
 export interface ProcessingJob { meeting_id: string; model: string | null; stage: "queued" | "downloading" | "transcribing" | "failed"; progress: number; error: string | null }
 export interface ProcessingStatus { jobs: ProcessingJob[] }
 export function processingStageLabel(job: ProcessingJob): string {

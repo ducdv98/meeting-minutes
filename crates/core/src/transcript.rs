@@ -54,6 +54,7 @@ impl<'de> Deserialize<'de> for EngineName {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FallbackReason {
     ManagedAllowance,
+    ManagedKeyInvalid,
     ManagedCapacity(String),
     ManagedWaitlisted,
     ManagedSuspended,
@@ -70,6 +71,7 @@ impl FallbackReason {
     pub fn kind(&self) -> &'static str {
         match self {
             Self::ManagedAllowance => "managed_allowance",
+            Self::ManagedKeyInvalid => "managed_key_invalid",
             Self::ManagedCapacity(_) => "managed_capacity",
             Self::ManagedWaitlisted => "managed_waitlisted",
             Self::ManagedSuspended => "managed_suspended",
@@ -94,6 +96,9 @@ impl FallbackReason {
     fn from_saved(value: String) -> Self {
         if value == "Managed allowance exhausted" {
             return Self::ManagedAllowance;
+        }
+        if value == "Managed key is invalid or revoked" {
+            return Self::ManagedKeyInvalid;
         }
         if value == "Managed Account waitlisted" {
             return Self::ManagedWaitlisted;
@@ -146,6 +151,7 @@ impl fmt::Display for FallbackReason {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::ManagedAllowance => f.write_str("Managed allowance exhausted"),
+            Self::ManagedKeyInvalid => f.write_str("Managed key is invalid or revoked"),
             Self::ManagedCapacity(date) => write!(f, "Managed capacity exhausted until {date}"),
             Self::ManagedWaitlisted => f.write_str("Managed Account waitlisted"),
             Self::ManagedSuspended => f.write_str("Managed Account suspended"),

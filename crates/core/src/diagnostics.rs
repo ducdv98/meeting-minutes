@@ -585,6 +585,7 @@ fn parse_failure_kind(event: &str) -> bool {
             "rate_limit"
                 | "quota"
                 | "unauthorized"
+                | "invalid_key"
                 | "offline"
                 | "cancelled"
                 | "invalid_response"

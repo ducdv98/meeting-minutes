@@ -948,7 +948,7 @@ async fn managed_remove_key(app: AppHandle) -> Result<ManagedStatus, String> {
     .map_err(|error| error.to_string())?
 }
 
-// Keep the existing command names available until the Settings UI switches to the key field.
+// Keep these command names available for older callers while Account access is deferred.
 #[tauri::command]
 async fn managed_disconnect(app: AppHandle) -> Result<ManagedStatus, String> {
     managed_remove_key(app).await
