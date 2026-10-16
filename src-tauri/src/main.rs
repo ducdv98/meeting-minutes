@@ -12,8 +12,6 @@ use std::{
     time::Duration,
 };
 
-#[cfg(windows)]
-use meeting_minutes_core::cloud::managed::ManagedToken;
 use meeting_minutes_core::{
     ai::{
         self, AiStatus, ApiKey, GenerateRequest, HttpClient, Message, ProviderKind, Role,
@@ -25,10 +23,7 @@ use meeting_minutes_core::{
     cloud::{
         gemini::GeminiEngine,
         groq::GroqEngine,
-        managed::{
-            self, GatewayErrorCode, ManagedCredential, ManagedCredentialStore, ManagedEngine,
-            TokenManager,
-        },
+        managed::{self, ManagedEngine, ManagedKey, ManagedKeyState, ManagedKeyStore},
         CloudEngine,
     },
     diagnostics::{build_diagnostics, log_event, DiagnosticsInput, LogEvent},
@@ -135,9 +130,7 @@ struct UpdateStartGate(Mutex<()>);
 struct Secrets(Box<dyn SecretStore>);
 struct Http(Arc<dyn HttpClient>);
 struct Managed {
-    tokens: Arc<TokenManager>,
-    store: Arc<dyn ManagedCredentialStore>,
-    base: String,
+    keys: Arc<ManagedKeyState>,
 }
 
 #[derive(serde::Serialize)]
@@ -261,6 +254,10 @@ impl KeyringStore {
         };
         keyring::Entry::new("Meeting Minutes", user).map_err(|error| error.to_string())
     }
+
+    fn managed_entry() -> Result<keyring::Entry, String> {
+        keyring::Entry::new("Meeting Minutes", "managed-key").map_err(|error| error.to_string())
+    }
 }
 #[cfg(windows)]
 impl SecretStore for KeyringStore {
@@ -288,53 +285,23 @@ impl SecretStore for KeyringStore {
 }
 
 #[cfg(windows)]
-struct KeyringManagedStore;
-#[cfg(windows)]
-impl KeyringManagedStore {
-    /// One entry holds both values, so a failed write never leaves a mismatched pair.
-    fn entry() -> Result<keyring::Entry, String> {
-        keyring::Entry::new("Meeting Minutes", "managed-credential")
-            .map_err(|error| error.to_string())
-    }
-}
-#[cfg(windows)]
-impl ManagedCredentialStore for KeyringManagedStore {
-    fn get(&self) -> Result<Option<ManagedCredential>, String> {
-        let raw = match Self::entry()?.get_password() {
-            Ok(raw) => raw,
-            Err(keyring::Error::NoEntry) => return Ok(None),
-            Err(error) => return Err(error.to_string()),
-        };
-        let value: serde_json::Value = match serde_json::from_str(&raw) {
-            Ok(value) => value,
-            Err(_) => return Ok(None),
-        };
-        let client_id = value["client_id"].as_str().filter(|id| !id.is_empty());
-        let refresh_token = value["refresh_token"].as_str().and_then(ManagedToken::new);
-        Ok(client_id
-            .zip(refresh_token)
-            .map(|(client_id, refresh_token)| ManagedCredential {
-                client_id: client_id.to_owned(),
-                refresh_token,
-                email: value["email"].as_str().map(str::to_owned),
-                enabled: value["enabled"].as_bool().unwrap_or(true),
-            }))
+impl ManagedKeyStore for KeyringStore {
+    fn get(&self) -> Result<Option<ManagedKey>, String> {
+        match Self::managed_entry()?.get_password() {
+            Ok(key) => Ok(ManagedKey::new(key)),
+            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(error) => Err(error.to_string()),
+        }
     }
 
-    fn set(&self, credential: &ManagedCredential) -> Result<(), String> {
-        let value = serde_json::json!({
-            "client_id": credential.client_id,
-            "refresh_token": credential.refresh_token.expose(),
-            "email": credential.email,
-            "enabled": credential.enabled,
-        });
-        Self::entry()?
-            .set_password(&value.to_string())
+    fn set(&self, key: &ManagedKey) -> Result<(), String> {
+        Self::managed_entry()?
+            .set_password(key.expose())
             .map_err(|error| error.to_string())
     }
 
     fn delete(&self) -> Result<(), String> {
-        match Self::entry()?.delete_credential() {
+        match Self::managed_entry()?.delete_credential() {
             Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
             Err(error) => Err(error.to_string()),
         }
@@ -648,8 +615,7 @@ fn transcribe_meeting(
                     .is_some()
         } else if name == "managed" {
             let managed = app.state::<Managed>();
-            !managed.tokens.is_disconnected()
-                && matches!(managed.store.get(), Ok(Some(credential)) if credential.enabled)
+            matches!(managed.keys.store().get(), Ok(Some(_)))
         } else {
             MODELS.iter().any(|candidate| candidate.name == name)
         };
@@ -940,19 +906,17 @@ struct ManagedStatus {
     revoked: bool,
     email: Option<String>,
     enabled: bool,
+    remaining_minutes: Option<f64>,
 }
 
 fn current_managed_status(managed: &Managed) -> Result<ManagedStatus, String> {
-    let credential = managed.store.get()?;
+    let connected = managed.keys.store().get()?.is_some();
     Ok(ManagedStatus {
-        connected: credential.is_some(),
-        revoked: managed.tokens.is_disconnected(),
-        email: credential
-            .as_ref()
-            .and_then(|credential| credential.email.clone()),
-        enabled: credential
-            .as_ref()
-            .is_some_and(|credential| credential.enabled),
+        connected,
+        revoked: managed.keys.is_invalid(),
+        email: None,
+        enabled: connected,
+        remaining_minutes: managed.keys.remaining_minutes(),
     })
 }
 
@@ -961,158 +925,66 @@ fn managed_status(managed: State<'_, Managed>) -> Result<ManagedStatus, String> 
     current_managed_status(&managed)
 }
 
-fn account_error(error: managed::GatewayError) -> String {
-    match error.code {
-        GatewayErrorCode::InvalidEmail => "Enter a valid email address.".into(),
-        GatewayErrorCode::CodeInvalid => {
-            "That code is incorrect. Check the six digits and try again.".into()
-        }
-        GatewayErrorCode::CodeExpired => "That code has expired. Request a new code.".into(),
-        GatewayErrorCode::TooManyAttempts => "Too many attempts. Request a new code.".into(),
-        GatewayErrorCode::EmailUnavailable => {
-            "Email is temporarily unavailable. Try sending a code again later.".into()
-        }
-        GatewayErrorCode::RateLimited => format!(
-            "Too many requests. Wait {} seconds and try again.",
-            error
-                .retry_after
-                .map(|wait| wait.as_millis().div_ceil(1000).max(1))
-                .unwrap_or(60)
-        ),
-        GatewayErrorCode::NoAccount => {
-            "This connection has no Account. Sign in with an email address first.".into()
-        }
-        GatewayErrorCode::Unauthorized => "Your sign-in expired. Sign in again.".into(),
-        GatewayErrorCode::AccountSuspended => "Your Account is suspended.".into(),
-        _ if error.retryable || error.status.is_none() => {
-            "Could not reach the Account service. Check your connection and try again.".into()
-        }
-        _ => "The Account request failed. Try again.".into(),
-    }
-}
-
 #[tauri::command]
-async fn managed_account(app: AppHandle) -> Result<managed::AccountStatus, String> {
+async fn managed_save_key(app: AppHandle, key: String) -> Result<ManagedStatus, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        let key = ManagedKey::new(key.trim()).ok_or("Enter a Managed key.")?;
         let managed = app.state::<Managed>();
-        let http = app.state::<Http>();
-        let token = managed.tokens.access_token().map_err(|error| match error {
-            managed::ManagedAuthError::Gateway(error) => account_error(error),
-            _ => "Your sign-in expired. Sign in again.".to_owned(),
-        })?;
-        managed::get_account(http.0.as_ref(), &managed.base, &token).map_err(account_error)
-    })
-    .await
-    .map_err(|error| error.to_string())?
-}
-
-#[tauri::command]
-async fn managed_send_code(app: AppHandle, email: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let email = email.trim();
-        if email.is_empty() {
-            return Err("Enter a valid email address.".into());
-        }
-        let managed = app.state::<Managed>();
-        let http = app.state::<Http>();
-        managed::request_code(http.0.as_ref(), &managed.base, email).map_err(account_error)
-    })
-    .await
-    .map_err(|error| error.to_string())?
-}
-
-#[tauri::command]
-async fn managed_sign_in(
-    app: AppHandle,
-    email: String,
-    code: String,
-) -> Result<ManagedStatus, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let email = email.trim().to_lowercase();
-        if email.is_empty() {
-            return Err("Enter a valid email address.".into());
-        }
-        if code.len() != 6 || !code.bytes().all(|digit| digit.is_ascii_digit()) {
-            return Err("Enter the six-digit code from your email.".into());
-        }
-        let managed = app.state::<Managed>();
-        let http = app.state::<Http>();
-        managed::sign_in(
-            http.0.as_ref(),
-            &managed.base,
-            managed.store.as_ref(),
-            managed.tokens.as_ref(),
-            &email,
-            &code,
-        )
-        .map_err(|error| match error {
-            managed::SignInError::Gateway(error) => account_error(error),
-            managed::SignInError::Store(_) => "Could not save your Account sign-in.".to_owned(),
-        })?;
+        managed.keys.store().set(&key)?;
         current_managed_status(&managed)
     })
     .await
     .map_err(|error| error.to_string())?
 }
 
-/// Runs off the UI thread: resetting the tokens waits for any refresh in flight.
+#[tauri::command]
+async fn managed_remove_key(app: AppHandle) -> Result<ManagedStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let managed = app.state::<Managed>();
+        managed.keys.store().delete()?;
+        current_managed_status(&managed)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+// Keep the existing command names available until the Settings UI switches to the key field.
 #[tauri::command]
 async fn managed_disconnect(app: AppHandle) -> Result<ManagedStatus, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let managed = app.state::<Managed>();
-        managed
-            .store
-            .delete()
-            .map_err(|_| "Could not sign out of your Account.".to_owned())?;
-        managed.tokens.reset();
-        current_managed_status(&managed)
-    })
-    .await
-    .map_err(|error| error.to_string())?
+    managed_remove_key(app).await
 }
 
 #[tauri::command]
 async fn managed_set_enabled(app: AppHandle, enabled: bool) -> Result<ManagedStatus, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let managed = app.state::<Managed>();
-        let mut credential = managed
-            .store
-            .get()?
-            .ok_or("Sign in before enabling Managed transcription.")?;
-        credential.enabled = enabled;
-        managed.store.set(&credential)?;
-        current_managed_status(&managed)
-    })
-    .await
-    .map_err(|error| error.to_string())?
+    let managed = app.state::<Managed>();
+    if enabled && managed.keys.store().get()?.is_none() {
+        return Err("Save a Managed key first.".into());
+    }
+    current_managed_status(&managed)
 }
 
 #[tauri::command]
-async fn managed_delete_account(app: AppHandle) -> Result<ManagedStatus, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let managed = app.state::<Managed>();
-        if managed
-            .store
-            .get()?
-            .and_then(|credential| credential.email)
-            .is_none()
-        {
-            return Err("Sign in to an Account before deleting it.".into());
-        }
-        let token = managed.tokens.access_token().map_err(|error| match error {
-            managed::ManagedAuthError::Gateway(error) => account_error(error),
-            _ => "Could not access your Account. Sign in again or check your connection.".into(),
-        })?;
-        let http = app.state::<Http>();
-        managed::delete_account(http.0.as_ref(), &managed.base, &token).map_err(account_error)?;
-        managed.store.delete().map_err(|_| {
-            "Account deleted, but local sign-out failed. Use Sign out to clear this PC.".to_owned()
-        })?;
-        managed.tokens.reset();
-        current_managed_status(&managed)
-    })
-    .await
-    .map_err(|error| error.to_string())?
+async fn managed_account(_app: AppHandle) -> Result<managed::AccountStatus, String> {
+    Err("Account access is deferred. Save a Managed key instead.".into())
+}
+
+#[tauri::command]
+async fn managed_send_code(_app: AppHandle, _email: String) -> Result<(), String> {
+    Err("Account sign-in is deferred. Save a Managed key instead.".into())
+}
+
+#[tauri::command]
+async fn managed_sign_in(
+    _app: AppHandle,
+    _email: String,
+    _code: String,
+) -> Result<ManagedStatus, String> {
+    Err("Account sign-in is deferred. Save a Managed key instead.".into())
+}
+
+#[tauri::command]
+async fn managed_delete_account(_app: AppHandle) -> Result<ManagedStatus, String> {
+    Err("Account deletion is deferred while Accounts are unavailable.".into())
 }
 
 #[tauri::command]
@@ -1850,13 +1722,9 @@ fn transcription_chain<'a>(
     let managed = app.state::<Managed>();
     let make_managed = || {
         let mut engine =
-            ManagedEngine::new(app.state::<Http>().0.clone(), managed.tokens.clone(), None);
-        let store = managed.store.clone();
-        let tokens = managed.tokens.clone();
-        engine.set_enabled_check(move || {
-            !tokens.is_disconnected()
-                && matches!(store.get(), Ok(Some(credential)) if credential.enabled)
-        });
+            ManagedEngine::new(app.state::<Http>().0.clone(), managed.keys.clone(), None);
+        let keys = managed.keys.clone();
+        engine.set_enabled_check(move || matches!(keys.store().get(), Ok(Some(_))));
         Box::new(engine) as Box<dyn CloudEngine>
     };
     if let Some(chosen) = chosen {
@@ -1900,9 +1768,7 @@ fn transcription_chain<'a>(
             None => Ok(processing::EngineChain::new(vec![], model, local)),
         };
     }
-    if !managed.tokens.is_disconnected()
-        && matches!(managed.store.get(), Ok(Some(credential)) if credential.enabled)
-    {
+    if matches!(managed.keys.store().get(), Ok(Some(_))) {
         cloud.push(make_managed());
     }
     // A saved key is the user's choice of cloud transcription (ADR 0011).
@@ -1985,8 +1851,7 @@ fn with_cloud_vad<'a>(
 /// local Whisper can run on a discrete GPU. The cache remains in memory until Stop.
 fn start_background(app: &AppHandle) {
     let managed = app.state::<Managed>();
-    let has_cloud_engine = (!managed.tokens.is_disconnected()
-        && matches!(managed.store.get(), Ok(Some(credential)) if credential.enabled))
+    let has_cloud_engine = matches!(managed.keys.key(), Ok(Some(_)))
         || matches!(
             app.state::<Secrets>().0.get(ProviderKind::Groq),
             Ok(Some(_))
@@ -3372,19 +3237,12 @@ fn main() {
             app.manage(Secrets(Box::new(ai::MemorySecretStore::default())));
             let http: Arc<dyn HttpClient> = Arc::new(UreqClient);
             #[cfg(windows)]
-            let managed_store: Arc<dyn ManagedCredentialStore> = Arc::new(KeyringManagedStore);
+            let managed_store: Arc<dyn ManagedKeyStore> = Arc::new(KeyringStore);
             #[cfg(not(windows))]
-            let managed_store: Arc<dyn ManagedCredentialStore> =
-                Arc::new(managed::MemoryManagedCredentialStore::default());
-            let base = managed::base_url();
+            let managed_store: Arc<dyn ManagedKeyStore> =
+                Arc::new(managed::MemoryManagedKeyStore::default());
             app.manage(Managed {
-                tokens: Arc::new(TokenManager::new(
-                    http.clone(),
-                    managed_store.clone(),
-                    base.clone(),
-                )),
-                store: managed_store,
-                base,
+                keys: Arc::new(ManagedKeyState::new(managed_store)),
             });
             app.manage(Http(http));
             app.manage(Mutex::new(AiJobsInner::default()));
@@ -3566,6 +3424,8 @@ fn main() {
             delete_model_download,
             ai_status,
             managed_status,
+            managed_save_key,
+            managed_remove_key,
             managed_account,
             managed_send_code,
             managed_sign_in,

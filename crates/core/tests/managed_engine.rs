@@ -3,8 +3,7 @@ use meeting_minutes_core::{
     capture::Source,
     cloud::{
         managed::{
-            ManagedCredential, ManagedCredentialStore, ManagedEngine, ManagedToken,
-            MemoryManagedCredentialStore, TokenManager,
+            ManagedEngine, ManagedKey, ManagedKeyState, ManagedKeyStore, MemoryManagedKeyStore,
         },
         CloudEngine, EngineError,
     },
@@ -36,6 +35,7 @@ struct Upload {
 enum Reply {
     Ok,
     Language(&'static str),
+    Remaining(f64),
     Empty,
     Error(u16, &'static str),
     Transport,
@@ -44,26 +44,18 @@ enum Reply {
 struct FakeHttp {
     uploads: Mutex<Vec<Upload>>,
     replies: Mutex<VecDeque<Reply>>,
-    refreshes: Mutex<usize>,
-    refresh_denied: bool,
 }
 
 impl FakeHttp {
-    fn new(replies: impl IntoIterator<Item = Reply>, refresh_denied: bool) -> Arc<Self> {
+    fn new(replies: impl IntoIterator<Item = Reply>, _refresh_denied: bool) -> Arc<Self> {
         Arc::new(Self {
             uploads: Mutex::new(Vec::new()),
             replies: Mutex::new(replies.into_iter().collect()),
-            refreshes: Mutex::new(0),
-            refresh_denied,
         })
     }
 
     fn uploads(&self) -> Vec<Upload> {
         self.uploads.lock().unwrap().clone()
-    }
-
-    fn refresh_count(&self) -> usize {
-        *self.refreshes.lock().unwrap()
     }
 }
 
@@ -78,21 +70,6 @@ fn response(status: u16, body: String) -> Result<HttpResponse, AiError> {
 impl HttpClient for FakeHttp {
     fn send(&self, request: HttpRequest) -> Result<HttpResponse, AiError> {
         assert!(matches!(request.method, Method::Post));
-        if request.url.ends_with("/v1/auth/refresh") {
-            let mut refreshes = self.refreshes.lock().unwrap();
-            *refreshes += 1;
-            return if self.refresh_denied && *refreshes > 1 {
-                response(
-                    401,
-                    r#"{"error":{"code":"UNAUTHORIZED","retryable":false}}"#.into(),
-                )
-            } else {
-                response(
-                    200,
-                    json!({"access_token":format!("access-{refreshes}"),"token_type":"Bearer","expires_in":3600}).to_string(),
-                )
-            };
-        }
         assert!(request.url.ends_with("/v1/transcriptions"));
         let auth = request
             .headers
@@ -144,7 +121,7 @@ impl HttpClient for FakeHttp {
             .pop_front()
             .unwrap_or(Reply::Ok)
         {
-            reply @ (Reply::Ok | Reply::Empty | Reply::Language(_)) => {
+            reply @ (Reply::Ok | Reply::Empty | Reply::Language(_) | Reply::Remaining(_)) => {
                 let offset: u64 = upload.fields["offset_ms"].parse().unwrap();
                 let duration: u64 = upload.fields["duration_ms"].parse().unwrap();
                 let segments = if matches!(reply, Reply::Empty) {
@@ -155,13 +132,16 @@ impl HttpClient for FakeHttp {
                 let mut body = json!({
                     "request_id": upload.fields["request_id"],
                     "status": "completed",
-                    "model": "whisper-large-v3",
+                    "model": "mm-transcription-internal",
                     "duration_ms": duration + 37,
                     "source": upload.fields["source"],
                     "segments": segments
                 });
                 if let Reply::Language(language) = reply {
                     body["language"] = json!(language);
+                }
+                if let Reply::Remaining(minutes) = reply {
+                    body["minutes_remaining"] = json!(minutes);
                 }
                 response(200, body.to_string())
             }
@@ -172,23 +152,13 @@ impl HttpClient for FakeHttp {
 }
 
 fn engine(http: Arc<FakeHttp>, source: Option<Source>) -> ManagedEngine {
-    let store = Arc::new(MemoryManagedCredentialStore::default());
+    let store = Arc::new(MemoryManagedKeyStore::default());
     store
-        .set(&ManagedCredential {
-            client_id: "client".into(),
-            refresh_token: ManagedToken::new("refresh-secret").unwrap(),
-            email: None,
-            enabled: true,
-        })
+        .set(&ManagedKey::new("managed-secret").unwrap())
         .unwrap();
-    let tokens = Arc::new(TokenManager::new(
-        http.clone(),
-        store,
-        "https://gateway.test",
-    ));
     ManagedEngine::with_boundary(
         http,
-        tokens,
+        Arc::new(ManagedKeyState::new(store)),
         "https://gateway.test",
         source,
         "test-boundary",
@@ -332,7 +302,7 @@ fn queued_managed_work_checks_consent_before_its_first_upload() {
 }
 
 #[test]
-fn disabling_during_token_refresh_stops_the_upload() {
+fn disabling_during_key_read_stops_the_upload() {
     let http = FakeHttp::new([], false);
     let checks = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let mut engine = engine(http.clone(), None);
@@ -390,7 +360,7 @@ fn seven_minutes_becomes_three_bounded_pieces_with_span_relative_segments() {
         assert_eq!(upload.fields["language"], "vi");
         assert_eq!(upload.fields["source"], "microphone");
         assert!(upload.file_is_flac);
-        assert_eq!(upload.auth, "Bearer access-1");
+        assert_eq!(upload.auth, "Bearer managed-secret");
         assert_eq!(
             Uuid::parse_str(&upload.fields["request_id"])
                 .unwrap()
@@ -430,7 +400,7 @@ fn multipart_has_exactly_the_gateway_fields_and_unknown_source() {
     );
     assert_eq!(upload.fields["source"], "unknown");
     assert_eq!(upload.fields["language"], "en");
-    assert_eq!(upload.fields["model"], "whisper-large-v3");
+    assert_eq!(upload.fields["model"], "mm-transcription-internal");
     assert_eq!(upload.fields["duration_ms"], "10");
     assert_eq!(upload.fields["offset_ms"], "0");
 }
@@ -443,29 +413,79 @@ fn empty_segments_are_success() {
 }
 
 #[test]
-fn upload_401_refreshes_and_retries_with_same_id_and_bytes() {
+fn invalid_key_is_not_retried_and_is_skipped_until_it_changes() {
     let http = FakeHttp::new([Reply::Error(401, "{}"), Reply::Ok], false);
-    transcribe(&mut engine(http.clone(), Some(Source::SystemAudio))).unwrap();
-    let uploads = http.uploads();
-    assert_eq!(http.refresh_count(), 2);
-    assert_eq!(uploads.len(), 2);
-    assert_eq!(
-        uploads[0].fields["request_id"],
-        uploads[1].fields["request_id"]
+    let store = Arc::new(MemoryManagedKeyStore::default());
+    store.set(&ManagedKey::new("first-key").unwrap()).unwrap();
+    let keys = Arc::new(ManagedKeyState::new(store.clone()));
+    let mut first = ManagedEngine::with_boundary(
+        http.clone(),
+        keys.clone(),
+        "https://gateway.test",
+        None,
+        "boundary",
     );
-    assert_eq!(uploads[0].bytes, uploads[1].bytes);
-    assert_eq!(uploads[0].auth, "Bearer access-1");
-    assert_eq!(uploads[1].auth, "Bearer access-2");
+    assert_eq!(
+        transcribe(&mut first).unwrap_err(),
+        EngineError::ManagedKeyInvalid
+    );
+    assert!(keys.is_invalid());
+    assert_eq!(http.uploads().len(), 1);
+    let mut later = ManagedEngine::with_boundary(
+        http.clone(),
+        keys.clone(),
+        "https://gateway.test",
+        None,
+        "boundary",
+    );
+    assert_eq!(
+        transcribe(&mut later).unwrap_err(),
+        EngineError::ManagedKeyInvalid
+    );
+    assert_eq!(http.uploads().len(), 1);
+    store.set(&ManagedKey::new("edited-key").unwrap()).unwrap();
+    assert!(!keys.is_invalid());
+    transcribe(&mut later).unwrap();
+    assert_eq!(http.uploads().len(), 2);
+    assert_eq!(http.uploads()[1].auth, "Bearer edited-key");
 }
 
 #[test]
-fn refresh_401_is_unauthorized() {
-    let http = FakeHttp::new([Reply::Error(401, "{}")], true);
+fn explicit_revocation_is_invalid_and_allowance_is_retained_when_reported() {
+    let http = FakeHttp::new([Reply::Remaining(12.5)], false);
+    let store = Arc::new(MemoryManagedKeyStore::default());
+    store
+        .set(&ManagedKey::new("managed-secret").unwrap())
+        .unwrap();
+    let keys = Arc::new(ManagedKeyState::new(store.clone()));
+    let mut engine =
+        ManagedEngine::with_boundary(http, keys.clone(), "https://gateway.test", None, "boundary");
+    transcribe(&mut engine).unwrap();
+    assert_eq!(keys.remaining_minutes(), Some(12.5));
+    store.set(&ManagedKey::new("edited-key").unwrap()).unwrap();
+    assert!(keys.key().unwrap().is_some());
+    assert_eq!(keys.remaining_minutes(), None);
+
+    let http = FakeHttp::new(
+        [Reply::Error(
+            403,
+            r#"{"error":{"code":"KEY_REVOKED","retryable":false}}"#,
+        )],
+        false,
+    );
+    let mut engine = ManagedEngine::with_boundary(
+        http.clone(),
+        keys.clone(),
+        "https://gateway.test",
+        None,
+        "boundary",
+    );
     assert_eq!(
-        transcribe(&mut engine(http.clone(), None)).unwrap_err(),
-        EngineError::Unauthorized
+        transcribe(&mut engine).unwrap_err(),
+        EngineError::ManagedKeyInvalid
     );
     assert_eq!(http.uploads().len(), 1);
+    assert_eq!(keys.remaining_minutes(), None);
 }
 
 #[test]
@@ -701,35 +721,24 @@ fn disconnecting_during_a_retry_wait_sends_nothing_more() {
         ],
         false,
     );
-    let store = Arc::new(MemoryManagedCredentialStore::default());
+    let store = Arc::new(MemoryManagedKeyStore::default());
     store
-        .set(&ManagedCredential {
-            client_id: "client".into(),
-            refresh_token: ManagedToken::new("refresh-secret").unwrap(),
-            email: None,
-            enabled: true,
-        })
+        .set(&ManagedKey::new("managed-secret").unwrap())
         .unwrap();
-    let tokens = Arc::new(TokenManager::new(
-        http.clone(),
-        store.clone(),
-        "https://gateway.test",
-    ));
     let mut engine = ManagedEngine::with_boundary(
         http.clone(),
-        tokens.clone(),
+        Arc::new(ManagedKeyState::new(store.clone())),
         "https://gateway.test",
         None,
         "test-boundary",
     );
     engine.set_sleeper(move |_, _: &AtomicBool| {
         store.delete().unwrap();
-        tokens.reset();
         true
     });
     assert_eq!(
         transcribe(&mut engine).unwrap_err(),
-        EngineError::Unauthorized
+        EngineError::ManagedDisabled
     );
     assert_eq!(http.uploads().len(), 1);
 }
