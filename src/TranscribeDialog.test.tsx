@@ -51,7 +51,7 @@ it("lists disconnected Managed transcription as unavailable", async () => {
   vi.mocked(managedStatus).mockResolvedValue({ connected: false, revoked: false });
   render(<TranscribeDialog again onClose={() => {}} onTranscribe={() => {}} onOpenSettings={() => {}} />);
   fireEvent.pointerDown(await screen.findByRole("button", { name: "Choose Speech-to-text model" }), { button: 0, ctrlKey: false });
-  const managed = await screen.findByRole("menuitem", { name: "Managed transcription · Fixed model, set up in Settings" });
+  const managed = await screen.findByRole("menuitem", { name: "Managed transcription · mm-transcription-internal, set up in Settings" });
   expect(managed.hasAttribute("data-disabled")).toBe(true);
-  expect(within(managed).getByText("Not connected")).toBeTruthy();
+  expect(within(managed).getByText("No key")).toBeTruthy();
 });

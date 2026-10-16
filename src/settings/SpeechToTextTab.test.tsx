@@ -21,63 +21,22 @@ function renderTab() {
   return render(<SpeechToTextTab settings={settings} save={vi.fn()} installed={[]} vocabulary="" setVocabulary={vi.fn()} saveVocabulary={vi.fn()} providerStatus={null} onManageKeys={vi.fn()} />);
 }
 
-it("signs in with an email code while Managed transcription stays off until consent", async () => {
-  vi.mocked(managedStatus).mockResolvedValue({ connected: false, revoked: false });
-  vi.mocked(managedSendCode).mockResolvedValue();
-  vi.mocked(managedSignIn).mockResolvedValue({ connected: true, revoked: false, email: "person@example.com", enabled: false });
-  vi.mocked(managedSetEnabled).mockResolvedValue({ connected: true, revoked: false, email: "person@example.com", enabled: true });
+it("shows the Managed model and keeps Account controls hidden", async () => {
+  vi.mocked(managedStatus).mockResolvedValue({ connected: true, revoked: false, remaining_minutes: 42.5 });
   renderTab();
-  const account = screen.getByRole("region", { name: "Account" });
-  const managed = screen.getByRole("region", { name: "Managed transcription" });
-  expect(within(managed).getByText(MANAGED_PRIVACY_SUMMARY)).toBeTruthy();
-  const details = within(managed).getByRole("button", { name: "Details" });
-  fireEvent.click(details);
-  expect(within(managed).getByText(MANAGED_PRIVACY_STATEMENT)).toBeTruthy();
-  fireEvent.change(within(account).getByLabelText("Email address"), { target: { value: "person@example.com" } });
-  fireEvent.click(within(account).getByRole("button", { name: "Send code" }));
-  await waitFor(() => expect(managedSendCode).toHaveBeenCalledWith("person@example.com"));
-  fireEvent.change(within(account).getByLabelText("Six-digit code"), { target: { value: "123456" } });
-  fireEvent.click(within(account).getByRole("button", { name: "Sign in" }));
-  await waitFor(() => expect(managedSignIn).toHaveBeenCalledWith("person@example.com", "123456"));
-  expect(within(account).getByText("Signed in as person@example.com")).toBeTruthy();
-  expect(screen.getByText("New Meetings use: Local Whisper · small")).toBeTruthy();
-  fireEvent.click(within(managed).getByRole("switch", { name: "Enable Managed transcription" }));
-  await waitFor(() => expect(managedSetEnabled).toHaveBeenCalledWith(true));
-  expect(screen.getByText("New Meetings use: Managed transcription")).toBeTruthy();
+  expect(await screen.findByText("New Meetings use: Managed transcription")).toBeTruthy();
+  expect(screen.getAllByText("Managed transcription · mm-transcription-internal").length).toBeGreaterThan(0);
+  expect(screen.getByText("42.5 minutes remaining this month.")).toBeTruthy();
+  expect(screen.queryByRole("region", { name: "Account" })).toBeNull();
+  expect(screen.queryByText(/Waitlisted|Delete account|Sign in/)).toBeNull();
+  expect(managedAccount).not.toHaveBeenCalled();
 });
 
-it("shows a legacy connection and keeps its tokens available while signing in", async () => {
-  vi.mocked(managedStatus).mockResolvedValue({ connected: true, revoked: false, email: null, enabled: true });
+it("shows an invalid Managed key as unavailable", async () => {
+  vi.mocked(managedStatus).mockResolvedValue({ connected: true, revoked: true });
   renderTab();
-  const account = screen.getByRole("region", { name: "Account" });
-  expect(await within(account).findByText("Previous Managed connection — sign in with your email to keep using Managed transcription")).toBeTruthy();
-  expect(screen.getByText("New Meetings use: Local Whisper · small")).toBeTruthy();
-  fireEvent.click(within(account).getByRole("button", { name: "Sign in" }));
-  expect(within(account).getByLabelText("Email address")).toBeTruthy();
-});
-
-it("deletes an Account only after confirmation and leaves local Meetings alone", async () => {
-  vi.mocked(managedStatus).mockResolvedValue({ connected: true, revoked: false, email: "person@example.com", enabled: false });
-  vi.mocked(managedDeleteAccount).mockResolvedValue({ connected: false, revoked: false, email: null, enabled: false });
-  renderTab();
-  const account = screen.getByRole("region", { name: "Account" });
-  fireEvent.click(await within(account).findByRole("button", { name: "Delete account" }));
-  expect(screen.getByText(/email address and Managed transcription usage history/)).toBeTruthy();
-  expect(screen.getByText(/All Meetings and Transcripts on this PC stay here/)).toBeTruthy();
-  expect(managedDeleteAccount).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole("dialog").querySelector("button:last-child")!);
-  await waitFor(() => expect(managedDeleteAccount).toHaveBeenCalledOnce());
-  expect(await within(account).findByLabelText("Email address")).toBeTruthy();
-});
-
-it("keeps the Account signed in when deletion fails", async () => {
-  vi.mocked(managedStatus).mockResolvedValue({ connected: true, revoked: false, email: "person@example.com", enabled: false });
-  vi.mocked(managedDeleteAccount).mockRejectedValue("Could not reach the Account service. Check your connection and try again.");
-  renderTab();
-  fireEvent.click(await screen.findByRole("button", { name: "Delete account" }));
-  fireEvent.click(screen.getByRole("dialog").querySelector("button:last-child")!);
-  expect(await screen.findByText("Could not reach the Account service. Check your connection and try again.")).toBeTruthy();
-  expect(screen.getByText("Signed in as person@example.com")).toBeTruthy();
+  expect(await screen.findByText("New Meetings use: Local Whisper · small")).toBeTruthy();
+  expect(screen.getAllByText("Key invalid or revoked").length).toBeGreaterThan(0);
 });
 
 it("tests and adds a Groq model before using it automatically", async () => {
@@ -100,35 +59,13 @@ it("tests and adds a Groq model before using it automatically", async () => {
   expect((save.mock.lastCall?.[0] as Settings).speech?.automatic_groq).toBe("whisper-large-v3-turbo");
 });
 
-it("updates the Transcription order when connection, key, and download state change", async () => {
-  vi.mocked(managedStatus).mockResolvedValue({ connected: false, revoked: false });
-  const speech = { models: [{ provider: "groq" as const, model: "whisper-large-v3" }], automatic_groq: "whisper-large-v3", automatic_gemini: null, automatic_whisper: "small" };
-  const cloud = { ...settings, speech };
-  const props = { settings: cloud, save: vi.fn(), vocabulary: "", setVocabulary: vi.fn(), saveVocabulary: vi.fn(), onManageKeys: vi.fn() };
-  const status = { provider: null, model: null, configured: false, has_openai_key: false, has_anthropic_key: false, has_groq_key: false, has_gemini_key: false };
-  const view = render(<SpeechToTextTab {...props} installed={[]} providerStatus={status} />);
+it("updates the Transcription order when a Managed key changes", async () => {
+  vi.mocked(managedStatus).mockResolvedValueOnce({ connected: false, revoked: false }).mockResolvedValue({ connected: true, revoked: false });
+  renderTab();
   expect(screen.getByText("New Meetings use: Local Whisper · small")).toBeTruthy();
-  const order = screen.getByRole("region", { name: "Transcription order" });
-  expect(within(order).getByText("Download required")).toBeTruthy();
-  view.rerender(<SpeechToTextTab {...props} installed={["small"]} providerStatus={{ ...status, has_groq_key: true }} />);
-  expect(screen.getByText("New Meetings use: Groq · whisper-large-v3")).toBeTruthy();
-  expect(within(order).getAllByText("Ready")).toHaveLength(2);
-  view.rerender(<SpeechToTextTab {...props} installed={["small"]} providerStatus={status} />);
-  expect(screen.getByText("New Meetings use: Local Whisper · small")).toBeTruthy();
-  vi.mocked(managedSendCode).mockResolvedValue();
-  vi.mocked(managedSignIn).mockResolvedValue({ connected: true, revoked: false, email: "person@example.com", enabled: false });
-  vi.mocked(managedSetEnabled).mockResolvedValue({ connected: true, revoked: false, email: "person@example.com", enabled: true });
-  vi.mocked(managedDisconnect).mockResolvedValue({ connected: false, revoked: false, email: null, enabled: false });
-  fireEvent.change(screen.getByLabelText("Email address"), { target: { value: "person@example.com" } });
-  fireEvent.click(screen.getByRole("button", { name: "Send code" }));
-  fireEvent.change(await screen.findByLabelText("Six-digit code"), { target: { value: "123456" } });
-  fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
-  expect(await screen.findByText("Signed in as person@example.com")).toBeTruthy();
-  expect(screen.getByText("New Meetings use: Local Whisper · small")).toBeTruthy();
-  fireEvent.click(screen.getByRole("switch", { name: "Enable Managed transcription" }));
+  await waitFor(() => expect(managedStatus).toHaveBeenCalledOnce());
+  act(() => window.dispatchEvent(new Event("managed-key-changed")));
   expect(await screen.findByText("New Meetings use: Managed transcription")).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
-  expect(await screen.findByText("New Meetings use: Local Whisper · small")).toBeTruthy();
 });
 
 it("downloads, cancels, and deletes a local model from Settings", async () => {

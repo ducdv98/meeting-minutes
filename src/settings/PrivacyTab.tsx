@@ -31,7 +31,7 @@ export function PrivacyTab({ settings, providerStatus, aiError = null }: { setti
   const unknownStatus = aiError ? "Status unavailable" : "Checking…";
   const correctionStatus = !correction ? "Off" : correction.provider === "ollama" ? "Off · On this PC" : !providerStatus ? unknownStatus : !settings.language_models?.models.some((item) => item.provider === correction.provider && item.model === correction.model) ? "Off · Model not added" : providerStatus[`has_${correction.provider}_key`] ? `On · ${PROVIDER_NAMES[correction.provider]} · ${correction.model}` : `Off · No ${PROVIDER_NAMES[correction.provider]} key`;
   const rows: { id: Destination; name: string; status: string }[] = [
-    { id: "managed", name: "Managed transcription", status: managedError ? "Status unavailable" : !managed ? "Checking…" : managed.connected && !managed.email ? "Off · Previous Managed connection" : managed.connected && managed.enabled ? "On · Connected" : managed.connected ? "Off · Signed in" : "Off · Not connected" },
+    { id: "managed", name: "Managed transcription", status: managedError ? "Status unavailable" : !managed ? "Checking…" : managed.revoked ? "Off · Key invalid or revoked" : managed.connected ? "On · Key saved" : "Off · No key" },
     ...cloudProviders.map((kind) => ({ id: kind, name: PROVIDER_NAMES[kind], status: !providerStatus ? unknownStatus : !hasKey(kind) ? "Off · No key" : providerUsed(kind) ? "On · Key saved" : "Off · Key saved, not used" })),
     { id: "correction", name: "Correction model", status: correctionStatus },
   ];

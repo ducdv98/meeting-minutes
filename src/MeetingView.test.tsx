@@ -84,10 +84,17 @@ it("shows a Managed fallback notice when Groq finishes the Meeting", async () =>
   expect(await screen.findByText("Part of this Meeting was transcribed with Groq: Managed transcription was disconnected.")).toBeTruthy();
 });
 
-it("asks a previous Managed user to sign in after Account enforcement", async () => {
+it("does not ask for Account sign-in for an old fallback", async () => {
   vi.mocked(meetingTranscript).mockResolvedValue({ schema_version: 1, revision: 1, created_at: "now", model: ["Managed transcription", "Groq"], fallback_reason: "Account policy changed", fallback_kind: "managed_account_required", language: "en", language_detected: false, duration_ms: 1000, segments: [] });
   render(<MeetingView id="old" onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
-  expect(await screen.findByText("Sign in to an Account to keep using Managed transcription; the rest was transcribed with Groq.")).toBeTruthy();
+  expect(await screen.findByText("Managed transcription is unavailable; the rest was transcribed with Groq.")).toBeTruthy();
+});
+
+it("identifies an invalid Managed key in the fallback notice", async () => {
+  vi.mocked(managedStatus).mockResolvedValue({ connected: true, revoked: true });
+  vi.mocked(meetingTranscript).mockResolvedValue({ schema_version: 1, revision: 1, created_at: "now", model: ["Groq"], fallback_reason: "Managed transcription is unavailable", fallback_kind: "offline", language: "en", language_detected: false, duration_ms: 1000, segments: [] });
+  render(<MeetingView id="old" onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
+  expect(await screen.findByText("Your Managed key is invalid or revoked. Save a new key in Settings; the rest was transcribed with Groq.")).toBeTruthy();
 });
 
 it("explains where audio went after the Managed allowance runs out", async () => {

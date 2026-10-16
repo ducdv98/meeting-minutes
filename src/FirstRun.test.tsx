@@ -91,6 +91,6 @@ it("opens Keys when the user chooses their own key", async () => {
   render(<FirstRun settings={settings} discreteGpu={true} libraryLocation="D:\\Meetings" onFinish={vi.fn()} onUseKey={useKey} />);
   fireEvent.click(screen.getByRole("button", { name: "Skip" }));
   expect(screen.getByText(/Large v3 turbo/)).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "I'll use my own key" }));
+  fireEvent.click(screen.getByRole("button", { name: "I'll use a cloud key" }));
   await waitFor(() => expect(useKey).toHaveBeenCalledOnce());
 });

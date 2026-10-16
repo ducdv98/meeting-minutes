@@ -21,7 +21,7 @@ it("lists every destination and shows all six off when no cloud option is active
     expect(within(row).getByText(/^When:/)).toBeTruthy();
     expect(within(row).getByRole("button", { name: "Details" })).toBeTruthy();
   }
-  expect(await within(screen.getByRole("region", { name: "Managed transcription" })).findByText("Off · Not connected")).toBeTruthy();
+  expect(await within(screen.getByRole("region", { name: "Managed transcription" })).findByText("Off · No key")).toBeTruthy();
   for (const name of ["Managed transcription", "Groq", "Gemini", "OpenAI", "Anthropic", "Correction model"]) expect(within(screen.getByRole("region", { name })).getByText(/^Off/)).toBeTruthy();
   expect(screen.getByText(CLOUD_NOTICE_TEXT)).toBeTruthy();
 });
@@ -32,7 +32,7 @@ it("updates key and Correction states from live Settings props", async () => {
   const correction = { provider: "anthropic" as const, model: "claude-test" };
   const nextSettings = { ...settings, speech: { models: [{ provider: "groq" as const, model: "whisper-large-v3" }], automatic_groq: "whisper-large-v3", automatic_gemini: null, automatic_whisper: "small" }, language_models: { ...settings.language_models!, models: [correction], correction } };
   const view = render(<PrivacyTab settings={nextSettings} providerStatus={cloud} />);
-  expect(await within(screen.getByRole("region", { name: "Managed transcription" })).findByText("On · Connected")).toBeTruthy();
+  expect(await within(screen.getByRole("region", { name: "Managed transcription" })).findByText("On · Key saved")).toBeTruthy();
   expect(within(screen.getByRole("region", { name: "Groq" })).getByText("On · Key saved")).toBeTruthy();
   expect(within(screen.getByRole("region", { name: "Correction model" })).getByText("On · Anthropic · claude-test")).toBeTruthy();
   expect(within(screen.getByRole("region", { name: "Anthropic" })).getByText("On · Key saved")).toBeTruthy();
@@ -41,10 +41,10 @@ it("updates key and Correction states from live Settings props", async () => {
   expect(within(screen.getByRole("region", { name: "Correction model" })).getByText("Off")).toBeTruthy();
 });
 
-it("marks a previous Managed connection as off until Account sign-in", async () => {
-  vi.mocked(managedStatus).mockResolvedValue({ connected: true, revoked: false, email: null, enabled: true });
+it("marks an invalid Managed key as off", async () => {
+  vi.mocked(managedStatus).mockResolvedValue({ connected: true, revoked: true });
   render(<PrivacyTab settings={settings} providerStatus={status} />);
-  expect(await within(screen.getByRole("region", { name: "Managed transcription" })).findByText("Off · Previous Managed connection")).toBeTruthy();
+  expect(await within(screen.getByRole("region", { name: "Managed transcription" })).findByText("Off · Key invalid or revoked")).toBeTruthy();
 });
 
 it("shows saved keys as off until an automatic Speech-to-text model or Use for default is valid", async () => {
@@ -62,7 +62,7 @@ it("refreshes Managed status on each visit and uses the shared disclosure text",
   vi.mocked(managedStatus).mockResolvedValueOnce({ connected: false, revoked: false }).mockResolvedValueOnce({ connected: true, revoked: false, email: "person@example.com", enabled: true });
   const view = render(<PrivacyTab settings={settings} providerStatus={status} />);
   const managed = screen.getByRole("region", { name: "Managed transcription" });
-  expect(await within(managed).findByText("Off · Not connected")).toBeTruthy();
+  expect(await within(managed).findByText("Off · No key")).toBeTruthy();
   fireEvent.click(within(managed).getByRole("button", { name: "Details" }));
   expect(within(managed).getByText(MANAGED_PRIVACY_STATEMENT)).toBeTruthy();
   expect(MANAGED_PRIVACY_STATEMENT).toContain("deleted within 10 minutes");
@@ -71,6 +71,6 @@ it("refreshes Managed status on each visit and uses the shared disclosure text",
   expect(within(groq).getByText(PRIVACY_DESTINATIONS.groq.details)).toBeTruthy();
   view.unmount();
   render(<PrivacyTab settings={settings} providerStatus={status} />);
-  await waitFor(() => expect(within(screen.getByRole("region", { name: "Managed transcription" })).getByText("On · Connected")).toBeTruthy());
+  await waitFor(() => expect(within(screen.getByRole("region", { name: "Managed transcription" })).getByText("On · Key saved")).toBeTruthy());
   expect(managedStatus).toHaveBeenCalledTimes(2);
 });

@@ -80,7 +80,7 @@ export default function FirstRun({ settings, discreteGpu, libraryLocation, onFin
       <div className="mt-6 flex flex-wrap justify-end gap-2">
         <Button variant="ghost" disabled={busy} onClick={skip}>Skip</Button>
         {step === 0 ? <Button disabled={busy} onClick={() => void acknowledge()}>I understand</Button>
-          : step === 1 ? <><Button variant="secondary" disabled={busy} onClick={() => void finish(true)}>I'll use my own key</Button><Button disabled={busy || download?.state === "downloading" || download?.state === "downloaded"} onClick={() => void downloadNow()}>Download now</Button><Button variant="secondary" disabled={busy} onClick={() => setStep(2)}>Continue</Button></>
+          : step === 1 ? <><Button variant="secondary" disabled={busy} onClick={() => void finish(true)}>I'll use a cloud key</Button><Button disabled={busy || download?.state === "downloading" || download?.state === "downloaded"} onClick={() => void downloadNow()}>Download now</Button><Button variant="secondary" disabled={busy} onClick={() => setStep(2)}>Continue</Button></>
           : <Button disabled={busy} onClick={() => void finish()}>Done</Button>}
       </div>
     </DialogContent>

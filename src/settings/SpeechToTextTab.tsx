@@ -22,9 +22,13 @@ type Props = {
   saveVocabulary: () => void;
   providerStatus: AiStatus | null;
   onManageKeys: () => void;
+  active?: boolean;
 };
 
-export function SpeechToTextTab({ settings, save, installed, vocabulary, setVocabulary, saveVocabulary, providerStatus, onManageKeys }: Props) {
+// Account access is deferred while Managed keys are issued by hand.
+const ACCOUNT_UI_ENABLED = false;
+
+export function SpeechToTextTab({ settings, save, installed, vocabulary, setVocabulary, saveVocabulary, providerStatus, onManageKeys, active = true }: Props) {
   const speech: SpeechSettings = settings.speech ?? { models: [{ provider: "groq", model: "whisper-large-v3" }, { provider: "gemini", model: settings.ai.gemini_model ?? "gemini-2.5-flash" }], automatic_groq: "whisper-large-v3", automatic_gemini: settings.ai.gemini_model ?? "gemini-2.5-flash", automatic_whisper: settings.model };
   const [managed, setManaged] = useState<ManagedStatus | null>(null);
   const [account, setAccount] = useState<ManagedAccount | null>(null);
@@ -45,10 +49,13 @@ export function SpeechToTextTab({ settings, save, installed, vocabulary, setVoca
   const [modelError, setModelError] = useState<string | null>(null);
   const { downloads, error: downloadError, run: runDownload } = useModelDownloads();
   useEffect(() => {
-    let active = true;
-    managedStatus().then((next) => { if (active) { setManaged(next); if (next.email) void managedAccount().then((status) => { if (active) setAccount(status); }, (reason) => { if (active) setAccountError(String(reason)); }); } }, (reason) => { if (active) setManagedError(String(reason)); });
-    return () => { active = false; };
-  }, []);
+    if (!active) return;
+    let alive = true;
+    const refresh = () => { managedStatus().then((next) => { if (alive) { setManaged(next); setManagedError(null); } }, (reason) => { if (alive) { setManaged(null); setManagedError(String(reason)); } }); };
+    refresh();
+    window.addEventListener("managed-key-changed", refresh);
+    return () => { alive = false; window.removeEventListener("managed-key-changed", refresh); };
+  }, [active]);
   useEffect(() => {
     if (!adding || provider !== "gemini" || !providerStatus?.has_gemini_key) return;
     let active = true;
@@ -79,8 +86,9 @@ export function SpeechToTextTab({ settings, save, installed, vocabulary, setVoca
   }
   const groqReady = !!providerStatus?.has_groq_key && !!speech.automatic_groq;
   const geminiReady = !!providerStatus?.has_gemini_key && !!speech.automatic_gemini;
-  const managedReady = !!managed?.connected && !!managed.email && !!managed.enabled && !managed.revoked;
-  const managedAvailable = managedReady && account?.state === "admitted";
+  const managedReady = !!managed?.connected && !managed.revoked;
+  const managedAvailable = managedReady;
+  const managedLabel = managedError ? "Status unavailable" : managed?.revoked ? "Key invalid or revoked" : managedReady ? "Ready" : "No key";
   const first = managedAvailable ? "Managed transcription" : groqReady ? `Groq · ${speech.automatic_groq}` : geminiReady ? `Gemini · ${speech.automatic_gemini}` : `Local Whisper · ${speech.automatic_whisper}`;
   function localStatus(name: string) {
     return downloads[name] ?? { model_id: name, state: installed?.includes(name) ? "downloaded" as const : "not_downloaded" as const, progress: 0, error: null };
@@ -121,14 +129,14 @@ export function SpeechToTextTab({ settings, save, installed, vocabulary, setVoca
   return <div className="grid gap-8">
     <FormSection title="Transcription order" hint="Processing tries each ready Provider in this fixed order. If one fails or hits its limit, it tries the next.">
       <ol className="m-0 grid gap-2 p-0 text-sm list-none">
-        <li className="flex justify-between gap-3"><span>Managed transcription</span><span className="text-ink-muted">{account?.state === "waitlisted" ? "Waitlisted" : account?.state === "suspended" || accountError?.includes("suspended") ? "Suspended" : managedReady ? "Ready" : managed?.connected ? "Off" : "Not connected"}</span></li>
+        <li className="flex justify-between gap-3"><span>Managed transcription · mm-transcription-internal</span><span className="text-ink-muted">{managedLabel}</span></li>
         <li className="flex justify-between gap-3"><span>Groq · {speech.automatic_groq ?? "No automatic model"}</span><span className="text-ink-muted">{providerStatus?.has_groq_key ? speech.automatic_groq ? "Ready" : "No model" : "No key"}</span></li>
         <li className="flex justify-between gap-3"><span>Gemini · {speech.automatic_gemini ?? "No automatic model"}</span><span className="text-ink-muted">{providerStatus?.has_gemini_key ? speech.automatic_gemini ? "Ready" : "No model" : "No key"}</span></li>
         <li className="flex justify-between gap-3"><span>Local Whisper · {speech.automatic_whisper}</span><span className="text-ink-muted">{localStatus(speech.automatic_whisper).state === "downloaded" ? "Ready" : "Download required"}</span></li>
       </ol>
       <p className="m-0 text-sm font-medium">New Meetings use: {first}</p>
     </FormSection>
-    <FormSection title="Account">
+    {ACCOUNT_UI_ENABLED && <FormSection title="Account">
       {managed?.email && !signInOpen ? <>
         <p role="status" className="m-0 text-sm">Signed in as {managed.email}</p>
         {(account?.state === "admitted" || account?.state === "waitlisted") && <p className="m-0 text-sm">{account.state === "admitted" ? "Admitted · " : ""}{account.minutes_remaining.toLocaleString(undefined, { maximumFractionDigits: 1 })} of {account.allowance_minutes.toLocaleString()} minutes remaining this month. Resets {new Intl.DateTimeFormat(undefined, { dateStyle: "long", timeZone: "UTC" }).format(new Date(account.resets_at))} (UTC).</p>}
@@ -147,11 +155,16 @@ export function SpeechToTextTab({ settings, save, installed, vocabulary, setVoca
       </>}
       {managedError && !confirmDelete && <p role="alert" className="m-0 text-sm text-record">{managedError}</p>}
       {confirmDelete && <Dialog open onOpenChange={(open) => { if (!open && !managedBusy) setConfirmDelete(false); }}><DialogContent onEscapeKeyDown={(event) => { if (managedBusy) event.preventDefault(); }} onPointerDownOutside={(event) => { if (managedBusy) event.preventDefault(); }}><DialogTitle>Delete account?</DialogTitle><DialogDescription>We will delete your email address and Managed transcription usage history, and sign you out on every PC. All Meetings and Transcripts on this PC stay here. Local Processing and Processing with your own keys will keep working.</DialogDescription>{managedError && <p role="alert" className="mt-3 text-sm text-record">{managedError}</p>}<div className="mt-6 flex justify-end gap-2"><Button variant="secondary" disabled={managedBusy} onClick={() => setConfirmDelete(false)}>Cancel</Button><Button variant="record" disabled={managedBusy} onClick={() => void deleteAccount()}>Delete account</Button></div></DialogContent></Dialog>}
-    </FormSection>
-    <FormSection title="Managed transcription">
+    </FormSection>}
+    {ACCOUNT_UI_ENABLED && <FormSection title="Managed transcription">
       <div className="flex items-center gap-3"><Switch aria-label="Enable Managed transcription" checked={managedReady} disabled={!managed?.email || managedBusy} onCheckedChange={(enabled) => void setManagedConsent(enabled)} /><span className="text-sm">{managedReady ? "On" : "Off"}</span></div>
       <p className="m-0 text-sm text-ink-muted">Turning this on allows Meeting audio to be sent to Managed transcription. Signing in alone does not send audio.</p>
       <div className="grid gap-1"><p className="m-0 text-xs text-ink-muted">{MANAGED_PRIVACY_SUMMARY}</p><Details><p className="m-0">{MANAGED_PRIVACY_STATEMENT}</p></Details></div>
+    </FormSection>}
+    <FormSection title="Managed transcription" hint="Save a Managed key in Keys to use cloud transcription automatically.">
+      <p className="m-0 text-sm">mm-transcription-internal · {managedLabel} <button type="button" className="ml-2 text-accent hover:underline" onClick={onManageKeys}>Manage key</button></p>
+      {managedReady && managed?.remaining_minutes != null && <p className="m-0 text-sm">{managed.remaining_minutes.toLocaleString(undefined, { maximumFractionDigits: 1 })} minutes remaining this month.</p>}
+      {managedError && <p role="alert" className="m-0 text-sm text-record">Couldn't check Managed transcription: {managedError}</p>}
     </FormSection>
     <FormSection title="Cloud transcription" hint="Use your own keys for cloud Processing. Keys stay in Windows Credential Manager.">
       {(["groq", "gemini"] as const).map((kind) => {
@@ -161,7 +174,7 @@ export function SpeechToTextTab({ settings, save, installed, vocabulary, setVoca
       })}
     </FormSection>
     <FormSection title="Speech-to-text models" hint="Choose one model per Provider to use automatically. Other models stay available for a single transcription.">
-      {managedAvailable && <div className="flex flex-wrap items-center gap-2 rounded-md border border-line bg-raised px-3 py-2 text-sm"><span className="min-w-0 flex-1">Managed transcription · Fixed model</span><Badge>Used automatically</Badge><span className="text-ink-muted">Ready</span></div>}
+      <div className="flex flex-wrap items-center gap-2 rounded-md border border-line bg-raised px-3 py-2 text-sm"><span className="min-w-0 flex-1">Managed transcription · mm-transcription-internal</span>{managedAvailable && <Badge>Used automatically</Badge>}<span className="text-ink-muted">{managedLabel}</span></div>
       <div className="grid gap-2">{speech.models.map((entry) => { const automatic = speech[entry.provider === "groq" ? "automatic_groq" : "automatic_gemini"] === entry.model; const hasKey = entry.provider === "groq" ? providerStatus?.has_groq_key : providerStatus?.has_gemini_key; return <div key={`${entry.provider}-${entry.model}`} className="flex flex-wrap items-center gap-2 rounded-md border border-line bg-raised px-3 py-2 text-sm"><span className="min-w-0 flex-1">{PROVIDER_NAMES[entry.provider]} · {entry.model}</span>{automatic ? <Badge>Used automatically</Badge> : <Button variant="secondary" onClick={() => setAutomatic(entry.provider, entry.model)}>Use automatically</Button>}<span className="text-ink-muted">{hasKey ? "Ready" : "No key"}</span><Button variant="ghost" onClick={() => removeModel(entry.provider, entry.model)}>Remove</Button></div>; })}</div>
       {!adding ? <Button variant="secondary" className="justify-self-start" onClick={() => setAdding(true)}>Add Speech-to-text model</Button> : <div className="grid gap-3 rounded-md border border-line bg-raised p-3.5">
         <div className="grid gap-1"><label htmlFor="speech-provider" className="text-sm">Provider</label><select id="speech-provider" className="rounded-sm border border-line-strong bg-raised px-2 py-1.5 text-sm" value={provider} onChange={(event) => { const kind = event.target.value as SpeechProvider; setProvider(kind); setModel(kind === "groq" ? GROQ_SPEECH_MODELS[0] : ""); setTested(false); setModelError(null); }}><option value="groq">Groq</option><option value="gemini">Gemini</option></select></div>

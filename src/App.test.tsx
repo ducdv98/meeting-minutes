@@ -71,7 +71,7 @@ it("opens Settings Keys when the first-run model step chooses an own key", async
   vi.mocked(getSettings).mockResolvedValue({ ...await getSettings(), first_run_completed: false } as Settings);
   render(<App />);
   fireEvent.click(await screen.findByRole("button", { name: "Skip" }));
-  fireEvent.click(screen.getByRole("button", { name: "I'll use my own key" }));
+  fireEvent.click(screen.getByRole("button", { name: "I'll use a cloud key" }));
   expect(await screen.findByText("Tab: keys")).toBeTruthy();
 });
 

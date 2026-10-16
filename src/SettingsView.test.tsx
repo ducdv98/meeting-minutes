@@ -3,42 +3,24 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import SettingsView, { type SettingsTabId } from "./SettingsView";
 import type { AiSettings } from "./ai";
 import { acknowledgeCloudNotice, firstRunInfo, getSettings, installedModels, modelDownloadStatus, onModelDownloadStatus, updateSettings, type Settings } from "./processing";
-import { aiStatus, deleteApiKey, listAiModels, managedAccount, managedSendCode, managedSignIn, managedDisconnect, managedStatus, saveApiKey, testCloudApiKey, testLanguageModel, updateLanguageModels, type AiStatus } from "./ai";
+import { aiStatus, deleteApiKey, listAiModels, managedAccount, managedSendCode, managedSignIn, managedDisconnect, managedRemoveKey, managedSaveKey, managedStatus, saveApiKey, testCloudApiKey, testLanguageModel, updateLanguageModels, type AiStatus } from "./ai";
 import { openLink } from "./app-info";
 import { CLOUD_NOTICE_SUMMARY, CLOUD_NOTICE_TEXT, PRIVACY_INTRO } from "./privacy-text";
 
 vi.mock("./processing", async (importOriginal) => ({ ...(await importOriginal<typeof import("./processing")>()), firstRunInfo: vi.fn(), getSettings: vi.fn(), updateSettings: vi.fn(), installedModels: vi.fn(), acknowledgeCloudNotice: vi.fn(), modelDownloadStatus: vi.fn(), onModelDownloadStatus: vi.fn() }));
-vi.mock("./ai", async (importOriginal) => ({ ...(await importOriginal<typeof import("./ai")>()), aiStatus: vi.fn(), listAiModels: vi.fn(), managedStatus: vi.fn(), managedAccount: vi.fn(), managedSendCode: vi.fn(), managedSignIn: vi.fn(), managedDisconnect: vi.fn(), saveApiKey: vi.fn(), deleteApiKey: vi.fn(), updateLanguageModels: vi.fn(), testLanguageModel: vi.fn(), testCloudApiKey: vi.fn() }));
+vi.mock("./ai", async (importOriginal) => ({ ...(await importOriginal<typeof import("./ai")>()), aiStatus: vi.fn(), listAiModels: vi.fn(), managedStatus: vi.fn(), managedAccount: vi.fn(), managedSendCode: vi.fn(), managedSignIn: vi.fn(), managedDisconnect: vi.fn(), managedRemoveKey: vi.fn(), managedSaveKey: vi.fn(), saveApiKey: vi.fn(), deleteApiKey: vi.fn(), updateLanguageModels: vi.fn(), testLanguageModel: vi.fn(), testCloudApiKey: vi.fn() }));
 vi.mock("./app-info", () => ({ openLink: vi.fn() }));
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.resetAllMocks(); });
 beforeEach(() => { vi.mocked(firstRunInfo).mockResolvedValue({ discrete_gpu: false, library_location: "D:\\Meetings" }); vi.mocked(installedModels).mockResolvedValue([]); vi.mocked(managedStatus).mockResolvedValue({ connected: false, revoked: false }); vi.mocked(managedAccount).mockResolvedValue({ email: "person@example.com", state: "admitted", minutes_used: 0.5, minutes_remaining: 119.5, allowance_minutes: 120, resets_at: "2026-11-01T00:00:00.000Z" }); vi.mocked(modelDownloadStatus).mockResolvedValue([]); vi.mocked(onModelDownloadStatus).mockResolvedValue(() => {}); });
 
-it("shows the Account allowance when Settings opens", async () => {
+it("shows the reported Managed allowance without Account UI", async () => {
   vi.mocked(getSettings).mockResolvedValue(base); vi.mocked(aiStatus).mockResolvedValue(empty);
-  vi.mocked(managedStatus).mockResolvedValue({ connected: true, revoked: false, email: "person@example.com", enabled: true });
+  vi.mocked(managedStatus).mockResolvedValue({ connected: true, revoked: false, remaining_minutes: 119.5 });
   render(<SettingsView initialTab="speech-to-text" />);
-  expect(await screen.findByText(/119.5 of 120 minutes remaining this month/, {}, { timeout: 5000 })).toBeTruthy();
-  expect(managedAccount).toHaveBeenCalledOnce();
-  expect(screen.getByText(new Intl.DateTimeFormat(undefined, { dateStyle: "long" }).format(new Date("2026-11-01T00:00:00.000Z")), { exact: false })).toBeTruthy();
-});
-
-it("shows Waitlisted position and available alternatives", async () => {
-  vi.mocked(getSettings).mockResolvedValue(base); vi.mocked(aiStatus).mockResolvedValue(empty);
-  vi.mocked(managedStatus).mockResolvedValue({ connected: true, revoked: false, email: "person@example.com", enabled: false });
-  vi.mocked(managedAccount).mockResolvedValue({ email: "person@example.com", state: "waitlisted", minutes_used: 0, minutes_remaining: 120, allowance_minutes: 120, resets_at: "2026-11-01T00:00:00.000Z", waitlist_position: 3 });
-  render(<SettingsView initialTab="speech-to-text" />);
-  expect(await screen.findByText(/Waitlisted · position 3/)).toBeTruthy();
-  expect(screen.getByText(/120 of 120 minutes remaining this month/)).toBeTruthy();
-  expect(screen.getByText(new Intl.DateTimeFormat(undefined, { dateStyle: "long", timeZone: "UTC" }).format(new Date("2026-11-01T00:00:00.000Z")), { exact: false })).toBeTruthy();
-  expect(screen.getByText(/Local Processing and Processing with your own keys keep working/)).toBeTruthy();
-});
-
-it("shows a short note for a suspended Account", async () => {
-  vi.mocked(getSettings).mockResolvedValue(base); vi.mocked(aiStatus).mockResolvedValue(empty);
-  vi.mocked(managedStatus).mockResolvedValue({ connected: true, revoked: false, email: "person@example.com", enabled: true });
-  vi.mocked(managedAccount).mockResolvedValue({ email: "person@example.com", state: "suspended", minutes_used: 0, minutes_remaining: 120, allowance_minutes: 120, resets_at: "2026-11-01T00:00:00.000Z" });
-  render(<SettingsView initialTab="speech-to-text" />);
-  expect(await screen.findByText("Your Account is suspended. Local Processing and Processing with your own keys keep working.")).toBeTruthy();
+  expect((await screen.findAllByText("119.5 minutes remaining this month.")).length).toBeGreaterThan(0);
+  expect(screen.queryByRole("region", { name: "Account" })).toBeNull();
+  expect(screen.queryByText(/Waitlisted|Delete account|Invite code/)).toBeNull();
+  expect(managedAccount).not.toHaveBeenCalled();
 });
 
 const noAi: AiSettings = { provider: null, ollama_model: null, openai_model: null, anthropic_model: null, gemini_model: null };
@@ -118,49 +100,37 @@ it("keeps Saved in the header across tabs and fades it out after two seconds", a
   expect(screen.queryByText("Saved")).toBeNull();
 });
 
-it("signs in to an Account from Settings", async () => {
-  vi.mocked(getSettings).mockResolvedValue(base);
-  vi.mocked(aiStatus).mockResolvedValue(empty);
-  vi.mocked(managedSendCode).mockResolvedValue();
-  vi.mocked(managedSignIn).mockResolvedValue({ connected: true, revoked: false, email: "person@example.com", enabled: false });
-  render(<SettingsView initialTab="general" />);
-  await openTab("Speech-to-text");
-  const section = await screen.findByRole("region", { name: "Account" });
-  fireEvent.change(within(section).getByLabelText("Email address"), { target: { value: "person@example.com" } });
-  fireEvent.click(within(section).getByRole("button", { name: "Send code" }));
-  await waitFor(() => expect(managedSendCode).toHaveBeenCalledWith("person@example.com"));
-  fireEvent.change(within(section).getByLabelText("Six-digit code"), { target: { value: "123456" } });
-  fireEvent.click(within(section).getByRole("button", { name: "Sign in" }));
-  expect(await within(section).findByText("Signed in as person@example.com")).toBeTruthy();
-  await waitFor(() => expect(managedAccount).toHaveBeenCalledOnce());
+it("saves and removes a Managed key in Provider keys", async () => {
+  vi.mocked(getSettings).mockResolvedValue(base); vi.mocked(aiStatus).mockResolvedValue(empty);
+  vi.mocked(managedSaveKey).mockResolvedValue({ connected: true, revoked: false, remaining_minutes: 60 });
+  vi.mocked(managedRemoveKey).mockResolvedValue({ connected: false, revoked: false });
+  render(<SettingsView initialTab="keys" />);
+  const keys = await screen.findByRole("tabpanel", { name: "Keys" });
+  const managed = within(keys).getByRole("group", { name: "Managed transcription Provider" });
+  expect(within(managed).getByRole("link", { name: "Request a key" }).getAttribute("href")).toBe("https://meeting-minutes.tech/request-a-key/");
+  expect(within(managed).getByText(/Saving a key allows Meeting audio to be sent to the cloud/)).toBeTruthy();
+  fireEvent.change(within(managed).getByLabelText("Managed key"), { target: { value: "  mm-secret  " } });
+  fireEvent.click(within(managed).getByRole("button", { name: "Save Managed key" }));
+  await waitFor(() => expect(managedSaveKey).toHaveBeenCalledWith("mm-secret"));
+  expect(within(managed).getByText("60 minutes remaining this month.")).toBeTruthy();
+  expect(within(managed).getByText("Key saved")).toBeTruthy();
+  fireEvent.click(within(managed).getByRole("button", { name: "Remove Managed key" }));
+  await waitFor(() => expect(managedRemoveKey).toHaveBeenCalledOnce());
+  expect(within(managed).getByText("No key")).toBeTruthy();
 });
 
-it("shows a specific sign-in error", async () => {
-  vi.mocked(getSettings).mockResolvedValue(base);
-  vi.mocked(aiStatus).mockResolvedValue(empty);
-  vi.mocked(managedSendCode).mockResolvedValue();
-  vi.mocked(managedSignIn).mockRejectedValue("That code is incorrect. Check the six digits and try again.");
-  render(<SettingsView initialTab="general" />);
-  await openTab("Speech-to-text");
-  const section = await screen.findByRole("region", { name: "Account" });
-  fireEvent.change(within(section).getByLabelText("Email address"), { target: { value: "person@example.com" } });
-  fireEvent.click(within(section).getByRole("button", { name: "Send code" }));
-  fireEvent.change(await within(section).findByLabelText("Six-digit code"), { target: { value: "000000" } });
-  fireEvent.click(within(section).getByRole("button", { name: "Sign in" }));
-  expect((await within(section).findByRole("alert")).textContent).toBe("That code is incorrect. Check the six digits and try again.");
-});
-
-it("signs out and clears the Account UI", async () => {
-  vi.mocked(getSettings).mockResolvedValue(base);
-  vi.mocked(aiStatus).mockResolvedValue(empty);
-  vi.mocked(managedStatus).mockResolvedValue({ connected: true, revoked: false, email: "person@example.com", enabled: false });
-  vi.mocked(managedDisconnect).mockResolvedValue({ connected: false, revoked: false, email: null, enabled: false });
-  render(<SettingsView initialTab="general" />);
-  await openTab("Speech-to-text");
-  const section = await screen.findByRole("region", { name: "Account" });
-  fireEvent.click(await within(section).findByRole("button", { name: "Sign out" }));
-  await waitFor(() => expect(managedDisconnect).toHaveBeenCalledOnce());
-  expect(await within(section).findByLabelText("Email address")).toBeTruthy();
+it("shows an invalid or revoked Managed key and accepts a replacement", async () => {
+  vi.mocked(getSettings).mockResolvedValue(base); vi.mocked(aiStatus).mockResolvedValue(empty);
+  vi.mocked(managedStatus).mockResolvedValue({ connected: true, revoked: true });
+  vi.mocked(managedSaveKey).mockResolvedValue({ connected: true, revoked: false });
+  render(<SettingsView initialTab="keys" />);
+  const keys = await screen.findByRole("tabpanel", { name: "Keys" });
+  const managed = within(keys).getByRole("group", { name: "Managed transcription Provider" });
+  expect(await within(managed).findByText("Key invalid or revoked")).toBeTruthy();
+  fireEvent.change(within(managed).getByLabelText("Managed key"), { target: { value: "new-key" } });
+  fireEvent.click(within(managed).getByRole("button", { name: "Save Managed key" }));
+  await waitFor(() => expect(managedSaveKey).toHaveBeenCalledWith("new-key"));
+  expect(within(managed).queryByText("Key invalid or revoked")).toBeNull();
 });
 
 it("saves, tests and removes Groq and OpenAI keys on Keys, and shows the cloud notice once", async () => {
@@ -183,7 +153,7 @@ it("saves, tests and removes Groq and OpenAI keys on Keys, and shows the cloud n
   fireEvent.click(within(keys).getByRole("button", { name: "Save Groq key" }));
   await waitFor(() => expect(saveApiKey).toHaveBeenCalledWith("groq", "secret"));
   expect(await within(keys).findByText(CLOUD_NOTICE_SUMMARY)).toBeTruthy();
-  const disclosure = within(keys).getByRole("button", { name: "Details" });
+  const disclosure = within(within(keys).getByRole("alert")).getByRole("button", { name: "Details" });
   expect(disclosure.getAttribute("aria-expanded")).toBe("false");
   fireEvent.click(disclosure);
   expect(disclosure.getAttribute("aria-expanded")).toBe("true");

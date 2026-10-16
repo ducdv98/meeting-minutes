@@ -5,7 +5,7 @@ export interface AiStatus { provider: ProviderKind | null; model: string | null;
 export interface AiSettings { provider: ProviderKind | null; ollama_model: string | null; openai_model: string | null; anthropic_model: string | null; gemini_model: string | null }
 export interface LanguageModel { provider: Exclude<ProviderKind, "groq">; model: string }
 export interface LanguageModelSettings { models: LanguageModel[]; correction: LanguageModel | null; summary: LanguageModel | null; ask: LanguageModel | null; confirmed_correction_providers: ProviderKind[]; legacy_correction_pending: boolean }
-export interface ManagedStatus { connected: boolean; revoked: boolean; email?: string | null; enabled?: boolean }
+export interface ManagedStatus { connected: boolean; revoked: boolean; remaining_minutes?: number | null; email?: string | null; enabled?: boolean }
 export interface ManagedAccount { email: string; state: "admitted" | "waitlisted" | "suspended"; minutes_used: number; minutes_remaining: number; allowance_minutes: number; resets_at: string; waitlist_position?: number | null }
 export interface Message { role: "user" | "assistant"; content: string }
 export interface Disclosure { provider: ProviderKind; model: string; endpoint: string; system: string; messages: Message[]; characters: number }
@@ -18,6 +18,8 @@ export const PROVIDERS = [
 ] as const;
 export const aiStatus = () => invoke<AiStatus>("ai_status");
 export const managedStatus = () => invoke<ManagedStatus>("managed_status");
+export const managedSaveKey = (key: string) => invoke<ManagedStatus>("managed_save_key", { key });
+export const managedRemoveKey = () => invoke<ManagedStatus>("managed_remove_key");
 export const managedAccount = () => invoke<ManagedAccount>("managed_account");
 export const managedSendCode = (email: string) => invoke<void>("managed_send_code", { email });
 export const managedSignIn = (email: string, code: string) => invoke<ManagedStatus>("managed_sign_in", { email, code });
