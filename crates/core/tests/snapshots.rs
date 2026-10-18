@@ -1,6 +1,7 @@
 use meeting_minutes_core::{
     capture::{Clock, DeviceInfo, InputDevice, InputOpener, Packet, Source},
-    recording::CaptureSession,
+    recorder::Recorder,
+    recording::{CaptureSession, ChunkWriter},
     snapshot::{CaptureRegion, RgbaFrame, ScreenGrabber, SnapshotError, SnapshotStore},
     Library,
 };
@@ -190,6 +191,75 @@ fn a_written_snapshot_survives_a_crash_and_a_lost_library_index() {
             .unwrap(),
         vec![saved]
     );
+}
+
+#[test]
+fn recovered_recording_adopts_complete_snapshots_and_ignores_incomplete_ones() {
+    let (temp, library, id, session, now) = setup();
+    let meeting_dir = library.meeting_dir(&id);
+    let store = SnapshotStore::new(&meeting_dir);
+    now.store(1_000_000 + 50 * 10_000, Ordering::SeqCst);
+    let saved = store.take(Some(&session), region(), &FakeGrabber).unwrap();
+    assert_eq!(saved.timeline_ms, 50);
+    for source in [Source::Microphone, Source::SystemAudio] {
+        let mut writer =
+            ChunkWriter::new(&meeting_dir.join(".chunks/recording-1"), source).unwrap();
+        writer.write(&vec![0.25; 4_800 * 2]).unwrap();
+        writer.finish().unwrap();
+    }
+    let snapshots_dir = meeting_dir.join("snapshots");
+    std::fs::write(
+        snapshots_dir.join("0002-00-00-00.png.tmp"),
+        b"partial image",
+    )
+    .unwrap();
+    std::fs::write(
+        snapshots_dir.join("0002-00-00-00.json.tmp"),
+        b"partial sidecar",
+    )
+    .unwrap();
+    std::fs::write(
+        snapshots_dir.join("0003-00-00-00.png"),
+        b"image without sidecar",
+    )
+    .unwrap();
+
+    drop(session); // A process exit leaves the completed Snapshot and the orphan Recording.
+    drop(library);
+    std::fs::remove_file(temp.path().join("index.sqlite3")).unwrap();
+    let mut library = Library::open(
+        temp.path().join("Library"),
+        temp.path().join("index.sqlite3"),
+    )
+    .unwrap();
+    let mut recorder = Recorder::new(SilentOpener, FakeClock(now), true);
+    let jobs = recorder.recover(&library).unwrap();
+    assert_eq!(jobs.len(), 1);
+    assert_eq!(jobs[0].meeting_id, id);
+    jobs[0].run().unwrap();
+    recorder.save_finished(&id, Ok(()));
+    library.record_finalized(&id).unwrap();
+
+    let recovered_store = SnapshotStore::new(library.meeting_dir(&id));
+    assert_eq!(library.meeting(&id).unwrap().duration_ms, 100);
+    assert_eq!(recovered_store.list().unwrap(), vec![saved.clone()]);
+    let png = recovered_store.load(saved.order).unwrap().png;
+    let mut reader = png::Decoder::new(std::io::Cursor::new(png))
+        .read_info()
+        .unwrap();
+    let mut pixels = vec![0; reader.output_buffer_size()];
+    assert_eq!(reader.next_frame(&mut pixels).unwrap().width, 2);
+    recorder
+        .continue_meeting(
+            &mut library,
+            &id,
+            chrono::DateTime::parse_from_rfc3339("2026-10-12T10:00:00Z").unwrap(),
+        )
+        .unwrap();
+    let second = recorder.stop().unwrap();
+    assert_eq!(second.number, 2);
+    second.run().unwrap();
+    assert_eq!(recovered_store.list().unwrap(), vec![saved]);
 }
 
 #[test]
