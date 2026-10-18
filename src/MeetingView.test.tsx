@@ -113,6 +113,33 @@ it("adds and edits a Snapshot caption in the viewer", async () => {
   fireEvent.click(within(reopened).getByRole("button", { name: "Close" }));
   expect(await screen.findByRole("button", { name: "Open Snapshot: Updated roadmap" })).toBeTruthy();
 });
+
+it("deletes a Snapshot from the Transcript and restores its position and caption with Undo", async () => {
+  vi.mocked(meetingTranscript).mockResolvedValue({ schema_version: 1, revision: 1, created_at: "now", model: ["small"], language: "en", language_detected: false, duration_ms: 3000, segments: [
+    { id: "s00001", start_ms: 100, end_ms: 900, text: "Before", speaker: "me" },
+    { id: "s00002", start_ms: 1000, end_ms: 2000, text: "After", speaker: "remote" },
+  ] });
+  let deleted = false;
+  vi.mocked(invoke).mockImplementation(async (command) => {
+    if (command === "list_snapshots") return { snapshots: deleted ? [] : [{ order: 7, timeline_ms: 950, caption: "Private slide" }], total_size_bytes: deleted ? 0 : 128 };
+    if (command === "read_snapshot_image") return [137, 80, 78, 71];
+    if (command === "delete_snapshot") { deleted = true; return undefined; }
+    if (command === "undo_snapshot_deletion") { deleted = false; return undefined; }
+    throw new Error(`Unexpected IPC: ${command}`);
+  });
+  render(<MeetingView id="old" onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
+  fireEvent.click(await screen.findByRole("button", { name: "Open Snapshot: Private slide" }));
+  fireEvent.click(within(screen.getByRole("dialog", { name: "Snapshot" })).getByRole("button", { name: "Delete Snapshot" }));
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith("delete_snapshot", { meetingId: "old", order: 7 }));
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Open Snapshot: Private slide" })).toBeNull());
+  expect(screen.queryByRole("dialog", { name: "Snapshot" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Undo Snapshot deletion" }));
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith("undo_snapshot_deletion", { meetingId: "old" }));
+  const restored = await screen.findByRole("button", { name: "Open Snapshot: Private slide" });
+  const rows = within(screen.getByRole("list", { name: "Segments" })).getAllByRole("listitem");
+  expect(rows.map((row) => row.textContent)).toEqual([expect.stringContaining("Before"), expect.stringContaining("Private slide"), expect.stringContaining("After")]);
+  expect(restored.querySelector("img")?.getAttribute("src")).toBe("data:image/png;base64,iVBORw==");
+});
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.resetAllMocks(); });
 
 it("shows why part of the Meeting used local transcription", async () => {

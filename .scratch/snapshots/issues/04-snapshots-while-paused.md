@@ -12,7 +12,7 @@ A Snapshot can be taken while the Recording is paused, for example to show somet
 
 ## Acceptance criteria
 
-- [ ] A Snapshot taken while paused is accepted and positioned at the pause Marker
-- [ ] Two Snapshots in one pause appear in capture order
-- [ ] The Timeline length and Markers are unchanged by Snapshots
-- [ ] Core test covers the position and order; a UI test shows them in the Transcript
+- [x] A Snapshot taken while paused is accepted and positioned at the pause Marker
+- [x] Two Snapshots in one pause appear in capture order
+- [x] The Timeline length and Markers are unchanged by Snapshots
+- [x] Core test covers the position and order; a UI test shows them in the Transcript

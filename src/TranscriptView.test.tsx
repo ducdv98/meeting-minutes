@@ -35,6 +35,18 @@ it("shows a Snapshot between the surrounding Segments and opens it", () => {
   expect(onOpenSnapshot).toHaveBeenCalledWith(1);
 });
 
+it("shows Snapshots taken during one pause in capture order at the pause position", () => {
+  render(<TranscriptView transcript={transcript} positionMs={0} player={null} editable onEdit={vi.fn()} snapshots={[
+    { order: 4, timeline_ms: 950, caption: "Second slide", image_url: "data:image/png;base64,BBBB" },
+    { order: 3, timeline_ms: 950, caption: "First slide", image_url: "data:image/png;base64,AAAA" },
+  ]} />);
+  const rows = within(screen.getByRole("list", { name: "Segments" })).getAllByRole("listitem");
+  expect(rows.map((row) => row.textContent)).toEqual([
+    expect.stringContaining("Hello"), expect.stringContaining("First slide"),
+    expect.stringContaining("Second slide"), expect.stringContaining("World"),
+  ]);
+});
+
 it("shows Participant names, keeps the detected Speaker label, and clears named Unknown styling", () => {
   const named = { ...transcript, segments: [...transcript.segments, { id: "s00003", start_ms: 2100, end_ms: 2900, text: "Maybe", speaker: "unknown" as const }] };
   const { rerender } = render(<TranscriptView transcript={named} positionMs={0} player={null} editable onEdit={vi.fn()} participants={{ remote: "Anna", unknown: "Anna" }} yourName="Duc" />);

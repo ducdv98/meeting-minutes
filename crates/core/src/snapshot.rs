@@ -47,6 +47,13 @@ pub struct LoadedSnapshot {
     pub png: Vec<u8>,
 }
 
+/// The bytes retained for one in-app undo after the original files enter the Recycle Bin.
+pub struct DeletedSnapshot {
+    snapshot: Snapshot,
+    png: Vec<u8>,
+    sidecar: Vec<u8>,
+}
+
 #[derive(Debug)]
 pub enum SnapshotError {
     Io(io::Error),
@@ -258,6 +265,48 @@ impl SnapshotStore {
         json.push(b'\n');
         write_durable(&snapshot.png_path.with_extension("json"), &json)?;
         Ok(snapshot)
+    }
+
+    /// Recycles both files; the returned value permits undo during this app session.
+    pub fn delete(
+        &self,
+        order: u32,
+        recycle: &dyn Fn(&Path) -> io::Result<()>,
+    ) -> Result<DeletedSnapshot, SnapshotError> {
+        let snapshot = self.load(order)?.snapshot;
+        let sidecar_path = snapshot.png_path.with_extension("json");
+        let png = fs::read(&snapshot.png_path)?;
+        let sidecar = fs::read(&sidecar_path)?;
+        recycle(&snapshot.png_path)?;
+        if let Err(error) = recycle(&sidecar_path) {
+            write_durable(&snapshot.png_path, &png)?;
+            return Err(SnapshotError::Io(error));
+        }
+        Ok(DeletedSnapshot {
+            snapshot,
+            png,
+            sidecar,
+        })
+    }
+
+    pub fn undo_delete(&self, deleted: &DeletedSnapshot) -> Result<Snapshot, SnapshotError> {
+        let png_path = &deleted.snapshot.png_path;
+        let sidecar_path = png_path.with_extension("json");
+        if png_path.parent() != Some(self.meeting_dir.join("snapshots").as_path())
+            || png_path.exists()
+            || sidecar_path.exists()
+        {
+            return Err(SnapshotError::Io(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "The Snapshot cannot be restored at its original path",
+            )));
+        }
+        write_durable(png_path, &deleted.png)?;
+        if let Err(error) = write_durable(&sidecar_path, &deleted.sidecar) {
+            let _ = fs::remove_file(png_path);
+            return Err(error);
+        }
+        Ok(deleted.snapshot.clone())
     }
 
     /// Disk use of complete image and sidecar pairs in this Meeting.
