@@ -2276,6 +2276,13 @@ fn delete_meeting(app: AppHandle, meeting_id: String) -> Result<(), String> {
             )
             .map_err(|error| error.to_string())?;
     }
+    #[cfg(windows)]
+    {
+        let undo = app.state::<SnapshotUndoState>();
+        if let Ok(mut pending) = undo.lock() {
+            pending.remove(&meeting_id);
+        }
+    }
     lock_recorder(&app)?.dismiss_continue(&meeting_id);
     lock_processor(&app)?.dismiss(&meeting_id);
     let _ = app.emit("library-changed", ());
@@ -2335,6 +2342,9 @@ struct SnapshotListPayload {
     total_size_bytes: u64,
 }
 
+#[cfg(windows)]
+type SnapshotUndoState = Mutex<HashMap<String, meeting_minutes_core::snapshot::DeletedSnapshot>>;
+
 fn snapshot_store(
     state: State<'_, LibraryState>,
     meeting_id: &str,
@@ -2384,6 +2394,51 @@ fn read_snapshot_image(
         .load(order)
         .map(|loaded| loaded.png)
         .map_err(|error| error.to_string())
+}
+
+#[cfg(windows)]
+#[tauri::command]
+fn delete_snapshot(
+    app: AppHandle,
+    state: State<'_, LibraryState>,
+    undo: State<'_, SnapshotUndoState>,
+    meeting_id: String,
+    order: u32,
+) -> Result<(), String> {
+    let store = snapshot_store(state, &meeting_id)?;
+    let deleted = store
+        .delete(
+            order,
+            &meeting_minutes_core::recycle_bin::move_to_recycle_bin,
+        )
+        .map_err(|error| error.to_string())?;
+    undo.lock()
+        .map_err(|error| error.to_string())?
+        .insert(meeting_id, deleted);
+    let _ = app.emit("library-changed", ());
+    Ok(())
+}
+
+#[cfg(windows)]
+#[tauri::command]
+fn undo_snapshot_deletion(
+    app: AppHandle,
+    state: State<'_, LibraryState>,
+    undo: State<'_, SnapshotUndoState>,
+    meeting_id: String,
+) -> Result<(), String> {
+    let store = snapshot_store(state, &meeting_id)?;
+    let mut pending = undo.lock().map_err(|error| error.to_string())?;
+    let deleted = pending
+        .get(&meeting_id)
+        .ok_or("No Snapshot deletion to undo")?;
+    store
+        .undo_delete(deleted)
+        .map_err(|error| error.to_string())?;
+    pending.remove(&meeting_id);
+    drop(pending);
+    let _ = app.emit("library-changed", ());
+    Ok(())
 }
 
 #[tauri::command]
@@ -3364,6 +3419,8 @@ fn main() {
             )));
             #[cfg(windows)]
             app.manage(snapshot_windows::SnapshotState::default());
+            #[cfg(windows)]
+            app.manage(SnapshotUndoState::default());
 
             let open_item = MenuItem::with_id(app, "open", "Open", true, None::<&str>)?;
             let status_item = MenuItem::with_id(app, "status", "Idle", false, None::<&str>)?;
@@ -3494,6 +3551,10 @@ fn main() {
             list_snapshots,
             read_snapshot_image,
             reveal_snapshot_folder,
+            #[cfg(windows)]
+            delete_snapshot,
+            #[cfg(windows)]
+            undo_snapshot_deletion,
             open_library_folder,
             open_link,
             rename_meeting,

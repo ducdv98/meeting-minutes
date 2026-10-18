@@ -152,7 +152,69 @@ fn snapshots_during_pause_keep_the_marker_position_and_capture_order() {
     assert_eq!((first.timeline_ms, first.order), (5_000, 1));
     assert_eq!((second.timeline_ms, second.order), (5_000, 2));
     assert_eq!(store.list().unwrap(), vec![first, second]);
+    let finished = session.stop().unwrap();
+    assert_eq!(finished.duration_ms, Some(5_000));
+    assert_eq!(finished.markers.len(), 1);
+}
+
+#[test]
+fn deleting_and_undoing_a_snapshot_restores_its_image_position_and_caption() {
+    let (temp, library, id, session, now) = setup();
+    let store = SnapshotStore::new(library.meeting_dir(&id));
+    now.store(1_000_000 + 2_000 * 10_000, Ordering::SeqCst);
+    let original = store.take(Some(&session), region(), &FakeGrabber).unwrap();
+    let sidecar = original.png_path.with_extension("json");
+    let mut metadata: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&sidecar).unwrap()).unwrap();
+    metadata["caption"] = serde_json::json!("Private slide");
+    std::fs::write(&sidecar, serde_json::to_vec(&metadata).unwrap()).unwrap();
+    let original_png = std::fs::read(&original.png_path).unwrap();
+    let bin = temp.path().join("bin");
+    std::fs::create_dir(&bin).unwrap();
+
+    let deleted = store
+        .delete(1, &|path| {
+            std::fs::rename(path, bin.join(path.file_name().unwrap()))
+        })
+        .unwrap();
+    assert!(store.list().unwrap().is_empty());
+    assert!(!original.png_path.exists());
+    assert!(!sidecar.exists());
+    assert_eq!(std::fs::read_dir(&bin).unwrap().count(), 2);
+
+    let restored = store.undo_delete(&deleted).unwrap();
+    assert_eq!(
+        (
+            restored.timeline_ms,
+            restored.order,
+            restored.caption.as_deref()
+        ),
+        (2_000, 1, Some("Private slide"))
+    );
+    assert_eq!(store.list().unwrap(), vec![restored.clone()]);
+    assert_eq!(std::fs::read(&restored.png_path).unwrap(), original_png);
     session.stop().unwrap();
+}
+
+#[test]
+fn deleting_a_meeting_removes_its_snapshot_files_from_the_library() {
+    let (temp, mut library, id, session, _) = setup();
+    let meeting_dir = library.meeting_dir(&id);
+    let snapshot = SnapshotStore::new(&meeting_dir)
+        .take(Some(&session), region(), &FakeGrabber)
+        .unwrap();
+    session.stop().unwrap();
+    std::fs::remove_dir_all(meeting_dir.join(".chunks")).unwrap();
+    let bin = temp.path().join("bin");
+    library
+        .delete_meeting(&id, &|path| std::fs::rename(path, &bin))
+        .unwrap();
+    assert!(!meeting_dir.exists());
+    assert!(!snapshot.png_path.exists());
+    assert!(bin
+        .join("snapshots")
+        .join(snapshot.png_path.file_name().unwrap())
+        .exists());
 }
 
 #[test]

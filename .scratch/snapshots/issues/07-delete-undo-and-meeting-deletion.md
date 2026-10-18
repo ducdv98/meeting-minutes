@@ -12,7 +12,7 @@ The user can delete a single Snapshot and undo the deletion, which restores its 
 
 ## Acceptance criteria
 
-- [ ] Deleting a Snapshot removes it from the Transcript and the folder view
-- [ ] Undo restores the Snapshot with its position and caption
-- [ ] Deleting a Meeting leaves no Snapshot files behind
-- [ ] Tests cover delete, undo and Meeting deletion
+- [x] Deleting a Snapshot removes it from the Transcript and the folder view
+- [x] Undo restores the Snapshot with its position and caption
+- [x] Deleting a Meeting leaves no Snapshot files behind
+- [x] Tests cover delete, undo and Meeting deletion

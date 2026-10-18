@@ -1,6 +1,6 @@
 use std::{io, path::Path};
 
-/// Moves a Meeting folder to the Windows Recycle Bin so it can be restored.
+/// Moves a file or folder to the Windows Recycle Bin so it can be restored.
 #[cfg(windows)]
 pub fn move_to_recycle_bin(path: &Path) -> io::Result<()> {
     use std::os::windows::ffi::OsStrExt;
@@ -24,7 +24,7 @@ pub fn move_to_recycle_bin(path: &Path) -> io::Result<()> {
     let code = unsafe { SHFileOperationW(&mut operation) };
     if code != 0 || operation.fAnyOperationsAborted.as_bool() {
         return Err(io::Error::other(format!(
-            "Could not move the Meeting to the Recycle Bin (code {code})"
+            "Could not move the item to the Recycle Bin (code {code})"
         )));
     }
     Ok(())

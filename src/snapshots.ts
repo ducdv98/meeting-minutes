@@ -32,6 +32,14 @@ export function revealSnapshotFolder(meetingId: string, order: number): Promise<
   return invoke<void>("reveal_snapshot_folder", { meetingId, order });
 }
 
+export function deleteSnapshot(meetingId: string, order: number): Promise<void> {
+  return invoke<void>("delete_snapshot", { meetingId, order });
+}
+
+export function undoSnapshotDeletion(meetingId: string): Promise<void> {
+  return invoke<void>("undo_snapshot_deletion", { meetingId });
+}
+
 export function formatSnapshotSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
