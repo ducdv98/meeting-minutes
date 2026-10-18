@@ -84,6 +84,35 @@ it("shows Snapshot size and opens an inline image with a folder action", async (
   fireEvent.click(within(viewer).getByRole("button", { name: "Open folder" }));
   await waitFor(() => expect(invoke).toHaveBeenCalledWith("reveal_snapshot_folder", { meetingId: "old", order: 7 }));
 });
+
+it("adds and edits a Snapshot caption in the viewer", async () => {
+  vi.mocked(meetingTranscript).mockResolvedValue({ schema_version: 1, revision: 1, created_at: "now", model: ["small"], language: "en", language_detected: false, duration_ms: 3000, segments: [
+    { id: "s00001", start_ms: 100, end_ms: 900, text: "Before", speaker: "me" },
+  ] });
+  let caption: string | null = null;
+  vi.mocked(invoke).mockImplementation(async (command, args) => {
+    if (command === "list_snapshots") return { snapshots: [{ order: 7, timeline_ms: 950, caption }], total_size_bytes: 100 };
+    if (command === "read_snapshot_image") return [137, 80, 78, 71];
+    if (command === "set_snapshot_caption") { caption = (args as { caption: string | null }).caption; return { order: 7, timeline_ms: 950, caption }; }
+    throw new Error(`Unexpected IPC: ${command}`);
+  });
+  render(<MeetingView id="old" onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
+  fireEvent.click(await screen.findByRole("button", { name: "Open Snapshot: Snapshot at 00:00:00" }));
+  const viewer = screen.getByRole("dialog", { name: "Snapshot" });
+  fireEvent.change(within(viewer).getByRole("textbox", { name: "Caption" }), { target: { value: "Shared roadmap" } });
+  fireEvent.click(within(viewer).getByRole("button", { name: "Save caption" }));
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith("set_snapshot_caption", { meetingId: "old", order: 7, caption: "Shared roadmap" }));
+  await waitFor(() => expect(within(viewer).getByRole("button", { name: "Save caption" }).hasAttribute("disabled")).toBe(true));
+  fireEvent.click(within(viewer).getByRole("button", { name: "Close" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Open Snapshot: Shared roadmap" }));
+  const reopened = screen.getByRole("dialog", { name: "Snapshot" });
+  expect((within(reopened).getByRole("textbox", { name: "Caption" }) as HTMLInputElement).value).toBe("Shared roadmap");
+  fireEvent.change(within(reopened).getByRole("textbox", { name: "Caption" }), { target: { value: "Updated roadmap" } });
+  fireEvent.click(within(reopened).getByRole("button", { name: "Save caption" }));
+  await waitFor(() => expect(within(reopened).getByRole("button", { name: "Save caption" }).hasAttribute("disabled")).toBe(true));
+  fireEvent.click(within(reopened).getByRole("button", { name: "Close" }));
+  expect(await screen.findByRole("button", { name: "Open Snapshot: Updated roadmap" })).toBeTruthy();
+});
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.resetAllMocks(); });
 
 it("shows why part of the Meeting used local transcription", async () => {

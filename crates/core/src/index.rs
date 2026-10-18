@@ -3,8 +3,8 @@ use std::{fs, path::Path};
 use rusqlite::{params, Connection, ErrorCode};
 
 use crate::{
-    library::LibraryError, participant::Participants, transcript::Transcript, MeetingSummary,
-    SearchHit,
+    library::LibraryError, participant::Participants, snapshot::Snapshot, transcript::Transcript,
+    MeetingSummary, SearchHit,
 };
 
 const SCHEMA_VERSION: i64 = 5;
@@ -74,18 +74,25 @@ impl Index {
 
     pub(crate) fn replace(
         &mut self,
-        meetings: &[(MeetingSummary, i64, Option<Transcript>, Participants)],
+        meetings: &[(
+            MeetingSummary,
+            i64,
+            Option<Transcript>,
+            Participants,
+            Vec<Snapshot>,
+        )],
     ) -> Result<(), LibraryError> {
         let transaction = self.connection.transaction()?;
         transaction.execute("DELETE FROM meetings", [])?;
         transaction.execute("DELETE FROM segments", [])?;
-        for (meeting, started_at_ms, transcript, participants) in meetings {
+        for (meeting, started_at_ms, transcript, participants, snapshots) in meetings {
             transaction.execute(
                 "INSERT INTO meetings (id, title, started_at, started_at_ms, duration_ms) VALUES (?1, ?2, ?3, ?4, ?5)",
                 params![meeting.id, meeting.title, meeting.started_at, started_at_ms, meeting.duration_ms as i64],
             )?;
             if let Some(transcript) = transcript {
                 insert_segments(&transaction, &meeting.id, transcript, participants)?;
+                insert_captions(&transaction, &meeting.id, transcript, snapshots)?;
             }
         }
         transaction.commit()?;
@@ -97,12 +104,14 @@ impl Index {
         meeting_id: &str,
         transcript: Option<&Transcript>,
         participants: &Participants,
+        snapshots: &[Snapshot],
     ) -> Result<(), LibraryError> {
         // Library re-indexes from `&self` paths (Participant changes); the Library's own lock serializes writers.
         let transaction = self.connection.unchecked_transaction()?;
         transaction.execute("DELETE FROM segments WHERE meeting_id = ?1", [meeting_id])?;
         if let Some(transcript) = transcript {
             insert_segments(&transaction, meeting_id, transcript, participants)?;
+            insert_captions(&transaction, meeting_id, transcript, snapshots)?;
         }
         transaction.commit()?;
         Ok(())
@@ -121,9 +130,12 @@ impl Index {
             return Ok(Vec::new());
         };
         let mut statement = self.connection.prepare(
-            "WITH ranked AS (SELECT s.rowid AS segment_rowid, s.meeting_id, rank AS score, \
-             ROW_NUMBER() OVER (PARTITION BY s.meeting_id ORDER BY rank, s.start_ms) AS hit_number \
-             FROM segments s WHERE segments MATCH ?1) \
+            "WITH matches AS (SELECT s.rowid AS segment_rowid, s.meeting_id, s.start_ms, rank AS score, \
+             ROW_NUMBER() OVER (PARTITION BY s.meeting_id, s.segment_id ORDER BY rank, s.rowid) AS segment_hit_number \
+             FROM segments s WHERE segments MATCH ?1), \
+             ranked AS (SELECT segment_rowid, meeting_id, score, \
+             ROW_NUMBER() OVER (PARTITION BY meeting_id ORDER BY score, start_ms) AS hit_number \
+             FROM matches WHERE segment_hit_number = 1) \
              SELECT s.meeting_id, m.title, m.started_at, s.segment_id, s.start_ms, s.end_ms, \
              snippet(segments, 0, char(2), char(3), '…', 12), s.revision \
              FROM segments s JOIN ranked r ON r.segment_rowid = s.rowid \
@@ -172,6 +184,38 @@ fn insert_segments(
         transaction.execute(
             "INSERT INTO segments (text, participant, folded, meeting_id, revision, segment_id, start_ms, end_ms) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![segment.text, participants.name(segment, transcript.revision), crate::search_folding::fold(&format!("{} {}", segment.text, participants.name(segment, transcript.revision))), meeting_id, transcript.revision, segment.id, segment.start_ms, segment.end_ms],
+        )?;
+    }
+    Ok(())
+}
+
+fn insert_captions(
+    transaction: &rusqlite::Transaction<'_>,
+    meeting_id: &str,
+    transcript: &Transcript,
+    snapshots: &[Snapshot],
+) -> Result<(), LibraryError> {
+    for snapshot in snapshots {
+        let Some(caption) = snapshot
+            .caption
+            .as_deref()
+            .filter(|caption| !caption.trim().is_empty())
+        else {
+            continue;
+        };
+        let Some(segment) = transcript.segments.iter().min_by_key(|segment| {
+            let distance = if snapshot.timeline_ms < segment.start_ms {
+                segment.start_ms - snapshot.timeline_ms
+            } else {
+                snapshot.timeline_ms.saturating_sub(segment.end_ms)
+            };
+            (distance, segment.start_ms)
+        }) else {
+            continue;
+        };
+        transaction.execute(
+            "INSERT INTO segments (text, participant, folded, meeting_id, revision, segment_id, start_ms, end_ms) VALUES (?1, '', ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![caption, crate::search_folding::fold(caption), meeting_id, transcript.revision, segment.id, segment.start_ms, segment.end_ms],
         )?;
     }
     Ok(())

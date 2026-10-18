@@ -139,6 +139,114 @@ fn takes_native_png_with_timeline_position_and_rebuilds_from_folder() {
 }
 
 #[test]
+fn captions_can_be_added_edited_and_cleared_without_changing_the_image() {
+    let (_temp, library, id, session, _) = setup();
+    let store = SnapshotStore::new(library.meeting_dir(&id));
+    let original = store.take(Some(&session), region(), &FakeGrabber).unwrap();
+    let image = std::fs::read(&original.png_path).unwrap();
+
+    let added = store
+        .set_caption(original.order, Some("Shared roadmap"))
+        .unwrap();
+    assert_eq!(added.caption.as_deref(), Some("Shared roadmap"));
+    let edited = store
+        .set_caption(original.order, Some("Updated roadmap"))
+        .unwrap();
+    assert_eq!(
+        SnapshotStore::new(library.meeting_dir(&id)).list().unwrap()[0],
+        edited
+    );
+    assert_eq!(std::fs::read(&original.png_path).unwrap(), image);
+    let sidecar: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(original.png_path.with_extension("json")).unwrap())
+            .unwrap();
+    assert_eq!(sidecar["caption"], "Updated roadmap");
+
+    assert_eq!(
+        store
+            .set_caption(original.order, Some("  "))
+            .unwrap()
+            .caption,
+        None
+    );
+    session.stop().unwrap();
+}
+
+#[test]
+fn library_search_finds_edited_caption_at_the_nearest_segment_after_rebuild() {
+    let (temp, mut library, id, session, now) = setup();
+    let store = SnapshotStore::new(library.meeting_dir(&id));
+    now.store(1_000_000 + 2_800 * 10_000, Ordering::SeqCst);
+    let snapshot = store.take(Some(&session), region(), &FakeGrabber).unwrap();
+    let transcript = serde_json::json!({
+        "schema_version": 1, "revision": 1, "created_at": "2026-10-12T10:00:00Z",
+        "model": "small", "language": "en", "language_detected": false,
+        "duration_ms": 5000, "segments": [
+            {"id": "s00001", "start_ms": 100, "end_ms": 800, "text": "First", "speaker": "me"},
+            {"id": "s00002", "start_ms": 3000, "end_ms": 3800, "text": "Second", "speaker": "remote"}
+        ]
+    });
+    std::fs::write(
+        library.meeting_dir(&id).join("transcript.r1.json"),
+        serde_json::to_vec(&transcript).unwrap(),
+    )
+    .unwrap();
+    library.refresh_transcript(&id).unwrap();
+
+    library
+        .set_snapshot_caption(&id, snapshot.order, Some("Shared roadmap"))
+        .unwrap();
+    let hit = &library.search("roadmap").unwrap()[0];
+    assert_eq!((hit.segment_id.as_str(), hit.start_ms), ("s00002", 3000));
+    assert!(hit.snippet.contains("roadmap"));
+    library
+        .set_snapshot_caption(&id, snapshot.order, Some("Updated plan"))
+        .unwrap();
+    assert!(library.search("roadmap").unwrap().is_empty());
+    assert_eq!(library.search("plan").unwrap()[0].segment_id, "s00002");
+    assert!(
+        !std::fs::read_to_string(library.meeting_dir(&id).join("transcript.r1.json"))
+            .unwrap()
+            .contains("Updated plan")
+    );
+
+    drop(library);
+    std::fs::remove_file(temp.path().join("index.sqlite3")).unwrap();
+    let rebuilt = Library::open(
+        temp.path().join("Library"),
+        temp.path().join("index.sqlite3"),
+    )
+    .unwrap();
+    assert_eq!(rebuilt.search("plan").unwrap()[0].segment_id, "s00002");
+    session.stop().unwrap();
+}
+
+#[test]
+fn matching_caption_and_segment_return_one_search_destination() {
+    let (_temp, mut library, id, session, _) = setup();
+    let snapshot = SnapshotStore::new(library.meeting_dir(&id))
+        .take(Some(&session), region(), &FakeGrabber)
+        .unwrap();
+    let transcript = serde_json::json!({
+        "schema_version": 1, "revision": 1, "created_at": "2026-10-12T10:00:00Z",
+        "model": "small", "language": "en", "language_detected": false,
+        "duration_ms": 2000, "segments": [
+            {"id": "s00001", "start_ms": 100, "end_ms": 900, "text": "Roadmap", "speaker": "me"}
+        ]
+    });
+    std::fs::write(
+        library.meeting_dir(&id).join("transcript.r1.json"),
+        serde_json::to_vec(&transcript).unwrap(),
+    )
+    .unwrap();
+    library
+        .set_snapshot_caption(&id, snapshot.order, Some("Roadmap"))
+        .unwrap();
+    assert_eq!(library.search("roadmap").unwrap().len(), 1);
+    session.stop().unwrap();
+}
+
+#[test]
 fn snapshots_during_pause_keep_the_marker_position_and_capture_order() {
     let (_temp, library, id, mut session, now) = setup();
     let store = SnapshotStore::new(library.meeting_dir(&id));
