@@ -3,7 +3,7 @@
 During a Recording the user can take a **Snapshot**: an image of a **Capture region** of their screen, for example a shared slide or demo. Each Snapshot is a PNG file in the Meeting's folder with a Timeline position and an optional caption, shown inline in the Transcript. The Library stays the source of truth: the files and their positions can be read without the app's database, which is only a rebuildable index.
 
 - Snapshots are taken by hand only, from the **Capture bar** or a global hotkey, and only while a Recording runs (including while paused, where they sit at the pause Marker). Each is written durably when taken, like a Chunk.
-- The user draws the Capture region; later Snapshots in the Recording reuse it until the user draws a new one.
+- The user draws the Capture region. The Capture bar's Snapshot button asks for a new region every time, so each press can capture a different part of the screen. The Take Snapshot hotkey reuses the last region for repeated shots of the same area, and the Draw new Capture region hotkey asks for a new one. (Revised: the Capture bar button first reused the last region.)
 - The Capture bar and the region overlay are excluded from capture and from screen sharing.
 - Snapshots never leave the PC. Summary, Ask and Library search over Transcript text do not read the images, and a Snapshot is never a Citation. A caption is searchable text.
 - Images are PNG at native resolution, so slide and code text stays readable.

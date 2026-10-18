@@ -33,7 +33,7 @@ An image of a region of the user's screen, taken by hand during a Recording and 
 _Avoid_: Screenshot, capture, screen grab
 
 **Capture region**:
-The rectangle of the screen the user drags out for Snapshots. Drawing a new one is explicit; later Snapshots in the same Recording reuse it. It lasts for the Recording and is not saved to the Meeting.
+The rectangle of the screen the user drags out for Snapshots. The Capture bar's Snapshot button asks for a new one each time; the Take Snapshot hotkey reuses the last one in the same Recording, and a second hotkey draws a new one. It lasts for the Recording and is not saved to the Meeting.
 
 **Capture bar**:
 The small always-on-top floating bar shown while a Recording runs, with pause, stop, Snapshot and a timer. Starting a Recording stays in the main window. The bar and the region overlay never appear in a Snapshot or in screen sharing.

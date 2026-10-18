@@ -60,7 +60,7 @@ it("follows the Recording and uses its pause, resume, stop and repeat Snapshot c
 
   expect((await screen.findByRole("status")).textContent).toContain("00:01:05");
   fireEvent.click(screen.getByRole("button", { name: "Take Snapshot" }));
-  await waitFor(() => expect(takeSnapshot).toHaveBeenCalledWith(false));
+  await waitFor(() => expect(takeSnapshot).toHaveBeenCalledWith(true));
   fireEvent.click(screen.getByRole("button", { name: "Pause" }));
   expect(await screen.findByRole("button", { name: "Resume" })).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Resume" }));

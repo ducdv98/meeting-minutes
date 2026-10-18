@@ -52,7 +52,7 @@ export default function CaptureBarWindow() {
   async function snapshot() {
     setBusy(true);
     setError(null);
-    try { await takeSnapshot(false); }
+    try { await takeSnapshot(true); }
     catch (reason) { setError(String(reason)); }
     finally { setBusy(false); }
   }
