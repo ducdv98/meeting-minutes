@@ -1601,16 +1601,12 @@ fn transcribe_meeting_inner(
             Ok(())
         },
         |metadata| {
-            let file: MeetingFile =
-                serde_json::from_value(metadata.clone()).map_err(io::Error::other)?;
-            let participants = crate::participant::Participants::new(
-                file.participants.clone(),
-                file.segment_participants.clone(),
+            let markdown = crate::library::markdown_from_metadata(
+                request.meeting_dir,
+                metadata,
+                &transcript,
                 your_name,
-                file.is_voice_note(),
-            );
-            let markdown =
-                crate::transcript::render_markdown_named(&file.title, &transcript, &participants);
+            )?;
             let mut md = OpenOptions::new()
                 .write(true)
                 .create(true)

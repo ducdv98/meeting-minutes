@@ -20,6 +20,65 @@ fn write_transcript(library: &Library, id: &str, revision: u32, text: &str) {
 }
 
 #[test]
+fn meeting_folder_export_places_snapshot_images_and_captions_on_the_timeline() {
+    let temp = TempDir::new().unwrap();
+    let mut library = Library::open(
+        temp.path().join("Library"),
+        temp.path().join("index.sqlite3"),
+    )
+    .unwrap();
+    let meeting = library
+        .create_meeting("Planning", at("2026-10-12T09:30:00Z"))
+        .unwrap();
+    let folder = library.meeting_dir(&meeting.id);
+    let transcript = serde_json::json!({
+        "schema_version": 1, "revision": 1, "created_at": "2026-10-12T10:00:00Z",
+        "model": "small", "language": "en", "language_detected": false,
+        "duration_ms": 3000, "segments": [
+            {"id": "s00001", "start_ms": 100, "end_ms": 900, "text": "First point", "speaker": "me"},
+            {"id": "s00002", "start_ms": 2000, "end_ms": 2700, "text": "Second point", "speaker": "remote"}
+        ]
+    });
+    std::fs::write(
+        folder.join("transcript.r1.json"),
+        serde_json::to_vec(&transcript).unwrap(),
+    )
+    .unwrap();
+    let images = folder.join("snapshots");
+    std::fs::create_dir(&images).unwrap();
+    for (order, caption) in [(1, Some("Shared slide")), (2, None)] {
+        let stem = format!("{order:04}-00-00-01");
+        std::fs::write(images.join(format!("{stem}.png")), b"image bytes").unwrap();
+        std::fs::write(
+            images.join(format!("{stem}.json")),
+            serde_json::to_vec(&serde_json::json!({
+                "timeline_ms": 1500, "order": order, "caption": caption
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    }
+
+    library.refresh_transcript_export(&meeting.id).unwrap();
+
+    let markdown = std::fs::read_to_string(folder.join("transcript.md")).unwrap();
+    let first = markdown.find("First point").unwrap();
+    let slide = markdown
+        .find("![Snapshot at 00:00:01](snapshots/0001-00-00-01.png) — Shared slide")
+        .unwrap();
+    let next = markdown
+        .find("![Snapshot at 00:00:01](snapshots/0002-00-00-01.png)")
+        .unwrap();
+    let second = markdown.find("Second point").unwrap();
+    assert!(first < slide && slide < next && next < second);
+    for image in ["0001-00-00-01.png", "0002-00-00-01.png"] {
+        let relative = format!("snapshots/{image}");
+        assert!(markdown.contains(&format!("]({relative})")));
+        assert!(folder.join(relative).is_file());
+    }
+}
+
+#[test]
 fn new_recording_meeting_saves_its_language_choice() {
     let temp = TempDir::new().unwrap();
     let mut library = Library::open(

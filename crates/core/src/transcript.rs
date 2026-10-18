@@ -628,6 +628,16 @@ pub fn render_markdown_named(
     transcript: &Transcript,
     participants: &Participants,
 ) -> String {
+    render_markdown_with_snapshots(title, transcript, participants, &[])
+}
+
+/// Renders the readable Meeting transcript with local image links in Timeline order.
+pub fn render_markdown_with_snapshots(
+    title: &str,
+    transcript: &Transcript,
+    participants: &Participants,
+    snapshots: &[crate::snapshot::Snapshot],
+) -> String {
     let language = transcript.language.name();
     let mut result = format!(
         "# {title}\n\nTranscript revision {} · model {} · {language}\n",
@@ -639,7 +649,14 @@ pub fn render_markdown_named(
             .collect::<Vec<_>>()
             .join(", ")
     );
+    let mut snapshots = snapshots.iter().collect::<Vec<_>>();
+    snapshots.sort_by_key(|snapshot| (snapshot.timeline_ms, snapshot.order));
+    let mut next_snapshot = 0;
     for s in &transcript.segments {
+        while next_snapshot < snapshots.len() && snapshots[next_snapshot].timeline_ms < s.start_ms {
+            append_snapshot(&mut result, snapshots[next_snapshot]);
+            next_snapshot += 1;
+        }
         let seconds = s.start_ms / 1000;
         let speaker = participants.name(s, transcript.revision);
         result.push_str(&format!(
@@ -650,5 +667,28 @@ pub fn render_markdown_named(
             s.text
         ));
     }
+    for snapshot in &snapshots[next_snapshot..] {
+        append_snapshot(&mut result, snapshot);
+    }
     result
+}
+
+fn append_snapshot(result: &mut String, snapshot: &crate::snapshot::Snapshot) {
+    let seconds = snapshot.timeline_ms / 1000;
+    let name = snapshot.png_path.file_name().unwrap().to_string_lossy();
+    result.push_str(&format!(
+        "\n![Snapshot at {:02}:{:02}:{:02}](snapshots/{name})",
+        seconds / 3600,
+        seconds / 60 % 60,
+        seconds % 60,
+    ));
+    if let Some(caption) = snapshot
+        .caption
+        .as_deref()
+        .filter(|caption| !caption.trim().is_empty())
+    {
+        result.push_str(" — ");
+        result.push_str(&caption.split_whitespace().collect::<Vec<_>>().join(" "));
+    }
+    result.push('\n');
 }

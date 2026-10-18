@@ -283,6 +283,23 @@ fn save(app: &AppHandle, region: CaptureRegion) -> Result<Snapshot, String> {
         .take_snapshot(region, &GdiGrabber)
         .map_err(|error| error.to_string())?;
     drop(recorder);
+    let export = app
+        .state::<crate::LibraryState>()
+        .lock()
+        .map_err(|error| error.to_string())
+        .and_then(|guard| {
+            guard
+                .as_ref()
+                .map_err(Clone::clone)?
+                .refresh_transcript_export(&meeting_id)
+                .map_err(|error| error.to_string())
+        });
+    if let Err(error) = export {
+        let _ = app.emit(
+            "snapshot-error",
+            format!("Snapshot saved, but its transcript reference could not be updated: {error}"),
+        );
+    }
     let _ = app.emit(
         "snapshot-taken",
         SnapshotTakenEvent {

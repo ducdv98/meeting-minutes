@@ -46,6 +46,7 @@ it("shows five tabs, remembers the last one, and lets an opening link choose ano
   expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["General", "Speech-to-text", "Language models", "Keys", "Privacy"]);
   await openTab("Privacy");
   expect(screen.getByText(PRIVACY_INTRO)).toBeTruthy();
+  expect(screen.getByText(/Snapshots never leave this PC/)).toBeTruthy();
   first.unmount();
   const second = render(<SettingsView />);
   expect((await screen.findByRole("tab", { name: "Privacy" })).getAttribute("aria-selected")).toBe("true");

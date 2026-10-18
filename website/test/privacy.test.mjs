@@ -36,6 +36,12 @@ test('privacy page has replaced the ticket stub', async () => {
   assert.doesNotMatch(policy, /PRIVACY_STUB_TICKET_14/);
 });
 
+test('privacy page says Snapshot images stay on the PC', async () => {
+  const policy = await readFile(policyPath, 'utf8');
+  assert.match(policy, /Snapshots never leave your PC/i);
+  assert.match(policy, /snapshots.*PNG/i);
+});
+
 test('public copy explains when Meeting content goes to cloud providers', async () => {
   for (const path of [policyPath, homePath, readmePath]) {
     const copy = await readFile(path, 'utf8');
@@ -51,7 +57,7 @@ test('public copy explains when Meeting content goes to cloud providers', async 
 
 test('privacy page explains key requests and key-based Managed transcription', async () => {
   const policy = await readFile(policyPath, 'utf8');
-  assert.match(policy, /Last updated 16 October 2026/);
+  assert.match(policy, /Last updated 18 October 2026/);
   assert.match(policy, /Request a key[\s\S]*?email draft[\s\S]*?no form backend/i);
   assert.match(policy, /email address and your description of how you will use Managed transcription/i);
   assert.match(policy, /keys are issued by hand[\s\S]*?do not promise a response or turnaround time/i);

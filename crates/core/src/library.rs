@@ -19,8 +19,9 @@ use crate::{
     metadata::{update_metadata, update_metadata_and, with_current_metadata},
     participant::{default_name, label_key, Participants, SegmentParticipants},
     recording::{write_manifest, RecordingManifest},
+    snapshot::SnapshotStore,
     summary::{read_summary, render_summary_markdown},
-    transcript::{render_markdown_named, Language, Speaker, Transcript},
+    transcript::{render_markdown_with_snapshots, Language, Speaker, Transcript},
     MeetingSummary, SearchHit,
 };
 
@@ -603,8 +604,12 @@ impl Library {
             },
             |metadata| {
                 if let Some(transcript) = self.transcript(id)? {
-                    let markdown =
-                        markdown_from_metadata(metadata, &transcript, self.your_name.as_deref())?;
+                    let markdown = markdown_from_metadata(
+                        &folder,
+                        metadata,
+                        &transcript,
+                        self.your_name.as_deref(),
+                    )?;
                     write_transcript_markdown(&folder, &markdown)?;
                     self.index
                         .set_transcript(id, Some(&transcript), &self.participants(id)?)?;
@@ -747,7 +752,7 @@ impl Library {
     ) -> Result<(), LibraryError> {
         if let Some(transcript) = self.transcript(id)? {
             let markdown =
-                markdown_from_metadata(metadata, &transcript, self.your_name.as_deref())?;
+                markdown_from_metadata(folder, metadata, &transcript, self.your_name.as_deref())?;
             write_transcript_markdown(folder, &markdown)?;
             self.index
                 .set_transcript(id, Some(&transcript), &self.participants(id)?)?;
@@ -813,9 +818,12 @@ impl Library {
             },
             |metadata| {
                 if let Ok(Some(transcript)) = self.transcript(id) {
-                    if let Ok(markdown) =
-                        markdown_from_metadata(metadata, &transcript, self.your_name.as_deref())
-                    {
+                    if let Ok(markdown) = markdown_from_metadata(
+                        &folder,
+                        metadata,
+                        &transcript,
+                        self.your_name.as_deref(),
+                    ) {
                         let _ = write_transcript_markdown(&folder, &markdown);
                     }
                 }
@@ -954,6 +962,15 @@ impl Library {
             .set_transcript(id, transcript.as_ref(), &self.participants(id)?)
     }
 
+    /// Refreshes the readable export after a Snapshot or its caption changes.
+    pub fn refresh_transcript_export(&self, id: &str) -> Result<(), LibraryError> {
+        let folder = self.checked_meeting_dir(id)?;
+        if let Some(transcript) = self.transcript(id)? {
+            write_current_transcript_markdown(&folder, &transcript, self.your_name.as_deref())?;
+        }
+        Ok(())
+    }
+
     pub fn search(&self, query: &str) -> Result<Vec<SearchHit>, LibraryError> {
         self.index.search(query, 100)
     }
@@ -1007,13 +1024,17 @@ impl Library {
     }
 }
 
-fn markdown_from_metadata(
+pub(crate) fn markdown_from_metadata(
+    folder: &Path,
     metadata: &serde_json::Value,
     transcript: &Transcript,
     your_name: Option<&str>,
 ) -> io::Result<String> {
     let file: MeetingFile = serde_json::from_value(metadata.clone()).map_err(io::Error::other)?;
-    Ok(render_markdown_named(
+    let snapshots = SnapshotStore::new(folder)
+        .list()
+        .map_err(io::Error::other)?;
+    Ok(render_markdown_with_snapshots(
         &file.title,
         transcript,
         &Participants::new(
@@ -1022,6 +1043,7 @@ fn markdown_from_metadata(
             your_name,
             file.is_voice_note(),
         ),
+        &snapshots,
     ))
 }
 
@@ -1058,7 +1080,7 @@ fn write_current_transcript_markdown(
     with_current_metadata(folder, |metadata| {
         write_transcript_markdown(
             folder,
-            &markdown_from_metadata(metadata, transcript, your_name)?,
+            &markdown_from_metadata(folder, metadata, transcript, your_name)?,
         )
     })
 }

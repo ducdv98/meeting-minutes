@@ -2305,6 +2305,9 @@ fn open_meeting_folder(state: State<'_, LibraryState>, meeting_id: String) -> Re
         library
             .meeting(&meeting_id)
             .map_err(|error| error.to_string())?;
+        library
+            .refresh_transcript_export(&meeting_id)
+            .map_err(|error| error.to_string())?;
         library.meeting_dir(&meeting_id)
     };
     #[cfg(target_os = "windows")]

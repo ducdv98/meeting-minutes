@@ -1,1 +1,1 @@
-export const RECORDING_NOTICE = "Other people on the call may need to agree to being recorded. Let them know before you start. While a Recording runs, the window and the tray icon show it.";
+export const RECORDING_NOTICE = "Other people on the call may need to agree to being recorded. Let them know before you start. Snapshots may capture what others share. Each Snapshot is confirmed on screen when taken and stays on this PC. While a Recording runs, the window and the tray icon show it.";

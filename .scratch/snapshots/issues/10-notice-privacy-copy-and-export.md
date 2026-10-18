@@ -12,8 +12,8 @@ The Recording notice gains a line that Snapshots may capture what others share. 
 
 ## Acceptance criteria
 
-- [ ] The Recording notice mentions Snapshots and that each is confirmed on screen
-- [ ] The in-app privacy text and the website privacy page say Snapshots never leave the PC
-- [ ] The exported Meeting folder contains the Snapshot images
-- [ ] The transcript export shows an image reference and caption at each Snapshot's position
-- [ ] Tests cover the notice text and the export
+- [x] The Recording notice mentions Snapshots and that each is confirmed on screen
+- [x] The in-app privacy text and the website privacy page say Snapshots never leave the PC
+- [x] The exported Meeting folder contains the Snapshot images
+- [x] The transcript export shows an image reference and caption at each Snapshot's position
+- [x] Tests cover the notice text and the export

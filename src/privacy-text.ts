@@ -6,7 +6,7 @@ export const CLOUD_NOTICE_TEXT = `With a key saved, Meeting audio can be sent to
 export const CLOUD_NOTICE_SUMMARY = "A saved key can send Meeting audio or Transcript text to a cloud Provider.";
 export const correctionConfirmationText = (provider: string) => `Transcripts will be sent to ${provider} after every transcription.`;
 
-export const PRIVACY_INTRO = `${LIBRARY_LOCAL_TEXT} Nothing is sent unless one of these is on.`;
+export const PRIVACY_INTRO = `${LIBRARY_LOCAL_TEXT} Snapshots never leave this PC. Nothing is sent unless one of these is on.`;
 export const PRIVACY_DESTINATIONS = {
   managed: {
     sent: "Meeting audio",
