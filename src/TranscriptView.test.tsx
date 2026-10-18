@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import TranscriptView from "./TranscriptView";
 import type { Transcript } from "./processing";
@@ -22,6 +22,17 @@ it("plays the chosen Segment and highlights the current one", () => {
   expect(player.playSpan).toHaveBeenCalledWith(1000, 2000);
   expect(screen.getByText("World").closest("li")?.getAttribute("aria-current")).toBe("true");
   expect(screen.getByText("World").closest("li")?.className).toContain("current");
+});
+
+it("shows a Snapshot between the surrounding Segments and opens it", () => {
+  const onOpenSnapshot = vi.fn();
+  render(<TranscriptView transcript={transcript} positionMs={0} player={null} editable onEdit={vi.fn()} snapshots={[{ order: 1, timeline_ms: 950, caption: "Slide one", image_url: "data:image/png;base64,AAAA" }]} onOpenSnapshot={onOpenSnapshot} />);
+  const rows = within(screen.getByRole("list", { name: "Segments" })).getAllByRole("listitem");
+  expect(rows.map((row) => row.textContent)).toEqual([expect.stringContaining("Hello"), expect.stringContaining("Slide one"), expect.stringContaining("World")]);
+  const thumbnail = screen.getByRole("img", { name: "Slide one" });
+  expect(thumbnail.getAttribute("src")).toBe("data:image/png;base64,AAAA");
+  fireEvent.click(screen.getByRole("button", { name: "Open Snapshot: Slide one" }));
+  expect(onOpenSnapshot).toHaveBeenCalledWith(1);
 });
 
 it("shows Participant names, keeps the detected Speaker label, and clears named Unknown styling", () => {

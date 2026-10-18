@@ -127,6 +127,13 @@ fn takes_native_png_with_timeline_position_and_rebuilds_from_folder() {
     let rebuilt = SnapshotStore::new(library.meeting_dir(&id));
     assert_eq!(rebuilt.list().unwrap(), vec![snapshot.clone()]);
     assert_eq!(rebuilt.load(1).unwrap().png, png);
+    assert_eq!(
+        rebuilt.total_size_bytes().unwrap(),
+        std::fs::metadata(&snapshot.png_path).unwrap().len()
+            + std::fs::metadata(snapshot.png_path.with_extension("json"))
+                .unwrap()
+                .len()
+    );
     session.stop().unwrap();
 }
 

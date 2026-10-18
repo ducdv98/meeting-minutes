@@ -233,6 +233,15 @@ impl SnapshotStore {
         let png = fs::read(&snapshot.png_path)?;
         Ok(LoadedSnapshot { snapshot, png })
     }
+
+    /// Disk use of complete image and sidecar pairs in this Meeting.
+    pub fn total_size_bytes(&self) -> Result<u64, SnapshotError> {
+        self.list()?.into_iter().try_fold(0_u64, |total, snapshot| {
+            let image = fs::metadata(&snapshot.png_path)?.len();
+            let sidecar = fs::metadata(snapshot.png_path.with_extension("json"))?.len();
+            Ok(total.saturating_add(image).saturating_add(sidecar))
+        })
+    }
 }
 
 fn write_durable(path: &Path, bytes: &[u8]) -> Result<(), SnapshotError> {
