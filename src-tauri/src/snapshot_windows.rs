@@ -437,7 +437,9 @@ pub fn request(app: &AppHandle, draw_new: bool) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
+// Async commands run off the main thread. Building a window on the main thread deadlocks on
+// Windows (the build waits for the event loop that is running this command), freezing the app.
+#[tauri::command(async)]
 pub fn take_snapshot(app: AppHandle, draw_new: bool) -> Result<(), String> {
     request(&app, draw_new)
 }
@@ -463,7 +465,8 @@ pub fn overlay_closed(app: &AppHandle) {
     }
 }
 
-#[tauri::command]
+// Async for the same reason as take_snapshot: save() builds the confirmation window.
+#[tauri::command(async)]
 pub fn select_capture_region(
     app: AppHandle,
     window: tauri::WebviewWindow,
@@ -566,9 +569,13 @@ pub fn recording_changed(app: &AppHandle, status: &RecorderStatus) {
             app.global_shortcut()
                 .on_shortcut(shortcut.as_str(), move |app, _, event| {
                     if event.state == ShortcutState::Pressed {
-                        if let Err(error) = request(app, draw_new) {
-                            let _ = app.emit("snapshot-error", error);
-                        }
+                        // The handler runs on the main thread; request() builds windows.
+                        let app = app.clone();
+                        thread::spawn(move || {
+                            if let Err(error) = request(&app, draw_new) {
+                                let _ = app.emit("snapshot-error", error);
+                            }
+                        });
                     }
                 })
         {
