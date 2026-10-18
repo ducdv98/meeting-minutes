@@ -122,7 +122,8 @@ impl ScreenGrabber for GdiGrabber {
                 {
                     return Err("GetDIBits failed".into());
                 }
-                for pixel in bgra.chunks_exact_mut(4) {
+                let (pixels, _) = bgra.as_chunks_mut::<4>();
+                for pixel in pixels {
                     pixel.swap(0, 2);
                     pixel[3] = 255;
                 }
