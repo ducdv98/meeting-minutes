@@ -10,6 +10,16 @@ use std::{
 };
 
 pub const DEFAULT_GEMINI_MODEL: &str = "gemini-2.5-flash";
+pub const DEFAULT_SNAPSHOT_HOTKEY: &str = "Ctrl+Alt+S";
+pub const DEFAULT_DRAW_SNAPSHOT_HOTKEY: &str = "Ctrl+Alt+Shift+S";
+
+fn default_snapshot_hotkey() -> String {
+    DEFAULT_SNAPSHOT_HOTKEY.into()
+}
+
+fn default_draw_snapshot_hotkey() -> String {
+    DEFAULT_DRAW_SNAPSHOT_HOTKEY.into()
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -28,6 +38,10 @@ pub struct Settings {
     pub ai: AiSettings,
     pub speech: SpeechSettings,
     pub language_models: LanguageModelSettings,
+    #[serde(default = "default_snapshot_hotkey")]
+    pub snapshot_hotkey: String,
+    #[serde(default = "default_draw_snapshot_hotkey")]
+    pub draw_snapshot_hotkey: String,
 }
 
 impl Default for Settings {
@@ -44,6 +58,8 @@ impl Default for Settings {
             ai: AiSettings::default(),
             speech: SpeechSettings::default(),
             language_models: LanguageModelSettings::default(),
+            snapshot_hotkey: default_snapshot_hotkey(),
+            draw_snapshot_hotkey: default_draw_snapshot_hotkey(),
         }
     }
 }

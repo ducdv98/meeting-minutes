@@ -11,6 +11,7 @@ use std::{
 
 use meeting_minutes_core::{
     recorder::{Phase, RecorderStatus},
+    settings::Settings,
     snapshot::{CaptureRegion, RgbaFrame, ScreenGrabber, Snapshot},
 };
 use tauri::{
@@ -26,10 +27,8 @@ use windows::Win32::{
     UI::WindowsAndMessaging::{SetWindowDisplayAffinity, WDA_EXCLUDEFROMCAPTURE},
 };
 
-use crate::lock_recorder;
+use crate::{lock_recorder, SettingsPath};
 
-const REPEAT_HOTKEY: &str = "ctrl+alt+s";
-const DRAW_HOTKEY: &str = "ctrl+alt+shift+s";
 const OVERLAY_PREFIX: &str = "capture-region-";
 const CONFIRM_PREFIX: &str = "snapshot-confirmation-";
 static OVERLAY_NUMBER: AtomicU64 = AtomicU64::new(0);
@@ -43,7 +42,8 @@ struct SnapshotUiState {
     region: Option<CaptureRegion>,
     selecting: bool,
     recording_id: Option<String>,
-    hotkeys_registered: bool,
+    hotkeys_attempted: bool,
+    registered_hotkeys: Vec<String>,
 }
 
 pub struct GdiGrabber;
@@ -453,13 +453,12 @@ pub fn recording_changed(app: &AppHandle, status: &RecorderStatus) {
         ui.region = None;
         ui.recording_id = None;
         ui.selecting = false;
-        let had_hotkeys = ui.hotkeys_registered;
-        ui.hotkeys_registered = false;
+        let registered = std::mem::take(&mut ui.registered_hotkeys);
+        ui.hotkeys_attempted = false;
         drop(ui);
         close_overlays(app);
-        if had_hotkeys {
-            let _ = app.global_shortcut().unregister(REPEAT_HOTKEY);
-            let _ = app.global_shortcut().unregister(DRAW_HOTKEY);
+        for shortcut in registered {
+            let _ = app.global_shortcut().unregister(shortcut.as_str());
         }
         return;
     }
@@ -467,28 +466,32 @@ pub fn recording_changed(app: &AppHandle, status: &RecorderStatus) {
         ui.region = None;
         ui.recording_id = status.meeting_id.clone();
     }
-    if ui.hotkeys_registered {
+    if ui.hotkeys_attempted {
         return;
     }
-    for (shortcut, draw_new) in [(REPEAT_HOTKEY, false), (DRAW_HOTKEY, true)] {
-        if let Err(error) = app
-            .global_shortcut()
-            .on_shortcut(shortcut, move |app, _, event| {
-                if event.state == ShortcutState::Pressed {
-                    if let Err(error) = request(app, draw_new) {
-                        let _ = app.emit("snapshot-error", error);
+    ui.hotkeys_attempted = true;
+    let settings = Settings::load(&app.state::<SettingsPath>().0);
+    let mut registration_errors = Vec::new();
+    for (shortcut, draw_new) in [
+        (&settings.snapshot_hotkey, false),
+        (&settings.draw_snapshot_hotkey, true),
+    ] {
+        if let Err(error) =
+            app.global_shortcut()
+                .on_shortcut(shortcut.as_str(), move |app, _, event| {
+                    if event.state == ShortcutState::Pressed {
+                        if let Err(error) = request(app, draw_new) {
+                            let _ = app.emit("snapshot-error", error);
+                        }
                     }
-                }
-            })
+                })
         {
-            let _ = app.global_shortcut().unregister(REPEAT_HOTKEY);
-            let _ = app.global_shortcut().unregister(DRAW_HOTKEY);
-            let _ = app.emit(
-                "snapshot-hotkey-error",
-                format!("Could not register {shortcut}: {error}"),
-            );
-            return;
+            registration_errors.push(format!("Could not register {shortcut}: {error}"));
+        } else {
+            ui.registered_hotkeys.push(shortcut.clone());
         }
     }
-    ui.hotkeys_registered = true;
+    if !registration_errors.is_empty() {
+        let _ = app.emit("snapshot-hotkey-error", registration_errors.join("; "));
+    }
 }

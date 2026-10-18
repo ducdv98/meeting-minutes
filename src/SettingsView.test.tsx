@@ -6,12 +6,15 @@ import { acknowledgeCloudNotice, firstRunInfo, getSettings, installedModels, mod
 import { aiStatus, deleteApiKey, listAiModels, managedAccount, managedSendCode, managedSignIn, managedDisconnect, managedRemoveKey, managedSaveKey, managedStatus, saveApiKey, testCloudApiKey, testLanguageModel, updateLanguageModels, type AiStatus } from "./ai";
 import { openLink } from "./app-info";
 import { CLOUD_NOTICE_SUMMARY, CLOUD_NOTICE_TEXT, PRIVACY_INTRO } from "./privacy-text";
+import { onSnapshotHotkeyError } from "./recording";
+import { updateSnapshotHotkeys } from "./processing";
 
-vi.mock("./processing", async (importOriginal) => ({ ...(await importOriginal<typeof import("./processing")>()), firstRunInfo: vi.fn(), getSettings: vi.fn(), updateSettings: vi.fn(), installedModels: vi.fn(), acknowledgeCloudNotice: vi.fn(), modelDownloadStatus: vi.fn(), onModelDownloadStatus: vi.fn() }));
+vi.mock("./processing", async (importOriginal) => ({ ...(await importOriginal<typeof import("./processing")>()), firstRunInfo: vi.fn(), getSettings: vi.fn(), updateSettings: vi.fn(), updateSnapshotHotkeys: vi.fn(), installedModels: vi.fn(), acknowledgeCloudNotice: vi.fn(), modelDownloadStatus: vi.fn(), onModelDownloadStatus: vi.fn() }));
 vi.mock("./ai", async (importOriginal) => ({ ...(await importOriginal<typeof import("./ai")>()), aiStatus: vi.fn(), listAiModels: vi.fn(), managedStatus: vi.fn(), managedAccount: vi.fn(), managedSendCode: vi.fn(), managedSignIn: vi.fn(), managedDisconnect: vi.fn(), managedRemoveKey: vi.fn(), managedSaveKey: vi.fn(), saveApiKey: vi.fn(), deleteApiKey: vi.fn(), updateLanguageModels: vi.fn(), testLanguageModel: vi.fn(), testCloudApiKey: vi.fn() }));
 vi.mock("./app-info", () => ({ openLink: vi.fn() }));
+vi.mock("./recording", async (importOriginal) => ({ ...(await importOriginal<typeof import("./recording")>()), onSnapshotHotkeyError: vi.fn() }));
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.resetAllMocks(); });
-beforeEach(() => { vi.mocked(firstRunInfo).mockResolvedValue({ discrete_gpu: false, library_location: "D:\\Meetings" }); vi.mocked(installedModels).mockResolvedValue([]); vi.mocked(managedStatus).mockResolvedValue({ connected: false, revoked: false }); vi.mocked(managedAccount).mockResolvedValue({ email: "person@example.com", state: "admitted", minutes_used: 0.5, minutes_remaining: 119.5, allowance_minutes: 120, resets_at: "2026-11-01T00:00:00.000Z" }); vi.mocked(modelDownloadStatus).mockResolvedValue([]); vi.mocked(onModelDownloadStatus).mockResolvedValue(() => {}); });
+beforeEach(() => { vi.mocked(firstRunInfo).mockResolvedValue({ discrete_gpu: false, library_location: "D:\\Meetings" }); vi.mocked(installedModels).mockResolvedValue([]); vi.mocked(managedStatus).mockResolvedValue({ connected: false, revoked: false }); vi.mocked(managedAccount).mockResolvedValue({ email: "person@example.com", state: "admitted", minutes_used: 0.5, minutes_remaining: 119.5, allowance_minutes: 120, resets_at: "2026-11-01T00:00:00.000Z" }); vi.mocked(modelDownloadStatus).mockResolvedValue([]); vi.mocked(onModelDownloadStatus).mockResolvedValue(() => {}); vi.mocked(onSnapshotHotkeyError).mockResolvedValue(() => {}); });
 
 it("shows the reported Managed allowance without Account UI", async () => {
   vi.mocked(getSettings).mockResolvedValue(base); vi.mocked(aiStatus).mockResolvedValue(empty);
@@ -36,6 +39,35 @@ it("shows the resolved Library root in General", async () => {
   render(<SettingsView initialTab="general" />);
   expect(await screen.findByText("D:\\Meetings")).toBeTruthy();
   expect(firstRunInfo).toHaveBeenCalledOnce();
+});
+
+it("changes both Snapshot hotkeys and rejects a duplicate combination", async () => {
+  vi.mocked(getSettings).mockResolvedValue({ ...base, snapshot_hotkey: "Ctrl+Alt+S", draw_snapshot_hotkey: "Ctrl+Alt+Shift+S" });
+  vi.mocked(aiStatus).mockResolvedValue(empty);
+  vi.mocked(updateSnapshotHotkeys).mockImplementation(async (snapshotHotkey, drawSnapshotHotkey) => ({ ...base, snapshot_hotkey: snapshotHotkey, draw_snapshot_hotkey: drawSnapshotHotkey }));
+  render(<SettingsView initialTab="general" />);
+  const repeat = await screen.findByRole("textbox", { name: "Take Snapshot" });
+  const draw = screen.getByRole("textbox", { name: "Draw new Capture region" });
+  expect(repeat).toHaveProperty("value", "Ctrl+Alt+S");
+  fireEvent.keyDown(repeat, { key: "D", ctrlKey: true, altKey: true });
+  await waitFor(() => expect(updateSnapshotHotkeys).toHaveBeenCalledWith("Ctrl+Alt+D", "Ctrl+Alt+Shift+S"));
+  fireEvent.keyDown(draw, { key: "F", ctrlKey: true, altKey: true, shiftKey: true });
+  await waitFor(() => expect(updateSnapshotHotkeys).toHaveBeenLastCalledWith("Ctrl+Alt+D", "Ctrl+Alt+Shift+F"));
+  fireEvent.keyDown(draw, { key: "D", ctrlKey: true, altKey: true });
+  expect((await screen.findByRole("alert")).textContent).toContain("different combinations");
+  expect(updateSnapshotHotkeys).toHaveBeenCalledTimes(2);
+});
+
+it("shows the named Snapshot hotkey when registration fails", async () => {
+  vi.mocked(getSettings).mockResolvedValue({ ...base, snapshot_hotkey: "Ctrl+Alt+S", draw_snapshot_hotkey: "Ctrl+Alt+Shift+S" });
+  vi.mocked(aiStatus).mockResolvedValue(empty);
+  let notify: (message: string) => void = () => {};
+  vi.mocked(onSnapshotHotkeyError).mockImplementation(async (handler) => { notify = handler; return () => {}; });
+  render(<SettingsView initialTab="general" />);
+  await screen.findByRole("textbox", { name: "Take Snapshot" });
+  await waitFor(() => expect(onSnapshotHotkeyError).toHaveBeenCalled());
+  act(() => notify("Could not register Ctrl+Alt+S: already in use"));
+  expect(screen.getByRole("alert").textContent).toContain("Ctrl+Alt+S");
 });
 
 it("shows five tabs, remembers the last one, and lets an opening link choose another", async () => {

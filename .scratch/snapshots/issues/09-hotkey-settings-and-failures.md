@@ -14,5 +14,5 @@ The user can change both Snapshot hotkeys in Settings, next to the existing reco
 
 - [ ] Both hotkeys are configurable in Settings and the change takes effect on the next Recording
 - [ ] A hotkey that clashes with another app shows a visible message naming it
-- [ ] The two Snapshot hotkeys cannot be set to the same combination
-- [ ] Settings UI tests cover change and registration failure
+- [x] The two Snapshot hotkeys cannot be set to the same combination
+- [x] Settings UI tests cover change and registration failure

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Check } from "lucide-react";
-import { firstRunInfo, getSettings, installedModels, onProcessingStatus, updateSettings, type Settings } from "./processing";
+import { firstRunInfo, getSettings, installedModels, onProcessingStatus, updateSettings, updateSnapshotHotkeys, type Settings } from "./processing";
+import { onSnapshotHotkeyError } from "./recording";
 import { aiStatus, type AiStatus } from "./ai";
 import { ErrorState } from "./components/states/ErrorState";
 import { Loading } from "./components/states/Loading";
@@ -36,13 +37,16 @@ export default function SettingsView({ initialTab }: { initialTab?: SettingsTabI
   const [savedLeaving, setSavedLeaving] = useState(false);
   const saveQueue = useRef(Promise.resolve());
   const saveVersion = useRef(0);
+  const hotkeyVersion = useRef(0);
+  const savedHotkeys = useRef({ snapshot_hotkey: "Ctrl+Alt+S", draw_snapshot_hotkey: "Ctrl+Alt+Shift+S" });
   const [providerStatus, setProviderStatus] = useState<AiStatus | null>(null);
   const [aiError, setAiError] = useState<string | null>(null);
+  const [hotkeyError, setHotkeyError] = useState<string | null>(null);
   useEffect(() => { lastSettingsTab = tab; }, [tab]);
   useEffect(() => {
     let active = true;
     setLoadFailed(false);
-    getSettings().then((next) => { if (active) { setSettings(next); setVocabulary(next.vocabulary.join("\n")); } }, () => { if (active) setLoadFailed(true); });
+    getSettings().then((next) => { if (active) { setSettings(next); savedHotkeys.current = { snapshot_hotkey: next.snapshot_hotkey ?? "Ctrl+Alt+S", draw_snapshot_hotkey: next.draw_snapshot_hotkey ?? "Ctrl+Alt+Shift+S" }; setVocabulary(next.vocabulary.join("\n")); } }, () => { if (active) setLoadFailed(true); });
     installedModels().then((names) => { if (active) setInstalled(names); }, () => {});
     firstRunInfo().then((info) => { if (active) setLibraryLocation(info.library_location); }, () => { if (active) setLibraryLocation("Unavailable"); });
     return () => { active = false; };
@@ -57,6 +61,12 @@ export default function SettingsView({ initialTab }: { initialTab?: SettingsTabI
     let active = true;
     aiStatus().then((next) => { if (active) setProviderStatus(next); }, (reason) => { if (active) setAiError(String(reason)); });
     return () => { active = false; };
+  }, []);
+  useEffect(() => {
+    let active = true;
+    let unlisten: (() => void) | undefined;
+    void onSnapshotHotkeyError((message) => { if (active) setHotkeyError(message); }).then((stop) => { if (active) unlisten = stop; else stop(); }, () => {});
+    return () => { active = false; unlisten?.(); };
   }, []);
   useEffect(() => {
     if (!saved) return;
@@ -83,6 +93,29 @@ export default function SettingsView({ initialTab }: { initialTab?: SettingsTabI
   function persist(next: Settings) {
     return next.speech ? updateSettings(next.auto_process, next.model, next.vocabulary, next.language, next.your_name, next.speech) : updateSettings(next.auto_process, next.model, next.vocabulary, next.language, next.your_name);
   }
+  function changeSnapshotHotkey(snapshotHotkey: string, drawSnapshotHotkey: string) {
+    if (snapshotHotkey === drawSnapshotHotkey) {
+      setHotkeyError("Snapshot hotkeys need different combinations.");
+      return;
+    }
+    setHotkeyError(null);
+    setSaved(false);
+    setSavedLeaving(false);
+    setSettings((current) => current && { ...current, snapshot_hotkey: snapshotHotkey, draw_snapshot_hotkey: drawSnapshotHotkey });
+    const version = ++hotkeyVersion.current;
+    saveQueue.current = saveQueue.current.then(async () => {
+      try {
+        await updateSnapshotHotkeys(snapshotHotkey, drawSnapshotHotkey);
+        savedHotkeys.current = { snapshot_hotkey: snapshotHotkey, draw_snapshot_hotkey: drawSnapshotHotkey };
+        if (version === hotkeyVersion.current) { setSavedLeaving(false); setSaved(true); }
+      } catch (reason) {
+        if (version === hotkeyVersion.current) {
+          setSettings((current) => current && { ...current, ...savedHotkeys.current });
+          setHotkeyError(String(reason));
+        }
+      }
+    });
+  }
   function saveVocabulary() {
     const next = withVocabulary(settings, vocabulary);
     if (!next) return;
@@ -102,7 +135,7 @@ export default function SettingsView({ initialTab }: { initialTab?: SettingsTabI
       {error && <ErrorState title="Couldn't save Settings" guidance={`${error.reason}. The change shown below isn't saved yet.`} onRetry={() => save(error.settings)} />}
       {loadFailed ? <ErrorState title="Couldn't load Settings" guidance="Try again in a moment." onRetry={() => setLoad((value) => value + 1)} /> : !settings ? <Loading message="Loading Settings…" /> : <Tabs value={tab} onValueChange={(value) => setTab(value as SettingsTabId)} className="motion-content-enter min-w-0">
         <TabsList aria-label="Settings tabs" className="flex-wrap px-0"><TabsTrigger value="general">General</TabsTrigger><TabsTrigger value="speech-to-text">Speech-to-text</TabsTrigger><TabsTrigger value="language-models">Language models</TabsTrigger><TabsTrigger value="keys">Keys</TabsTrigger><TabsTrigger value="privacy">Privacy</TabsTrigger></TabsList>
-        <TabsContent forceMount hidden={tab !== "general"} value="general" className="settings-tab pt-7"><GeneralTab settings={settings} save={save} libraryLocation={libraryLocation} /></TabsContent>
+        <TabsContent forceMount hidden={tab !== "general"} value="general" className="settings-tab pt-7"><GeneralTab settings={settings} save={save} libraryLocation={libraryLocation} changeSnapshotHotkey={changeSnapshotHotkey} hotkeyError={hotkeyError} /></TabsContent>
         <TabsContent forceMount hidden={tab !== "speech-to-text"} value="speech-to-text" className="settings-tab pt-7"><SpeechToTextTab settings={settings} save={save} installed={installed} vocabulary={vocabulary} setVocabulary={setVocabulary} saveVocabulary={saveVocabulary} providerStatus={providerStatus} onManageKeys={() => setTab("keys")} active={tab === "speech-to-text"} /></TabsContent>
         <TabsContent forceMount hidden={tab !== "language-models"} value="language-models" className="settings-tab pt-7"><LanguageModelsTab settings={settings} setSettings={setSettings} providerStatus={providerStatus} setProviderStatus={setProviderStatus} aiError={aiError} setAiError={setAiError} onManageKeys={() => setTab("keys")} /></TabsContent>
         <TabsContent forceMount hidden={tab !== "keys"} value="keys" className="settings-tab pt-7"><KeysTab settings={settings} setSettings={setSettings} providerStatus={providerStatus} setProviderStatus={setProviderStatus} active={tab === "keys"} /></TabsContent>
