@@ -1,5 +1,6 @@
 use meeting_minutes_core::{
     capture::{Clock, DeviceInfo, InputDevice, InputOpener, Packet, Source},
+    recorder::Recorder,
     recording::CaptureSession,
     snapshot::{CaptureRegion, RgbaFrame, ScreenGrabber, SnapshotError, SnapshotStore},
     Library,
@@ -231,4 +232,37 @@ fn a_later_recording_uses_the_meeting_timeline() {
     assert_eq!((first.timeline_ms, first.order), (3_000, 1));
     assert_eq!((second.timeline_ms, second.order), (5_000, 2));
     second_session.stop().unwrap();
+}
+
+#[test]
+fn live_recorder_takes_a_snapshot_and_refuses_one_after_stop() {
+    let temp = TempDir::new().unwrap();
+    let mut library = Library::open(
+        temp.path().join("Library"),
+        temp.path().join("index.sqlite3"),
+    )
+    .unwrap();
+    let now = Arc::new(AtomicU64::new(1_000_000));
+    let mut recorder = Recorder::new(SilentOpener, FakeClock(now.clone()), true);
+    recorder
+        .start(
+            &mut library,
+            chrono::DateTime::parse_from_rfc3339("2026-10-12T09:30:00Z").unwrap(),
+        )
+        .unwrap();
+    let id = recorder.status().meeting_id.unwrap();
+    now.store(1_000_000 + 2_000 * 10_000, Ordering::SeqCst);
+
+    let saved = recorder.take_snapshot(region(), &FakeGrabber).unwrap();
+    assert_eq!(saved.timeline_ms, 2_000);
+    assert_eq!(
+        SnapshotStore::new(library.meeting_dir(&id)).list().unwrap(),
+        vec![saved]
+    );
+
+    recorder.stop().unwrap();
+    assert!(matches!(
+        recorder.take_snapshot(region(), &FakeGrabber),
+        Err(SnapshotError::NoRecording)
+    ));
 }

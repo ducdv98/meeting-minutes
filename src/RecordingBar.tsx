@@ -13,6 +13,7 @@ import {
   formatElapsed,
   onRecordingNoticeRequested,
   onRecordingStatus,
+  onSnapshotError,
   pauseHotkey,
   pauseRecording,
   recordHotkey,
@@ -41,6 +42,7 @@ export default function RecordingBar({ recordRequest = 0, hideIdleButton = false
   const [status, setStatus] = useState<RecorderStatus | null>(null);
   const [noticeAction, setNoticeAction] = useState<(() => Promise<RecorderStatus>) | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [snapshotError, setSnapshotError] = useState<string | null>(null);
   const [dismissedSwitches, setDismissedSwitches] = useState(0);
   const handledRecordRequest = useRef(0);
 
@@ -54,6 +56,7 @@ export default function RecordingBar({ recordRequest = 0, hideIdleButton = false
     const unlisten = [
       onRecordingStatus((next) => { if (active) { eventArrived = true; setStatus(next); } }),
       onRecordingNoticeRequested(() => { if (active) setNoticeAction(() => startRecording); }),
+      onSnapshotError((reason) => { if (active) setSnapshotError(reason); }),
     ];
     recordingStatus().then(
       (next) => { if (active && !eventArrived) setStatus(next); },
@@ -102,7 +105,7 @@ export default function RecordingBar({ recordRequest = 0, hideIdleButton = false
   const capturing = status.phase !== "idle";
   const latestSwitch = capturing && status.device_switches.length > dismissedSwitches
     ? status.device_switches.at(-1) : undefined;
-  if (hideIdleButton && !capturing && !status.saves.length && !status.continue_offers.length && !noticeAction && !error) return null;
+  if (hideIdleButton && !capturing && !status.saves.length && !status.continue_offers.length && !noticeAction && !error && !snapshotError) return null;
   const sourceLevel = (source: "microphone" | "system_audio") => status.source_levels?.find((item) => item.source === source);
   const sourceDevice = (source: "microphone" | "system_audio") => status.source_devices?.find((item) => item.source === source)?.device;
 
@@ -129,6 +132,7 @@ export default function RecordingBar({ recordRequest = 0, hideIdleButton = false
     </div>}
     {!capturing && !hideIdleButton && <div className="px-5 py-3"><Button variant="recordSoft" title={`Record (${recordHotkey})`} onClick={() => record(startRecording)}><span aria-hidden="true" className="size-2 rounded-full bg-current shadow-[0_0_0_3px_color-mix(in_srgb,currentColor_25%,transparent)]" />Record</Button></div>}
     {error && <div className="mx-5 my-3"><ErrorState title="Couldn't update the Recording" guidance={`${error}. Try again.`} /></div>}
+    {snapshotError && <div className="mx-5 my-3"><ErrorState title="Snapshot issue" guidance={snapshotError} /><Button variant="ghost" onClick={() => setSnapshotError(null)}>Dismiss</Button></div>}
     {status.saves.map((save) => <div key={save.meeting_id} className="mx-5 my-3 rounded-md border border-line bg-raised px-3 py-2 text-sm" aria-live="polite">
       {save.state === "saving" ? <>{save.recovered ? "Recovering" : "Saving"} {save.meeting_id}…</> : <>
         <ErrorState title="Couldn't save the Recording" guidance={`The audio for ${save.meeting_id} is kept. ${save.error ?? "Try again."}`} onRetry={() => run(() => retrySave(save.meeting_id))} />

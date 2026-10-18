@@ -52,6 +52,10 @@ export function stopRecording(): Promise<RecorderStatus> {
   return invoke<RecorderStatus>("stop_recording");
 }
 
+export function takeSnapshot(drawNew = false): Promise<void> {
+  return invoke("take_snapshot", { drawNew });
+}
+
 export function retrySave(meetingId: string): Promise<RecorderStatus> {
   return invoke<RecorderStatus>("retry_save", { meetingId });
 }
@@ -79,6 +83,14 @@ export function onRecordingNoticeRequested(handler: () => void): Promise<Unliste
 
 export function onLibraryChanged(handler: () => void): Promise<UnlistenFn> {
   return listen("library-changed", () => handler());
+}
+
+export async function onSnapshotError(handler: (error: string) => void): Promise<UnlistenFn> {
+  const [stopCapture, stopHotkey] = await Promise.all([
+    listen<string>("snapshot-error", (event) => handler(event.payload)),
+    listen<string>("snapshot-hotkey-error", (event) => handler(event.payload)),
+  ]);
+  return () => { stopCapture(); stopHotkey(); };
 }
 
 export function formatElapsed(ms: number): string {

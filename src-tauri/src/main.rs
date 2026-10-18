@@ -1,5 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+#[cfg(windows)]
+mod snapshot_windows;
+
 use std::{
     collections::{HashMap, VecDeque},
     fs,
@@ -2569,6 +2572,8 @@ fn status(app: &AppHandle) -> Result<RecorderStatus, String> {
 /// Sends the current state to the window and the tray.
 fn publish(app: &AppHandle) -> Result<RecorderStatus, String> {
     let status = status(app)?;
+    #[cfg(windows)]
+    snapshot_windows::recording_changed(app, &status);
     let _ = app.emit("recording-status", &status);
     update_tray(app);
     Ok(status)
@@ -3264,6 +3269,8 @@ fn main() {
                 QpcClock::new()?,
                 settings.recording_notice_acknowledged,
             )));
+            #[cfg(windows)]
+            app.manage(snapshot_windows::SnapshotState::default());
 
             let open_item = MenuItem::with_id(app, "open", "Open", true, None::<&str>)?;
             let status_item = MenuItem::with_id(app, "status", "Idle", false, None::<&str>)?;
@@ -3359,9 +3366,13 @@ fn main() {
         .on_window_event(|window, event| {
             // Closing the window keeps the app in the tray; Quit exits.
             match event {
-                WindowEvent::CloseRequested { api, .. } => {
+                WindowEvent::CloseRequested { api, .. } if window.label() == "main" => {
                     api.prevent_close();
                     let _ = window.hide();
+                }
+                #[cfg(windows)]
+                WindowEvent::Destroyed if window.label().starts_with("capture-region-") => {
+                    snapshot_windows::overlay_closed(window.app_handle());
                 }
                 WindowEvent::DragDrop(DragDropEvent::Enter { .. }) => {
                     let _ = window.emit("import-hover", true);
@@ -3401,6 +3412,12 @@ fn main() {
             pause_recording,
             resume_recording,
             stop_recording,
+            #[cfg(windows)]
+            snapshot_windows::take_snapshot,
+            #[cfg(windows)]
+            snapshot_windows::select_capture_region,
+            #[cfg(windows)]
+            snapshot_windows::cancel_capture_region,
             retry_save,
             continue_meeting,
             dismiss_continue,
