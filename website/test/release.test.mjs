@@ -92,3 +92,9 @@ test('generated verification notes render without workflow markers', () => {
   assert.match(html, /SHA-256: abc/);
   assert.doesNotMatch(html, /installer-verification/);
 });
+
+test('checksum written with spaces matches the asset name GitHub stores with dots', () => {
+  const hash = 'a'.repeat(64);
+  assert.equal(parseInstallerChecksum(`${hash}  Meeting Minutes_1.0.0_x64-setup.exe\r\n`, 'Meeting.Minutes_1.0.0_x64-setup.exe'), hash);
+  assert.throws(() => parseInstallerChecksum(`${hash}  Other Name_1.0.0_x64-setup.exe`, 'Meeting.Minutes_1.0.0_x64-setup.exe'), /Invalid SHA-256/);
+});

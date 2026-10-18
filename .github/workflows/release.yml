@@ -122,7 +122,7 @@ jobs:
           $installer = Get-Item -LiteralPath $env:INSTALLER_PATH
           $hash = (Get-FileHash -LiteralPath $installer.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
           $checksum = "$($installer.FullName).sha256"
-          "$hash  $($installer.Name)" | Set-Content -LiteralPath $checksum -Encoding utf8
+          "$hash  $($installer.Name.Replace(' ', '.'))" | Set-Content -LiteralPath $checksum -Encoding utf8
           gh release upload $env:RELEASE_TAG $checksum --clobber
           if ($LASTEXITCODE -ne 0) { throw 'Could not upload installer checksum' }
 

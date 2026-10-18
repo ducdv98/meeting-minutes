@@ -108,8 +108,9 @@ export function releasePageState(releases) {
   };
 }
 
+// GitHub stores uploaded asset names with spaces replaced by dots.
 export function parseInstallerChecksum(contents, installerName) {
   const match = String(contents).replace(/^\uFEFF/, '').trim().match(/^([0-9a-f]{64})  (.+)$/i);
-  if (!match || match[2] !== installerName) throw new Error(`Invalid SHA-256 for ${installerName}: expected a 64-character hash and matching installer filename`);
+  if (!match || match[2].replaceAll(' ', '.') !== installerName) throw new Error(`Invalid SHA-256 for ${installerName}: expected a 64-character hash and matching installer filename`);
   return match[1].toLowerCase();
 }
