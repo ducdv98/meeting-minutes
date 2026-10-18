@@ -3,11 +3,22 @@ import { MEETING_LANGUAGES } from "../languages";
 import { Input } from "../components/ui/Input";
 import { Switch } from "../components/ui/Switch";
 import { FormSection } from "../components/FormSection";
+import { pauseHotkey, recordHotkey } from "../recording";
 
 const selectClass = "h-[34px] w-full rounded-sm border border-line-strong bg-raised px-2.5 text-base outline-none focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-soft)] disabled:opacity-50";
 
-export function GeneralTab({ settings, save, libraryLocation }: { settings: Settings; save: (next: Settings) => void; libraryLocation: string | null }) {
-  return <FormSection title="Meetings">
+function pressedHotkey(event: React.KeyboardEvent<HTMLInputElement>): string | null {
+  const physical = /^Key([A-Z])$/.exec(event.code)?.[1] ?? /^Digit([0-9])$/.exec(event.code)?.[1];
+  const key = physical ?? (event.key.length === 1 && /^[a-z0-9]$/i.test(event.key) ? event.key.toUpperCase()
+    : /^F(?:[1-9]|1[0-2])$/.test(event.key) ? event.key : null);
+  if (!key || (!event.ctrlKey && !event.altKey)) return null;
+  return [event.ctrlKey && "Ctrl", event.altKey && "Alt", event.shiftKey && "Shift", key].filter(Boolean).join("+");
+}
+
+export function GeneralTab({ settings, save, libraryLocation, changeSnapshotHotkey, hotkeyError }: { settings: Settings; save: (next: Settings) => void; libraryLocation: string | null; changeSnapshotHotkey: (snapshotHotkey: string, drawSnapshotHotkey: string) => void; hotkeyError: string | null }) {
+  const snapshotHotkey = settings.snapshot_hotkey ?? "Ctrl+Alt+S";
+  const drawSnapshotHotkey = settings.draw_snapshot_hotkey ?? "Ctrl+Alt+Shift+S";
+  return <><FormSection title="Meetings">
     <div className="grid gap-1.5"><label htmlFor="your-name" className="text-sm font-medium">Your name</label><Input id="your-name" value={settings.your_name ?? ""} placeholder="Me" onChange={(event) => save({ ...settings, your_name: event.target.value || null })} /><span className="text-xs text-ink-muted">Default Participant for Me in Meetings without a name override.</span></div>
     <div className="grid grid-cols-2 gap-3">
       <div className="grid gap-1.5">
@@ -29,5 +40,13 @@ export function GeneralTab({ settings, save, libraryLocation }: { settings: Sett
       </div>
       <Switch aria-labelledby="auto-process" aria-describedby="auto-process-note" checked={settings.auto_process} onCheckedChange={(auto_process) => save({ ...settings, auto_process })} />
     </div>
-  </FormSection>;
+  </FormSection>
+    <FormSection title="Hotkeys">
+      <p className="m-0 text-xs text-ink-muted">Press a new combination in a Snapshot field. Changes apply to the next Recording.</p>
+      <div className="grid gap-1 text-sm text-ink-muted"><span>Record: {recordHotkey}</span><span>Pause or resume: {pauseHotkey}</span></div>
+      <div className="grid gap-1.5"><label htmlFor="snapshot-hotkey" className="text-sm font-medium">Take Snapshot</label><Input id="snapshot-hotkey" readOnly value={snapshotHotkey} onKeyDown={(event) => { const key = pressedHotkey(event); if (key) { event.preventDefault(); changeSnapshotHotkey(key, drawSnapshotHotkey); } }} /></div>
+      <div className="grid gap-1.5"><label htmlFor="draw-snapshot-hotkey" className="text-sm font-medium">Draw new Capture region</label><Input id="draw-snapshot-hotkey" readOnly value={drawSnapshotHotkey} onKeyDown={(event) => { const key = pressedHotkey(event); if (key) { event.preventDefault(); changeSnapshotHotkey(snapshotHotkey, key); } }} /></div>
+      {hotkeyError && <p role="alert" className="m-0 text-sm text-record">{hotkeyError}</p>}
+    </FormSection>
+  </>;
 }

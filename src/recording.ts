@@ -93,6 +93,10 @@ export async function onSnapshotError(handler: (error: string) => void): Promise
   return () => { stopCapture(); stopHotkey(); };
 }
 
+export function onSnapshotHotkeyError(handler: (error: string) => void): Promise<UnlistenFn> {
+  return listen<string>("snapshot-hotkey-error", (event) => handler(event.payload));
+}
+
 export function formatElapsed(ms: number): string {
   const total = Math.floor(ms / 1000);
   const hours = Math.floor(total / 3600);

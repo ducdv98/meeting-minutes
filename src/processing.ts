@@ -32,7 +32,7 @@ export type SpeechProvider = "groq" | "gemini";
 export interface SpeechModel { provider: SpeechProvider; model: string }
 export interface SpeechSettings { models: SpeechModel[]; automatic_groq: string | null; automatic_gemini: string | null; automatic_whisper: string }
 export const GROQ_SPEECH_MODELS = ["whisper-large-v3", "whisper-large-v3-turbo"] as const;
-export interface Settings { first_run_completed: boolean; recording_notice_acknowledged: boolean; cloud_notice_acknowledged: boolean; auto_process: boolean; model: string; vocabulary: string[]; language: Language | null; your_name: string | null; ai: AiSettings; speech?: SpeechSettings; language_models?: LanguageModelSettings }
+export interface Settings { first_run_completed: boolean; recording_notice_acknowledged: boolean; cloud_notice_acknowledged: boolean; auto_process: boolean; model: string; vocabulary: string[]; language: Language | null; your_name: string | null; ai: AiSettings; speech?: SpeechSettings; language_models?: LanguageModelSettings; snapshot_hotkey?: string; draw_snapshot_hotkey?: string }
 
 export const processingStatus = () => invoke<ProcessingStatus>("processing_status");
 /** A chosen Speech-to-text model is local:<name>, groq:<id>, gemini:<id>, or managed. Omit it for the Transcription order. */
@@ -49,6 +49,7 @@ export const openLibraryFolder = () => invoke<void>("open_library_folder");
 export const completeFirstRun = () => invoke<void>("complete_first_run");
 export const acknowledgeCloudNotice = () => invoke<Settings>("acknowledge_cloud_notice");
 export const updateSettings = (autoProcess: boolean, model: string, vocabulary: string[], language: Language | null, yourName: string | null, speech?: SpeechSettings) => invoke<Settings>("update_settings", { autoProcess, model, vocabulary, language, yourName, speech: speech ?? null });
+export const updateSnapshotHotkeys = (snapshotHotkey: string, drawSnapshotHotkey: string) => invoke<Settings>("update_snapshot_hotkeys", { snapshotHotkey, drawSnapshotHotkey });
 export const testSpeechModel = (provider: SpeechProvider, model: string) => invoke<void>("test_speech_model", { provider, model });
 export const installedModels = () => invoke<string[]>("installed_models");
 export interface ModelDownloadStatus { model_id: string; state: "not_downloaded" | "downloading" | "downloaded" | "failed" | "cancelled"; progress: number; error: string | null }

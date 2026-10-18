@@ -817,6 +817,34 @@ fn update_settings(
 }
 
 #[tauri::command]
+fn update_snapshot_hotkeys(
+    path: State<'_, SettingsPath>,
+    snapshot_hotkey: String,
+    draw_snapshot_hotkey: String,
+) -> Result<Settings, String> {
+    let repeat = snapshot_hotkey
+        .parse::<Shortcut>()
+        .map_err(|error| format!("Invalid Snapshot hotkey: {error}"))?;
+    let draw = draw_snapshot_hotkey
+        .parse::<Shortcut>()
+        .map_err(|error| format!("Invalid Capture region hotkey: {error}"))?;
+    if repeat == draw {
+        return Err("Snapshot hotkeys need different combinations".into());
+    }
+    if [RECORD_SHORTCUT, PAUSE_SHORTCUT].iter().any(|fixed| {
+        let fixed = fixed.parse::<Shortcut>().expect("valid recording hotkey");
+        repeat == fixed || draw == fixed
+    }) {
+        return Err("A Snapshot hotkey is already used by a recording control".into());
+    }
+    let mut settings = Settings::load(&path.0);
+    settings.snapshot_hotkey = snapshot_hotkey;
+    settings.draw_snapshot_hotkey = draw_snapshot_hotkey;
+    settings.save(&path.0).map_err(|error| error.to_string())?;
+    Ok(settings)
+}
+
+#[tauri::command]
 fn installed_models(models_dir: State<'_, ModelsDir>) -> Vec<&'static str> {
     MODELS
         .iter()
@@ -3530,6 +3558,7 @@ fn main() {
             first_run_info,
             complete_first_run,
             update_settings,
+            update_snapshot_hotkeys,
             installed_models,
             model_download_status,
             start_model_download,
