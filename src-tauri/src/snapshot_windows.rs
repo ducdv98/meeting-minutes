@@ -269,8 +269,14 @@ fn show_overlay(app: &AppHandle) -> Result<(), String> {
         .skip_taskbar(true)
         .transparent(true)
         .visible(false)
-        .build()
-        .map_err(|error| error.to_string())?;
+        .build();
+        let window = match window {
+            Ok(window) => window,
+            Err(error) => {
+                close_overlays(app);
+                return Err(error.to_string());
+            }
+        };
         let result = (|| -> Result<(), String> {
             window
                 .set_position(PhysicalPosition::new(

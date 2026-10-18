@@ -204,6 +204,8 @@ fn library_search_finds_edited_caption_at_the_nearest_segment_after_rebuild() {
         .unwrap();
     assert!(library.search("roadmap").unwrap().is_empty());
     assert_eq!(library.search("plan").unwrap()[0].segment_id, "s00002");
+    let markdown = std::fs::read_to_string(library.meeting_dir(&id).join("transcript.md")).unwrap();
+    assert!(markdown.contains("Updated plan") && !markdown.contains("Shared roadmap"));
     assert!(
         !std::fs::read_to_string(library.meeting_dir(&id).join("transcript.r1.json"))
             .unwrap()

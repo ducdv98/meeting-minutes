@@ -2427,6 +2427,17 @@ fn read_snapshot_image(
         .map_err(|error| error.to_string())
 }
 
+/// Keeps Library search and the readable export in line after a Snapshot is deleted or restored.
+#[cfg(windows)]
+fn refresh_snapshots(app: &AppHandle, meeting_id: &str) {
+    let state = app.state::<LibraryState>();
+    if let Ok(mut guard) = state.lock() {
+        if let Ok(library) = guard.as_mut() {
+            let _ = library.refresh_snapshots(meeting_id);
+        }
+    };
+}
+
 #[cfg(windows)]
 #[tauri::command]
 fn delete_snapshot(
@@ -2445,7 +2456,8 @@ fn delete_snapshot(
         .map_err(|error| error.to_string())?;
     undo.lock()
         .map_err(|error| error.to_string())?
-        .insert(meeting_id, deleted);
+        .insert(meeting_id.clone(), deleted);
+    refresh_snapshots(&app, &meeting_id);
     let _ = app.emit("library-changed", ());
     Ok(())
 }
@@ -2468,6 +2480,7 @@ fn undo_snapshot_deletion(
         .map_err(|error| error.to_string())?;
     pending.remove(&meeting_id);
     drop(pending);
+    refresh_snapshots(&app, &meeting_id);
     let _ = app.emit("library-changed", ());
     Ok(())
 }

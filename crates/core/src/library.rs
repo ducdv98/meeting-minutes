@@ -993,8 +993,17 @@ impl Library {
         let snapshot = SnapshotStore::new(self.checked_meeting_dir(id)?)
             .set_caption(order, caption)
             .map_err(|error| LibraryError::Encode(error.to_string()))?;
-        self.refresh_transcript(id)?;
+        // The sidecar is saved, so a failed refresh must not report the edit as failed;
+        // the index and the readable export are rebuilt from the folder on the next refresh.
+        let _ = self.refresh_snapshots(id);
         Ok(snapshot)
+    }
+
+    /// Brings the search index and the readable export in line with the Snapshots on disk
+    /// after one is added, deleted, restored or captioned.
+    pub fn refresh_snapshots(&mut self, id: &str) -> Result<(), LibraryError> {
+        self.refresh_transcript_export(id)?;
+        self.refresh_transcript(id)
     }
 
     /// Refreshes the readable export after a Snapshot or its caption changes.

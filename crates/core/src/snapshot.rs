@@ -194,7 +194,11 @@ impl SnapshotStore {
         let json_path = png_path.with_extension("json");
         let mut json = serde_json::to_vec_pretty(&sidecar)?;
         json.push(b'\n');
-        write_durable(&json_path, &json)?;
+        if let Err(error) = write_durable(&json_path, &json) {
+            // An image without its sidecar would stay in the folder unseen by the app.
+            let _ = fs::remove_file(&png_path);
+            return Err(error);
+        }
         Ok(Snapshot {
             png_path,
             timeline_ms,
