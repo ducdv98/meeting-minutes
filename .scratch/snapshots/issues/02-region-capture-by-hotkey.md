@@ -19,3 +19,7 @@ During a real Recording the user presses a global hotkey, drags a Capture region
 - [ ] The Capture region is forgotten when the Recording ends
 - [ ] Hotkeys are registered only while a Recording runs
 - [ ] Manual checklist from the spec is run and the result noted in the ticket
+
+## Manual checklist (2026-10-18)
+
+Not run: this workspace is Linux and cannot launch the Windows native layer. On a Windows machine, verify a region drag on one display and on displays with different scaling; the first Snapshot prompting for a region; both repeat and redraw hotkeys while another app has focus; the overlay and confirmation absent from saved images and screen sharing; hotkey clash reporting; and a Snapshot while paused. The Capture bar check belongs to ticket 05.

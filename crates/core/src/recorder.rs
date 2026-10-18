@@ -9,6 +9,7 @@ use crate::{
     capture::{Clock, InputOpener, Source},
     finalize_recording,
     recording::{CaptureSession, DeviceSwitch},
+    snapshot::{CaptureRegion, ScreenGrabber, Snapshot, SnapshotError, SnapshotStore},
     Library, LibraryError,
 };
 
@@ -157,6 +158,16 @@ impl<O: InputOpener, C: Clock> Recorder<O, C> {
     /// The Recording being captured now, if any.
     pub fn active_job(&self) -> Option<&SaveJob> {
         self.active.as_ref().map(|active| &active.job)
+    }
+
+    /// Keeps the live Recording and its Timeline clock together at the Snapshot seam.
+    pub fn take_snapshot<G: ScreenGrabber>(
+        &self,
+        region: CaptureRegion,
+        grabber: &G,
+    ) -> Result<Snapshot, SnapshotError> {
+        let active = self.active.as_ref().ok_or(SnapshotError::NoRecording)?;
+        SnapshotStore::new(&active.job.meeting_dir).take(Some(&active.session), region, grabber)
     }
 
     pub fn acknowledge_notice(&mut self) {

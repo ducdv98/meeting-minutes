@@ -8,6 +8,7 @@ import {
   formatElapsed,
   onRecordingNoticeRequested,
   onRecordingStatus,
+  onSnapshotError,
   pauseRecording,
   recordingStatus,
   retrySave,
@@ -30,6 +31,7 @@ vi.mock("./recording", async (importOriginal) => {
     continueMeeting: vi.fn(),
     dismissContinue: vi.fn(),
     onRecordingStatus: vi.fn(),
+    onSnapshotError: vi.fn(),
     onRecordingNoticeRequested: vi.fn(),
   };
 });
@@ -64,6 +66,7 @@ it("shows the latest device switch until dismissed and shows a newer one", async
 
 let pushStatus: (status: RecorderStatus) => void = () => {};
 let requestNotice: () => void = () => {};
+let reportSnapshotError: (error: string) => void = () => {};
 
 beforeEach(() => {
   vi.mocked(onRecordingStatus).mockImplementation((handler) => {
@@ -72,6 +75,10 @@ beforeEach(() => {
   });
   vi.mocked(onRecordingNoticeRequested).mockImplementation((handler) => {
     requestNotice = handler;
+    return Promise.resolve(() => {});
+  });
+  vi.mocked(onSnapshotError).mockImplementation((handler) => {
+    reportSnapshotError = handler;
     return Promise.resolve(() => {});
   });
 });
@@ -144,6 +151,16 @@ it("shows the Recording notice when the tray or hotkey asks for it", async () =>
   act(() => requestNotice());
 
   expect(screen.getByRole("dialog")).toBeTruthy();
+});
+
+it("shows a Snapshot hotkey registration failure", async () => {
+  vi.mocked(recordingStatus).mockResolvedValue(recording);
+  render(<RecordingBar />);
+  await screen.findByRole("status");
+
+  act(() => reportSnapshotError("Could not register Ctrl+Alt+S"));
+
+  expect(screen.getByRole("alert").textContent).toContain("Could not register Ctrl+Alt+S");
 });
 
 it("follows elapsed time and phase pushed from the app", async () => {
