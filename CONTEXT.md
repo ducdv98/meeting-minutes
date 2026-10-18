@@ -28,6 +28,16 @@ The single playback time axis of a Meeting: its Recordings joined in order, with
 **Marker**:
 A point on the Timeline recording an event: a pause, a gap between Recordings, or an audio device switch.
 
+**Snapshot**:
+An image of a region of the user's screen, taken by hand during a Recording and anchored to a position on the Timeline. It is kept as an image file in the Meeting's folder and shown inline in the Transcript at that position, with an optional caption the user adds later. A Snapshot is user content, not an event, so it is not a Marker, and it is never a Citation. Summary and Ask do not read it, and it stays on the user's PC.
+_Avoid_: Screenshot, capture, screen grab
+
+**Capture region**:
+The rectangle of the screen the user drags out for Snapshots. Drawing a new one is explicit; later Snapshots in the same Recording reuse it. It lasts for the Recording and is not saved to the Meeting.
+
+**Capture bar**:
+The small always-on-top floating bar shown while a Recording runs, with pause, stop, Snapshot and a timer. Starting a Recording stays in the main window. The bar and the region overlay never appear in a Snapshot or in screen sharing.
+
 **Chunk**:
 A durably written slice of a Source's audio. Completed Chunks survive a crash and are never discarded by a failed save.
 
@@ -42,7 +52,7 @@ The user-owned folder holding every Meeting as a readable folder of audio and tr
 _Avoid_: Database, vault, workspace
 
 **Recording notice**:
-The reminder that other participants may need to consent to being recorded, plus the always-visible indicator while a Recording runs.
+The reminder that other participants may need to consent to being recorded, plus the always-visible indicator while a Recording runs. It also says that Snapshots may capture what others share, and each Snapshot is confirmed on screen when taken.
 
 ### Access
 
@@ -155,6 +165,7 @@ A reference from an Answer, Summary or Action item to a Segment ID in the same M
 - A **Meeting** has one or more **Recordings**; an imported **Meeting** has none and holds its audio directly
 - A **Recording** has one or two **Sources**, each made of **Chunks**
 - A **Meeting** has at most one current **Transcript**, made of **Segments**
+- A **Meeting** has any number of **Snapshots**, each at one position on its **Timeline**; one taken while paused sits at the pause **Marker**
 - A **Segment** has exactly one **Speaker label** and belongs to one **Revision**
 - A **Segment** is attributed to exactly one **Participant**; by default the one for its **Speaker label**
 - A **Participant** belongs to exactly one **Meeting**
