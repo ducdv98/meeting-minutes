@@ -28,6 +28,7 @@ pub mod recorder;
 pub mod recording;
 pub mod recycle_bin;
 pub mod settings;
+pub mod snapshot;
 pub mod speech_models;
 pub mod summary;
 pub mod timeline;

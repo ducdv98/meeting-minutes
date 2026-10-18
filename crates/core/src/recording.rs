@@ -360,6 +360,9 @@ impl<C: Clock> CaptureSession<C> {
     pub fn elapsed_ms(&self) -> u64 {
         self.timeline.elapsed_ms(self.clock.now_100ns())
     }
+    pub(crate) fn snapshot_recording(&self) -> (u32, &Path) {
+        (self.manifest.number, &self.chunk_dir)
+    }
     pub fn is_paused(&self) -> bool {
         self.timeline.is_paused()
     }
