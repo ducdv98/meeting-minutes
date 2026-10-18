@@ -32,6 +32,7 @@ const REPEAT_HOTKEY: &str = "ctrl+alt+s";
 const DRAW_HOTKEY: &str = "ctrl+alt+shift+s";
 const OVERLAY_PREFIX: &str = "capture-region-";
 const CONFIRM_PREFIX: &str = "snapshot-confirmation-";
+const CAPTURE_BAR_LABEL: &str = "capture-bar";
 static OVERLAY_NUMBER: AtomicU64 = AtomicU64::new(0);
 static CONFIRM_NUMBER: AtomicU64 = AtomicU64::new(0);
 
@@ -44,6 +45,8 @@ struct SnapshotUiState {
     selecting: bool,
     recording_id: Option<String>,
     hotkeys_registered: bool,
+    capture_bar_open: bool,
+    capture_bar_failed: bool,
 }
 
 pub struct GdiGrabber;
@@ -160,6 +163,83 @@ fn close_overlays(app: &AppHandle) {
     for (label, window) in app.webview_windows() {
         if label.starts_with(OVERLAY_PREFIX) {
             let _ = window.close();
+        }
+    }
+}
+
+fn show_capture_bar(app: &AppHandle) -> Result<(), String> {
+    let main = app
+        .get_webview_window("main")
+        .ok_or("Main window is unavailable")?;
+    let monitor = main
+        .primary_monitor()
+        .map_err(|error| error.to_string())?
+        .ok_or("No display is available for the Capture bar")?;
+    let window = WebviewWindowBuilder::new(
+        app,
+        CAPTURE_BAR_LABEL,
+        WebviewUrl::App("index.html#capture-bar".into()),
+    )
+    .title("Capture bar")
+    .decorations(false)
+    .resizable(false)
+    .always_on_top(true)
+    .skip_taskbar(true)
+    .transparent(true)
+    .visible(false)
+    .inner_size(354.0, 58.0)
+    .build()
+    .map_err(|error| error.to_string())?;
+    let result = (|| -> Result<(), String> {
+        let size = window.outer_size().map_err(|error| error.to_string())?;
+        window
+            .set_position(PhysicalPosition::new(
+                monitor.position().x + monitor.size().width as i32 - size.width as i32 - 24,
+                monitor.position().y + 24,
+            ))
+            .map_err(|error| error.to_string())?;
+        exclude(&window)?;
+        window.show().map_err(|error| error.to_string())?;
+        Ok(())
+    })();
+    if let Err(error) = result {
+        let _ = window.close();
+        return Err(error);
+    }
+    Ok(())
+}
+
+pub fn capture_bar_changed(app: &AppHandle, status: &RecorderStatus) {
+    let state = app.state::<SnapshotState>();
+    let mut ui = match state.0.lock() {
+        Ok(ui) => ui,
+        Err(_) => return,
+    };
+    // A timer publication can arrive after Stop; use the current Recorder state.
+    if lock_recorder(app)
+        .map(|recorder| recorder.status().phase != status.phase)
+        .unwrap_or(true)
+    {
+        return;
+    }
+    if status.phase == Phase::Idle {
+        ui.capture_bar_open = false;
+        ui.capture_bar_failed = false;
+        if let Some(window) = app.get_webview_window(CAPTURE_BAR_LABEL) {
+            let _ = window.close();
+        }
+    } else if !ui.capture_bar_failed
+        && (!ui.capture_bar_open || app.get_webview_window(CAPTURE_BAR_LABEL).is_none())
+    {
+        // Keep creation and Stop serialized; timer and command publications can overlap.
+        ui.capture_bar_open = true;
+        if let Err(error) = show_capture_bar(app) {
+            ui.capture_bar_failed = true;
+            drop(ui);
+            let _ = app.emit(
+                "snapshot-error",
+                format!("Could not show the Capture bar: {error}"),
+            );
         }
     }
 }
