@@ -32,6 +32,10 @@ export function revealSnapshotFolder(meetingId: string, order: number): Promise<
   return invoke<void>("reveal_snapshot_folder", { meetingId, order });
 }
 
+export function setSnapshotCaption(meetingId: string, order: number, caption: string | null): Promise<Snapshot> {
+  return invoke<Snapshot>("set_snapshot_caption", { meetingId, order, caption });
+}
+
 export function formatSnapshotSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;

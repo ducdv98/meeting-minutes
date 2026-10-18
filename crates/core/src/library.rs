@@ -19,7 +19,7 @@ use crate::{
     metadata::{update_metadata, update_metadata_and, with_current_metadata},
     participant::{default_name, label_key, Participants, SegmentParticipants},
     recording::{write_manifest, RecordingManifest},
-    snapshot::SnapshotStore,
+    snapshot::{Snapshot, SnapshotStore},
     summary::{read_summary, render_summary_markdown},
     transcript::{render_markdown_with_snapshots, Language, Speaker, Transcript},
     MeetingSummary, SearchHit,
@@ -559,8 +559,12 @@ impl Library {
             return Err(error);
         }
         write_current_transcript_markdown(&folder, &transcript, self.your_name.as_deref())?;
-        self.index
-            .set_transcript(id, Some(&transcript), &self.participants(id)?)?;
+        self.index.set_transcript(
+            id,
+            Some(&transcript),
+            &self.participants(id)?,
+            &self.snapshots(id)?,
+        )?;
         Ok(transcript)
     }
 
@@ -611,8 +615,12 @@ impl Library {
                         self.your_name.as_deref(),
                     )?;
                     write_transcript_markdown(&folder, &markdown)?;
-                    self.index
-                        .set_transcript(id, Some(&transcript), &self.participants(id)?)?;
+                    self.index.set_transcript(
+                        id,
+                        Some(&transcript),
+                        &self.participants(id)?,
+                        &self.snapshots(id)?,
+                    )?;
                 }
                 Ok(())
             },
@@ -754,8 +762,12 @@ impl Library {
             let markdown =
                 markdown_from_metadata(folder, metadata, &transcript, self.your_name.as_deref())?;
             write_transcript_markdown(folder, &markdown)?;
-            self.index
-                .set_transcript(id, Some(&transcript), &self.participants(id)?)?;
+            self.index.set_transcript(
+                id,
+                Some(&transcript),
+                &self.participants(id)?,
+                &self.snapshots(id)?,
+            )?;
         }
         Ok(())
     }
@@ -958,8 +970,31 @@ impl Library {
 
     pub fn refresh_transcript(&mut self, id: &str) -> Result<(), LibraryError> {
         let transcript = self.transcript(id)?;
-        self.index
-            .set_transcript(id, transcript.as_ref(), &self.participants(id)?)
+        self.index.set_transcript(
+            id,
+            transcript.as_ref(),
+            &self.participants(id)?,
+            &self.snapshots(id)?,
+        )
+    }
+
+    fn snapshots(&self, id: &str) -> Result<Vec<Snapshot>, LibraryError> {
+        SnapshotStore::new(self.checked_meeting_dir(id)?)
+            .list()
+            .map_err(|error| LibraryError::Encode(error.to_string()))
+    }
+
+    pub fn set_snapshot_caption(
+        &mut self,
+        id: &str,
+        order: u32,
+        caption: Option<&str>,
+    ) -> Result<Snapshot, LibraryError> {
+        let snapshot = SnapshotStore::new(self.checked_meeting_dir(id)?)
+            .set_caption(order, caption)
+            .map_err(|error| LibraryError::Encode(error.to_string()))?;
+        self.refresh_transcript(id)?;
+        Ok(snapshot)
     }
 
     /// Refreshes the readable export after a Snapshot or its caption changes.
@@ -1010,7 +1045,8 @@ impl Library {
                             read_transcript_revision(&entry.path(), revision).ok()
                         });
                     let participants = self.participants(&meeting.id)?;
-                    valid.push((meeting, started_at_ms, transcript, participants));
+                    let snapshots = self.snapshots(&meeting.id)?;
+                    valid.push((meeting, started_at_ms, transcript, participants, snapshots));
                 }
                 Err(reason) => malformed.push(MalformedFolder { folder, reason }),
             }

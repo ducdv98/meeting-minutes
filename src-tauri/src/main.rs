@@ -2390,6 +2390,28 @@ fn read_snapshot_image(
 }
 
 #[tauri::command]
+fn set_snapshot_caption(
+    app: AppHandle,
+    state: State<'_, LibraryState>,
+    meeting_id: String,
+    order: u32,
+    caption: Option<String>,
+) -> Result<SnapshotPayload, String> {
+    let mut guard = state.lock().map_err(|error| error.to_string())?;
+    let snapshot = guard
+        .as_mut()
+        .map_err(Clone::clone)?
+        .set_snapshot_caption(&meeting_id, order, caption.as_deref())
+        .map_err(|error| error.to_string())?;
+    let _ = app.emit("library-changed", ());
+    Ok(SnapshotPayload {
+        order: snapshot.order,
+        timeline_ms: snapshot.timeline_ms,
+        caption: snapshot.caption,
+    })
+}
+
+#[tauri::command]
 fn reveal_snapshot_folder(
     state: State<'_, LibraryState>,
     meeting_id: String,
@@ -3496,6 +3518,7 @@ fn main() {
             open_meeting_folder,
             list_snapshots,
             read_snapshot_image,
+            set_snapshot_caption,
             reveal_snapshot_folder,
             open_library_folder,
             open_link,

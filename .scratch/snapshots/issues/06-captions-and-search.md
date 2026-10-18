@@ -12,8 +12,8 @@ The user adds an optional caption to a Snapshot after the meeting and can edit i
 
 ## Acceptance criteria
 
-- [ ] A caption can be added and edited in the Snapshot viewer
-- [ ] The caption is stored beside the image and survives an index rebuild
-- [ ] Library search by caption text lands on the nearest Segment
-- [ ] Summary and Ask do not read captions or images
-- [ ] Core and UI tests cover caption storage, edit and search
+- [x] A caption can be added and edited in the Snapshot viewer
+- [x] The caption is stored beside the image and survives an index rebuild
+- [x] Library search by caption text lands on the nearest Segment
+- [x] Summary and Ask do not read captions or images
+- [x] Core and UI tests cover caption storage, edit and search

@@ -234,6 +234,32 @@ impl SnapshotStore {
         Ok(LoadedSnapshot { snapshot, png })
     }
 
+    /// Updates the readable sidecar without rewriting the image or its Timeline position.
+    pub fn set_caption(
+        &self,
+        order: u32,
+        caption: Option<&str>,
+    ) -> Result<Snapshot, SnapshotError> {
+        let mut snapshot = self
+            .list()?
+            .into_iter()
+            .find(|snapshot| snapshot.order == order)
+            .ok_or(SnapshotError::NotFound)?;
+        snapshot.caption = caption
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned);
+        let sidecar = Sidecar {
+            timeline_ms: snapshot.timeline_ms,
+            order: snapshot.order,
+            caption: snapshot.caption.clone(),
+        };
+        let mut json = serde_json::to_vec_pretty(&sidecar)?;
+        json.push(b'\n');
+        write_durable(&snapshot.png_path.with_extension("json"), &json)?;
+        Ok(snapshot)
+    }
+
     /// Disk use of complete image and sidecar pairs in this Meeting.
     pub fn total_size_bytes(&self) -> Result<u64, SnapshotError> {
         self.list()?.into_iter().try_fold(0_u64, |total, snapshot| {
