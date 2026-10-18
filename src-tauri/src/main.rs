@@ -2775,6 +2775,8 @@ fn publish(app: &AppHandle) -> Result<RecorderStatus, String> {
     let status = status(app)?;
     #[cfg(windows)]
     snapshot_windows::recording_changed(app, &status);
+    #[cfg(windows)]
+    snapshot_windows::capture_bar_changed(app, &status);
     let _ = app.emit("recording-status", &status);
     update_tray(app);
     Ok(status)

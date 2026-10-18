@@ -13,7 +13,7 @@ A small floating bar shown only while a Recording runs, with pause/resume, stop,
 ## Acceptance criteria
 
 - [ ] The bar appears when a Recording starts and disappears when it ends
-- [ ] Pause/resume, stop and Snapshot work from the bar and match the main window state
+- [x] Pause/resume, stop and Snapshot work from the bar and match the main window state
 - [ ] The bar can be dragged and collapsed
 - [ ] The bar never appears in a Snapshot or when the whole screen is shared in a real meeting app
-- [ ] The bar's Snapshot button follows the same repeat-or-draw behaviour as the first hotkey
+- [x] The bar's Snapshot button follows the same repeat-or-draw behaviour as the first hotkey
