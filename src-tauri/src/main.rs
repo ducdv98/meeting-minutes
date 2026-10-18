@@ -2309,7 +2309,7 @@ fn delete_meeting(app: AppHandle, meeting_id: String) -> Result<(), String> {
         let undo = app.state::<SnapshotUndoState>();
         if let Ok(mut pending) = undo.lock() {
             pending.remove(&meeting_id);
-        }
+        };
     }
     lock_recorder(&app)?.dismiss_continue(&meeting_id);
     lock_processor(&app)?.dismiss(&meeting_id);
@@ -2483,7 +2483,7 @@ fn set_snapshot_caption(
     let mut guard = state.lock().map_err(|error| error.to_string())?;
     let snapshot = guard
         .as_mut()
-        .map_err(Clone::clone)?
+        .map_err(|error| error.clone())?
         .set_snapshot_caption(&meeting_id, order, caption.as_deref())
         .map_err(|error| error.to_string())?;
     let _ = app.emit("library-changed", ());

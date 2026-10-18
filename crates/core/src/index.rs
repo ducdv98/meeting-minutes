@@ -15,6 +15,14 @@ pub(crate) struct Index {
     pub(crate) fresh: bool,
 }
 
+pub(crate) type IndexedMeeting = (
+    MeetingSummary,
+    i64,
+    Option<Transcript>,
+    Participants,
+    Vec<Snapshot>,
+);
+
 impl Index {
     pub(crate) fn open(path: &Path) -> Result<Self, LibraryError> {
         if let Some(parent) = path.parent() {
@@ -72,16 +80,7 @@ impl Index {
         Ok(())
     }
 
-    pub(crate) fn replace(
-        &mut self,
-        meetings: &[(
-            MeetingSummary,
-            i64,
-            Option<Transcript>,
-            Participants,
-            Vec<Snapshot>,
-        )],
-    ) -> Result<(), LibraryError> {
+    pub(crate) fn replace(&mut self, meetings: &[IndexedMeeting]) -> Result<(), LibraryError> {
         let transaction = self.connection.transaction()?;
         transaction.execute("DELETE FROM meetings", [])?;
         transaction.execute("DELETE FROM segments", [])?;
