@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import MeetingView from "./MeetingView";
 import { deleteMeeting, meetingDetail, openMeetingFolder, renameMeeting, setParticipantName, participantNames, renameParticipant, removeParticipant, assignSegments, type MeetingDetail } from "./library";
-import { convertFileSrc } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { onLibraryChanged } from "./recording";
 import { processingStatus, meetingTranscript, enqueueTranscription, cancelProcessing, onProcessingStatus, onTranscriptDraft, transcriptDraft, setMeetingLanguage, getSettings, installedModels, type ProcessingStatus } from "./processing";
 import { editSegment } from "./transcript";
@@ -17,7 +17,7 @@ vi.mock("./library", () => ({ meetingDetail: vi.fn(), openMeetingFolder: vi.fn()
 vi.mock("./processing", async (importOriginal) => ({ ...(await importOriginal<typeof import("./processing")>()), processingStatus: vi.fn(), meetingTranscript: vi.fn(), enqueueTranscription: vi.fn(), cancelProcessing: vi.fn(), dismissProcessing: vi.fn(), setMeetingLanguage: vi.fn(), getSettings: vi.fn(), installedModels: vi.fn(), transcriptDraft: vi.fn(), onProcessingStatus: vi.fn(() => Promise.resolve(() => {})), onTranscriptDraft: vi.fn(() => Promise.resolve(() => {})) }));
 vi.mock("./recording", async (importOriginal) => ({ ...(await importOriginal<typeof import("./recording")>()), onLibraryChanged: vi.fn(() => Promise.resolve(() => {})) }));
 vi.mock("./transcript", async (importOriginal) => ({ ...(await importOriginal<typeof import("./transcript")>()), editSegment: vi.fn() }));
-vi.mock("@tauri-apps/api/core", () => ({ convertFileSrc: vi.fn((path: string) => `asset:${path}`) }));
+vi.mock("@tauri-apps/api/core", () => ({ convertFileSrc: vi.fn((path: string) => `asset:${path}`), invoke: vi.fn() }));
 
 const detail: MeetingDetail = {
   id: "old", title: "Planning", started_at: "2026-10-12T09:30:00Z",
@@ -33,6 +33,10 @@ const detail: MeetingDetail = {
 };
 
 beforeEach(() => {
+  vi.mocked(invoke).mockImplementation(async (command) => {
+    if (command === "list_snapshots") return { snapshots: [], total_size_bytes: 0 };
+    throw new Error(`Unexpected IPC: ${command}`);
+  });
   vi.mocked(meetingSummary).mockResolvedValue(null);
   vi.mocked(summaryStatus).mockResolvedValue({ jobs: [] });
   vi.mocked(meetingAsks).mockResolvedValue({ asks: [], active: null, retryable_id: null });
@@ -57,6 +61,28 @@ beforeEach(() => {
   vi.spyOn(HTMLMediaElement.prototype, "play").mockImplementation(async () => {});
   vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
   vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => {});
+});
+
+it("shows Snapshot size and opens an inline image with a folder action", async () => {
+  vi.mocked(meetingTranscript).mockResolvedValue({ schema_version: 1, revision: 1, created_at: "now", model: ["small"], language: "en", language_detected: false, duration_ms: 3000, segments: [
+    { id: "s00001", start_ms: 100, end_ms: 900, text: "Before", speaker: "me" },
+    { id: "s00002", start_ms: 1000, end_ms: 2000, text: "After", speaker: "remote" },
+  ] });
+  vi.mocked(invoke).mockImplementation(async (command) => {
+    if (command === "list_snapshots") return { snapshots: [{ order: 7, timeline_ms: 950, caption: "Shared slide" }], total_size_bytes: 2_097_152 };
+    if (command === "read_snapshot_image") return [137, 80, 78, 71];
+    if (command === "reveal_snapshot_folder") return undefined;
+    throw new Error(`Unexpected IPC: ${command}`);
+  });
+  render(<MeetingView id="old" onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
+  expect(await screen.findByText("Snapshots · 2.0 MB")).toBeTruthy();
+  const thumbnail = await screen.findByRole("button", { name: "Open Snapshot: Shared slide" });
+  expect(thumbnail.querySelector("img")?.getAttribute("src")).toBe("data:image/png;base64,iVBORw==");
+  fireEvent.click(thumbnail);
+  const viewer = screen.getByRole("dialog", { name: "Snapshot" });
+  expect(within(viewer).getByRole("img", { name: "Shared slide" }).getAttribute("src")).toBe("data:image/png;base64,iVBORw==");
+  fireEvent.click(within(viewer).getByRole("button", { name: "Open folder" }));
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith("reveal_snapshot_folder", { meetingId: "old", order: 7 }));
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.resetAllMocks(); });
 

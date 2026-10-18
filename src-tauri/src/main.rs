@@ -2319,6 +2319,99 @@ fn open_meeting_folder(state: State<'_, LibraryState>, meeting_id: String) -> Re
     }
 }
 
+#[derive(Clone, serde::Serialize)]
+struct SnapshotPayload {
+    order: u32,
+    timeline_ms: u64,
+    caption: Option<String>,
+}
+
+#[derive(Clone, serde::Serialize)]
+struct SnapshotListPayload {
+    snapshots: Vec<SnapshotPayload>,
+    total_size_bytes: u64,
+}
+
+fn snapshot_store(
+    state: State<'_, LibraryState>,
+    meeting_id: &str,
+) -> Result<meeting_minutes_core::snapshot::SnapshotStore, String> {
+    let guard = state.lock().map_err(|error| error.to_string())?;
+    let library = guard.as_ref().map_err(Clone::clone)?;
+    library
+        .meeting(meeting_id)
+        .map_err(|error| error.to_string())?;
+    Ok(meeting_minutes_core::snapshot::SnapshotStore::new(
+        library.meeting_dir(meeting_id),
+    ))
+}
+
+#[tauri::command]
+fn list_snapshots(
+    state: State<'_, LibraryState>,
+    meeting_id: String,
+) -> Result<SnapshotListPayload, String> {
+    let store = snapshot_store(state, &meeting_id)?;
+    let snapshots = store
+        .list()
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .map(|snapshot| SnapshotPayload {
+            order: snapshot.order,
+            timeline_ms: snapshot.timeline_ms,
+            caption: snapshot.caption,
+        })
+        .collect();
+    let total_size_bytes = store
+        .total_size_bytes()
+        .map_err(|error| error.to_string())?;
+    Ok(SnapshotListPayload {
+        snapshots,
+        total_size_bytes,
+    })
+}
+
+#[tauri::command]
+fn read_snapshot_image(
+    state: State<'_, LibraryState>,
+    meeting_id: String,
+    order: u32,
+) -> Result<Vec<u8>, String> {
+    snapshot_store(state, &meeting_id)?
+        .load(order)
+        .map(|loaded| loaded.png)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn reveal_snapshot_folder(
+    state: State<'_, LibraryState>,
+    meeting_id: String,
+    order: u32,
+) -> Result<(), String> {
+    let path = snapshot_store(state, &meeting_id)?
+        .list()
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .find(|snapshot| snapshot.order == order)
+        .ok_or("Snapshot not found")?
+        .png_path;
+    #[cfg(windows)]
+    {
+        std::process::Command::new("explorer.exe")
+            .arg("/select,")
+            .arg(path)
+            .spawn()
+            .map_err(|error| format!("Couldn't reveal the Snapshot: {error}"))?;
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = path;
+        Err("Revealing a Snapshot is available on Windows".into())
+    }
+}
+
 #[tauri::command]
 fn open_library_folder(state: State<'_, LibraryState>) -> Result<(), String> {
     let folder = {
@@ -3387,6 +3480,9 @@ fn main() {
             search_library,
             meeting_detail,
             open_meeting_folder,
+            list_snapshots,
+            read_snapshot_image,
+            reveal_snapshot_folder,
             open_library_folder,
             open_link,
             rename_meeting,

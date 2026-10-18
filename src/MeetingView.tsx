@@ -27,6 +27,8 @@ import { PageHeader } from "./components/PageHeader";
 import type { SettingsTabId } from "./SettingsView";
 import type { Citation } from "./summary";
 import TranscribeDialog from "./TranscribeDialog";
+import { formatSnapshotSize, listSnapshots, readSnapshotImage, revealSnapshotFolder, type SnapshotWithImage } from "./snapshots";
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "./components/ui/Dialog";
 
 interface Props {
   id: string;
@@ -100,6 +102,9 @@ export default function MeetingView({ id, onBack, onRenamed, onOpenSettings, ope
   const [transcript, setTranscript] = useState<Transcript | null>(null);
   const [draft, setDraft] = useState<DraftSegment[]>([]);
   const [transcribeOpen, setTranscribeOpen] = useState(false);
+  const [snapshots, setSnapshots] = useState<SnapshotWithImage[]>([]);
+  const [snapshotSize, setSnapshotSize] = useState<number | null>(null);
+  const [openSnapshotOrder, setOpenSnapshotOrder] = useState<number | null>(null);
   const [job, setJob] = useState<ProcessingJob | null>(null);
   const jobRef = useRef<ProcessingJob | null>(null);
   const jobKnown = useRef(false);
@@ -201,6 +206,27 @@ export default function MeetingView({ id, onBack, onRenamed, onOpenSettings, ope
       void meetingDetail(id).then((next) => { if (active && detailRequest === detailVersion.current) setDetail(next); }, () => {});
     });
     return () => { active = false; void processing.then((stop) => stop(), () => {}); void draftListener.then((stop) => stop(), () => {}); void library.then((stop) => stop(), () => {}); };
+  }, [id]);
+
+  useEffect(() => {
+    let active = true;
+    let version = 0;
+    setSnapshots([]);
+    setSnapshotSize(null);
+    setOpenSnapshotOrder(null);
+    const refresh = async () => {
+      const request = ++version;
+      try {
+        const list = await listSnapshots(id);
+        const images = await Promise.all(list.snapshots.map(async (snapshot) => ({ ...snapshot, image_url: await readSnapshotImage(id, snapshot.order) })));
+        if (active && request === version) { setSnapshots(images); setSnapshotSize(list.total_size_bytes); }
+      } catch (reason) {
+        if (active && request === version) setError(String(reason));
+      }
+    };
+    void refresh();
+    const listener = onLibraryChanged(() => { void refresh(); });
+    return () => { active = false; void listener.then((stop) => stop(), () => {}); };
   }, [id]);
 
   async function runTranscription(chosenModel?: string) {
@@ -314,6 +340,7 @@ export default function MeetingView({ id, onBack, onRenamed, onOpenSettings, ope
   // Every Segment of a Voice note belongs to the user, so only Me is named.
   const speakerLabels: Speaker[] = !transcript ? [] : isVoiceNote ? ["me"] : ["me", "remote", "unknown"].filter((label): label is Speaker => transcript.segments.some((segment) => segment.speaker === label));
   const meetingParticipants = transcript && detail ? participantList(transcript, detail.participants, detail.segment_participants, yourName, isVoiceNote) : [];
+  const openSnapshot = snapshots.find((snapshot) => snapshot.order === openSnapshotOrder);
   function openLanguageModels() { onOpenSettings("language-models"); }
   return <PlayerContext.Provider value={player}><section className="flex min-h-0 min-w-0 flex-1 flex-col" aria-label="Meeting">
     <span className="sr-only" aria-live="polite" aria-atomic="true">{stageAnnouncement}</span>
@@ -327,6 +354,7 @@ export default function MeetingView({ id, onBack, onRenamed, onOpenSettings, ope
             <span className="inline-flex items-center gap-1.5"><Clock3 size={14} strokeWidth={1.5} aria-hidden="true" /><time dateTime={detail.started_at}>{meetingDateTime(detail.started_at)}</time> · {durationMinutes} min</span>
             <label className="inline-flex items-center gap-1.5"><Globe2 size={14} strokeWidth={1.5} aria-hidden="true" /><span className="sr-only">Language</span><select aria-label="Language" className="max-w-[130px] cursor-pointer border-0 bg-transparent text-xs text-ink-muted hover:text-ink" value={detail.language ?? ""} disabled={!!job && job.stage !== "failed"} onChange={(event) => void changeLanguage(event.target.value)}><option value="">Auto-detect</option>{MEETING_LANGUAGES.map((language) => <option key={language.code} value={language.code}>{language.name}</option>)}</select></label>
             <span className="inline-flex items-center gap-1.5"><Mic size={14} strokeWidth={1.5} aria-hidden="true" />{sources}</span>
+            {snapshotSize !== null && <span>Snapshots · {formatSnapshotSize(snapshotSize)}</span>}
             <button type="button" className="inline-flex items-center gap-1.5 hover:text-accent" onClick={() => void openMeetingFolder(id).catch((reason) => setError(String(reason)))}><FolderOpen size={14} strokeWidth={1.5} aria-hidden="true" />Open folder</button>
           </div> : "Opening Meeting…"}
       actions={detail && <DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" aria-label="More actions"><Ellipsis size={16} strokeWidth={1.5} /></Button></DropdownMenuTrigger><DropdownMenuContent align="end">
@@ -340,6 +368,7 @@ export default function MeetingView({ id, onBack, onRenamed, onOpenSettings, ope
     {staleSearchResult && <p className="mx-7 mt-3 text-sm text-warn">This search result is from an older transcript revision.</p>}
     {!detail && !error && <div className="px-7"><Loading message="Opening Meeting…" /></div>}
     {detail && <>
+      <Dialog open={!!openSnapshot} onOpenChange={(open) => { if (!open) setOpenSnapshotOrder(null); }}><DialogContent className="flex max-h-[92vh] w-[min(96vw,1200px)] flex-col gap-4"><DialogTitle>Snapshot</DialogTitle><DialogDescription className="sr-only">Full-size Snapshot from this Meeting</DialogDescription>{openSnapshot && <><div className="min-h-0 min-w-0 overflow-auto"><img src={openSnapshot.image_url} alt={openSnapshot.caption || `Snapshot at ${formatElapsed(openSnapshot.timeline_ms)}`} className="block max-w-none" /></div>{openSnapshot.caption && <p className="m-0 text-sm text-ink-muted">{openSnapshot.caption}</p>}<Button variant="ghost" className="self-start" onClick={() => void revealSnapshotFolder(id, openSnapshot.order).catch((reason) => setError(String(reason)))}><FolderOpen size={16} strokeWidth={1.5} />Open folder</Button></>}</DialogContent></Dialog>
       {confirmingDelete && <ConfirmDelete title={detail.title} busy={deleteBusy} onConfirm={() => void confirmDelete()} onCancel={() => setConfirmingDelete(false)} />}
       {transcribeOpen && <TranscribeDialog again={!!transcript} onClose={() => setTranscribeOpen(false)} onTranscribe={(chosen) => void runTranscription(chosen)} onOpenSettings={() => onOpenSettings("speech-to-text")} />}
       {detail.audio_path && audioOpen ? <Player ref={playerHandle} audio_path={detail.audio_path} duration_ms={detail.duration_ms} markers={detail.markers} highlight={highlight} onPlayerChange={onPlayerChange} onPosition={onPosition} /> : !detail.audio_path ? <p className="mx-7 mt-4 text-sm text-ink-muted">No audio yet</p> : null}
@@ -357,7 +386,7 @@ export default function MeetingView({ id, onBack, onRenamed, onOpenSettings, ope
           {job?.stage === "failed" && <div className="mb-4"><ErrorState title="Transcription failed" guidance={job.error ?? "Try again."} onRetry={() => void runTranscription()} /><Button variant="ghost" onClick={() => void dismissJob()}>Dismiss</Button></div>}
           {!transcriptLoaded && <Loading message="Loading Transcript…" />}
           {transcriptLoaded && !job && !transcript && <EmptyState title="No Transcript yet" description="Transcribe this Meeting to see its Segments." action={<Button disabled={recordingMeetingId === id} onClick={() => setTranscribeOpen(true)}>Transcribe</Button>} />}
-          {showingDraft ? <div className="motion-transcript motion-content-enter"><DraftView segments={draft} participants={detail.participants} yourName={yourName} isVoiceNote={isVoiceNote} /></div> : transcript && <div key={`${id}:${transcript.revision}`} className="motion-transcript motion-content-enter"><TranscriptView transcript={transcript} positionMs={positionMs} player={player} editable={!job || job.stage === "failed"} onEdit={saveSegment} onMove={isVoiceNote ? undefined : moveSegments} participants={detail.participants} segmentParticipants={detail.segment_participants} yourName={yourName} isVoiceNote={isVoiceNote} skipInitialScroll={!!draftScrollAnchor.current} /></div>}
+          {showingDraft ? <div className="motion-transcript motion-content-enter"><DraftView segments={draft} participants={detail.participants} yourName={yourName} isVoiceNote={isVoiceNote} /></div> : transcript && <div key={`${id}:${transcript.revision}`} className="motion-transcript motion-content-enter"><TranscriptView transcript={transcript} positionMs={positionMs} player={player} editable={!job || job.stage === "failed"} onEdit={saveSegment} onMove={isVoiceNote ? undefined : moveSegments} participants={detail.participants} segmentParticipants={detail.segment_participants} yourName={yourName} isVoiceNote={isVoiceNote} skipInitialScroll={!!draftScrollAnchor.current} snapshots={snapshots} onOpenSnapshot={setOpenSnapshotOrder} /></div>}
         </section>
         <aside className="flex min-h-0 min-w-0 flex-col border-l border-line max-[680px]:border-l-0 max-[680px]:border-t" aria-label="Summary and Ask">
           {showingDraft ? <p className="p-5 text-sm text-ink-muted">Summary, Ask and Citations are available when the Transcript is ready.</p> : !providerStatus && <div className="px-5 py-4"><Loading message="Loading Summary and Ask…" /></div>}
