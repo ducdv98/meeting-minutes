@@ -2,11 +2,39 @@ use meeting_minutes_core::ai::{AiError, ProviderKind};
 use meeting_minutes_core::ask::AnswerState;
 use meeting_minutes_core::cloud::EngineError;
 use meeting_minutes_core::diagnostics::{
-    build_diagnostics, DiagnosticsInput, LogEvent, TranscriptionEnvironment,
+    build_diagnostics, build_diagnostics_with_session_counts, DiagnosticsInput, LogEvent,
+    SessionDiagnosticCounts, TranscriptionEnvironment,
 };
 use meeting_minutes_core::processing::{PowerState, ProcessingError, ProcessingStage};
 use meeting_minutes_core::transcript::{EngineName, FallbackReason};
 use std::time::Duration;
+
+#[test]
+fn diagnostics_reports_session_counts_without_prompt_or_warning_details() {
+    let report = build_diagnostics_with_session_counts(
+        &DiagnosticsInput {
+            version: "0.1.0".into(),
+            windows_version: "Windows 11".into(),
+            cpu: "CPU".into(),
+            ram_mb: 1024,
+            audio_devices: Ok(vec![]),
+            selected_model: None,
+            provider: None,
+            whisper_system_info: None,
+            transcription_backend: None,
+            recent_log_lines: vec![],
+        },
+        SessionDiagnosticCounts {
+            record_prompts_shown: 2,
+            source_health_warnings: 3,
+        },
+    );
+    assert!(report.contains("Record prompts shown this session: 2"));
+    assert!(report.contains("Source health warnings this session: 3"));
+    assert!(!report.contains("Teams"));
+    assert!(!report.contains("Headset"));
+    assert!(!report.contains("audio content"));
+}
 
 #[test]
 fn diagnostics_count_failure_kinds_without_provider_content() {

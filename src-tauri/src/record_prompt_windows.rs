@@ -1,6 +1,7 @@
 use std::{sync::Mutex, thread, time::Duration};
 
 use meeting_minutes_core::{
+    diagnostics::count_record_prompt_shown,
     microphone_usage::{MicrophoneApp, MicrophoneUsage, SystemMicrophoneUsage},
     record_prompt::{PromptDecision, PromptSettings, RecordPromptDecider},
     recorder::Phase,
@@ -126,6 +127,7 @@ pub fn start_polling(app: AppHandle) {
                     if let Ok(mut ui) = app.state::<PromptState>().0.lock() {
                         ui.current = Some(prompt);
                     }
+                    count_record_prompt_shown();
                     if let Err(error) = show(&app) {
                         dismiss(&app);
                         eprintln!("Could not show Record prompt: {error}");
