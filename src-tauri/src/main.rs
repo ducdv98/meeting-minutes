@@ -55,11 +55,74 @@ use tauri::{
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 use tauri_plugin_global_shortcut::{Shortcut, ShortcutState};
 use tauri_plugin_log::{RotationStrategy, Target, TargetKind};
+#[cfg(windows)]
+use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_updater::UpdaterExt;
 
 type LibraryState = Mutex<Result<Library, String>>;
 type RecorderState = Mutex<Recorder<WasapiOpener, QpcClock>>;
 type ProcessorState = Mutex<Processor>;
+
+#[cfg(windows)]
+#[derive(Default)]
+struct SourceHealthNotifications {
+    meeting_id: Option<String>,
+    warnings: HashMap<Source, meeting_minutes_core::recorder::SourceHealthWarning>,
+}
+
+#[cfg(windows)]
+impl SourceHealthNotifications {
+    fn started(&mut self, status: &RecorderStatus) -> Vec<Source> {
+        if self.meeting_id != status.meeting_id {
+            self.meeting_id = status.meeting_id.clone();
+            self.warnings.clear();
+        }
+        if status.phase != Phase::Recording {
+            // The recorder hides warnings while paused; a pause is not a recovery.
+            return Vec::new();
+        }
+        let current: HashMap<_, _> = status
+            .source_health
+            .iter()
+            .filter_map(|health| health.warning.map(|warning| (health.source, warning)))
+            .collect();
+        let started = current
+            .iter()
+            .filter_map(|(source, warning)| {
+                (self.warnings.get(source) != Some(warning)).then_some(*source)
+            })
+            .collect();
+        self.warnings = current;
+        started
+    }
+}
+
+#[cfg(windows)]
+fn notify_source_health(app: &AppHandle, status: &RecorderStatus) {
+    let started = match app.state::<Mutex<SourceHealthNotifications>>().lock() {
+        Ok(mut state) => state.started(status),
+        Err(_) => return,
+    };
+    for source in started {
+        let (title, source_name) = match source {
+            Source::Microphone => ("Microphone has no signal", "Microphone"),
+            Source::SystemAudio => ("System audio is silent", "System audio"),
+        };
+        let device = status
+            .source_devices
+            .iter()
+            .find(|item| item.source == source)
+            .map_or("current device", |item| item.device.as_str());
+        let _ = app
+            .notification()
+            .builder()
+            .title(title)
+            .body(format!(
+                "{source_name} is capturing from {device}. Open Meeting Minutes to check."
+            ))
+            .show();
+    }
+}
 
 /// Background transcription of the Recording in progress, and the caches of stopped ones (ADR 0010).
 /// Everything lives in memory only, so a crash discards it and the Meeting is transcribed from its Chunks.
@@ -2819,6 +2882,8 @@ fn status(app: &AppHandle) -> Result<RecorderStatus, String> {
 fn publish(app: &AppHandle) -> Result<RecorderStatus, String> {
     let status = status(app)?;
     #[cfg(windows)]
+    notify_source_health(app, &status);
+    #[cfg(windows)]
     snapshot_windows::recording_changed(app, &status);
     #[cfg(windows)]
     snapshot_windows::capture_bar_changed(app, &status);
@@ -3441,6 +3506,7 @@ fn main() {
                 .build(),
         )
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
@@ -3461,6 +3527,17 @@ fn main() {
                 .build(),
         )
         .setup(|app| {
+            #[cfg(windows)]
+            {
+                let handle = app.handle().clone();
+                app.notification().on_action(move |action| {
+                    if action.action_id() == "tap" {
+                        let window_app = handle.clone();
+                        let _ = handle.run_on_main_thread(move || show_window(&window_app));
+                    }
+                })?;
+                app.manage(Mutex::new(SourceHealthNotifications::default()));
+            }
             // The window-state plugin restores before the app setup hook runs.
             if let Some(window) = app.get_webview_window("main") {
                 keep_window_on_screen(&window)?;
