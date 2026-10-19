@@ -2,15 +2,16 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import HelpView from "./HelpView";
 import { appInfo, openLink } from "./app-info";
-import { getDiagnostics } from "./diagnostics";
+import { getDiagnostics, getMicrophoneUsage } from "./diagnostics";
 
 vi.mock("./app-info", () => ({ appInfo: vi.fn(), openLink: vi.fn() }));
-vi.mock("./diagnostics", () => ({ getDiagnostics: vi.fn() }));
+vi.mock("./diagnostics", () => ({ getDiagnostics: vi.fn(), getMicrophoneUsage: vi.fn() }));
 
 const writeText = vi.fn();
 beforeEach(() => {
   vi.mocked(appInfo).mockResolvedValue({ version: "0.1.7" });
   vi.mocked(getDiagnostics).mockResolvedValue("Meeting Minutes 0.1.7\n--- recent log ---");
+  vi.mocked(getMicrophoneUsage).mockResolvedValue([]);
   vi.mocked(openLink).mockResolvedValue();
   writeText.mockResolvedValue(undefined);
   Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
@@ -86,4 +87,27 @@ it("retries reading diagnostics after a failure", async () => {
   expect((await screen.findByRole("alert")).textContent).toContain("log locked");
   fireEvent.click(screen.getByRole("button", { name: "Retry" }));
   expect((await screen.findByLabelText("Diagnostics preview")).textContent).toContain("0.1.7");
+});
+
+it("shows fresh Microphone usage only when its diagnostic is opened and refreshed", async () => {
+  vi.mocked(getMicrophoneUsage)
+    .mockResolvedValueOnce([{ id: "desktop:c:#apps#zoom.exe", display_name: "Zoom" }])
+    .mockResolvedValueOnce([{ id: "package:microsoft.teams_8wekyb3d8bbwe", display_name: "Microsoft Teams" }]);
+  render(<HelpView />);
+  expect(getMicrophoneUsage).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Microphone usage diagnostic" }));
+  expect((await screen.findByLabelText("Apps using the Microphone")).textContent).toContain("Zoom (desktop:c:#apps#zoom.exe)");
+  fireEvent.click(screen.getByRole("button", { name: "Refresh Microphone usage" }));
+  await waitFor(() => expect(screen.getByLabelText("Apps using the Microphone").textContent).toContain("Microsoft Teams"));
+  expect(screen.getByLabelText("Apps using the Microphone").textContent).not.toContain("Zoom");
+});
+
+it("updates the open Microphone diagnostic when an app stops using it", async () => {
+  vi.mocked(getMicrophoneUsage)
+    .mockResolvedValueOnce([{ id: "desktop:c:#apps#zoom.exe", display_name: "Zoom" }])
+    .mockResolvedValue([]);
+  render(<HelpView />);
+  fireEvent.click(screen.getByRole("button", { name: "Microphone usage diagnostic" }));
+  expect((await screen.findByLabelText("Apps using the Microphone")).textContent).toContain("Zoom");
+  await waitFor(() => expect(screen.getByLabelText("Apps using the Microphone").textContent).toContain("No other apps"), { timeout: 3500 });
 });

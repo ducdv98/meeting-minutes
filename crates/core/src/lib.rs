@@ -21,6 +21,7 @@ pub mod correction;
 pub mod diagnostics;
 pub mod import;
 pub mod language_models;
+pub mod microphone_usage;
 pub mod model_downloads;
 pub mod models;
 pub mod processing;

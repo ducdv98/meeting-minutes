@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Check, Copy } from "lucide-react";
 import { appInfo, openLink, type AppInfo, type OutsideLink } from "./app-info";
-import { getDiagnostics } from "./diagnostics";
+import { getDiagnostics, getMicrophoneUsage, type MicrophoneApp } from "./diagnostics";
 import { pauseHotkey, recordHotkey } from "./recording";
 import { Wordmark } from "./components/Brand";
 import { Button } from "./components/ui/Button";
@@ -26,6 +26,10 @@ export default function HelpView({ onOpenGuide }: { onOpenGuide?: () => void }) 
   const [copyError, setCopyError] = useState<string | null>(null);
   const [linkError, setLinkError] = useState<{ reason: string; link: OutsideLink } | null>(null);
   const [previewLoad, setPreviewLoad] = useState(0);
+  const [showMicrophoneUsage, setShowMicrophoneUsage] = useState(false);
+  const [microphoneUsage, setMicrophoneUsage] = useState<MicrophoneApp[] | null>(null);
+  const [microphoneUsageError, setMicrophoneUsageError] = useState<string | null>(null);
+  const [microphoneUsageLoad, setMicrophoneUsageLoad] = useState(0);
   const copiedTimer = useRef<number | undefined>(undefined);
   useEffect(() => {
     let active = true;
@@ -38,6 +42,19 @@ export default function HelpView({ onOpenGuide }: { onOpenGuide?: () => void }) 
     getDiagnostics().then((text) => { if (active) setPreview(text); }, (reason) => { if (active) setPreviewError(String(reason)); });
     return () => { active = false; };
   }, [previewLoad]);
+  useEffect(() => {
+    if (!showMicrophoneUsage) return;
+    let active = true;
+    const read = () => {
+      getMicrophoneUsage().then(
+        (apps) => { if (active) { setMicrophoneUsage(apps); setMicrophoneUsageError(null); } },
+        (reason) => { if (active) setMicrophoneUsageError(String(reason)); },
+      );
+    };
+    read();
+    const interval = window.setInterval(read, 2000);
+    return () => { active = false; window.clearInterval(interval); };
+  }, [showMicrophoneUsage, microphoneUsageLoad]);
   async function copyDiagnostics() {
     setCopyError(null);
     setCopied(false);
@@ -87,6 +104,14 @@ export default function HelpView({ onOpenGuide }: { onOpenGuide?: () => void }) 
         </div>
         {copied && <p role="status" className="m-0 text-sm text-ink-muted">Diagnostics copied. Paste them into the GitHub issue or your message.</p>}
         {copyError && <ErrorState title="Couldn't copy diagnostics" guidance={`${copyError}. Select the text above and press Ctrl+C instead.`} onRetry={() => void copyDiagnostics()} />}
+        <div className="grid gap-2 border-t border-line pt-3 text-xs text-ink-muted">
+          <button type="button" className="w-fit text-left underline-offset-2 hover:underline" aria-expanded={showMicrophoneUsage} onClick={() => setShowMicrophoneUsage((value) => !value)}>Microphone usage diagnostic</button>
+          {showMicrophoneUsage && <div className="grid gap-2">
+            <p className="m-0">Current apps using the Microphone. This list stays on this PC and is separate from copied diagnostics.</p>
+            <pre aria-label="Apps using the Microphone" className="m-0 max-h-[170px] overflow-auto whitespace-pre-wrap rounded-md border border-line bg-panel p-3 font-mono">{microphoneUsageError ? `Could not read Microphone usage: ${microphoneUsageError}` : microphoneUsage === null ? "Reading…" : microphoneUsage.length === 0 ? "No other apps are using the Microphone." : microphoneUsage.map((app) => `${app.display_name} (${app.id})`).join("\n")}</pre>
+            <button type="button" className="w-fit underline-offset-2 hover:underline" onClick={() => setMicrophoneUsageLoad((value) => value + 1)}>Refresh Microphone usage</button>
+          </div>}
+        </div>
       </FormSection>
     </div>
   </section>;

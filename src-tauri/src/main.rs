@@ -32,6 +32,7 @@ use meeting_minutes_core::{
     diagnostics::{build_diagnostics, log_event, DiagnosticsInput, LogEvent},
     import::import_extension,
     language_models::{LanguageModel, LanguageModelSettings},
+    microphone_usage::{MicrophoneApp, MicrophoneUsage, SystemMicrophoneUsage},
     model_downloads::{ModelDownloadStatus, ModelDownloads},
     models::{self, DEFAULT_MODEL, MODELS},
     processing::{self, JobStage, ProcessingStatus, Processor, SpeechEngine, TranscribeRequest},
@@ -181,6 +182,13 @@ fn get_diagnostics(app: AppHandle) -> Result<String, String> {
         transcription_backend: Some(WhisperEngine::backend_description()),
         recent_log_lines,
     }))
+}
+
+#[tauri::command]
+fn get_microphone_usage() -> Result<Vec<MicrophoneApp>, String> {
+    SystemMicrophoneUsage
+        .apps_using_microphone()
+        .map_err(|error| error.to_string())
 }
 
 #[derive(Clone, Copy, serde::Serialize)]
@@ -3608,6 +3616,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             app_info,
             get_diagnostics,
+            get_microphone_usage,
             pick_audio_files,
             import_status,
             dismiss_import_errors,
