@@ -28,4 +28,4 @@ The site is served by a static-only Cloudflare Worker (`wrangler.jsonc`) on the 
 
 Publishing a Release triggers the website workflow so the download URL, version, size, SHA-256 and Changelog refresh from GitHub Releases. Do not deploy a `--draft` build.
 
-The Changelog shows only published Release notes. The hero download links to the selected NSIS installer and displays its SHA-256, version, size and Windows requirement. Release notes are maintained in `RELEASE_NOTES/v1.0.0.md` and copied into the draft Release before the workflow appends verification details.
+The Changelog shows only published Release notes. The hero download links to the selected NSIS installer and displays its SHA-256, version, size and Windows requirement. Release notes are maintained in `RELEASE_NOTES/vX.Y.Z.md` and copied into the draft Release before the workflow appends verification details.

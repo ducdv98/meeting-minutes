@@ -2,7 +2,7 @@
 
 # Meeting Minutes
 
-Meeting Minutes records your calls on a Windows PC and turns them into Meetings in a personal Library. It captures your Microphone and your PC's System audio, so it works with any calling app, and transcribes them locally with Whisper by default. With your own Groq key, it uses `whisper-large-v3`; Gemini can handle fallback transcription. You can then get a Summary with Action items and ask questions about one Meeting; answers cite the parts of the Transcript they come from, and say so when the Transcript doesn't answer the question. It is free.
+Meeting Minutes records your calls on a Windows PC and turns them into Meetings in a personal Library. It captures your Microphone and your PC's System audio, so it works with any calling app, and transcribes them locally with Whisper by default. With your own Groq key, it uses `whisper-large-v3`; Gemini can handle fallback transcription. While a Recording runs, you can take Snapshots of a region of your screen, such as a shared slide; they appear in the Transcript and stay on your PC. You can then get a Summary with Action items and ask questions about one Meeting; answers cite the parts of the Transcript they come from, and say so when the Transcript doesn't answer the question. It is free.
 
 Your Library stays on your PC. With your own keys, audio goes to Groq for transcription, or to Gemini for fallback transcription; Gemini also receives Transcript text for Correction. Summary, Action items and Ask can use Ollama locally or Gemini, OpenAI or Anthropic under your own key; the app asks before sending a Meeting. Gemini's free tier may use content for training. Keys stay in Windows Credential Manager, and the app has no server of its own.
 
