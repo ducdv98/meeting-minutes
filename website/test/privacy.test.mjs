@@ -42,6 +42,19 @@ test('privacy page says Snapshot images stay on the PC', async () => {
   assert.match(policy, /snapshots.*PNG/i);
 });
 
+test('privacy page explains local Microphone app checks and session diagnostics counts', async () => {
+  const policy = await readFile(policyPath, 'utf8');
+  assert.match(policy, /checks locally which apps use the Microphone[\s\S]*?nothing about that check is sent/i);
+  assert.match(policy, /Record prompts shown[\s\S]*?Source health warnings/i);
+  assert.match(policy, /counts[\s\S]*?no app names, device names or audio content/i);
+});
+
+test('FAQ explains Record prompts and Source health warnings', async () => {
+  const home = await readFile(homePath, 'utf8');
+  assert.match(home, /Record prompt[\s\S]*?press Record/i);
+  assert.match(home, /Source health warnings[\s\S]*?Microphone[\s\S]*?System audio/i);
+});
+
 test('public copy explains when Meeting content goes to cloud providers', async () => {
   for (const path of [policyPath, homePath, readmePath]) {
     const copy = await readFile(path, 'utf8');

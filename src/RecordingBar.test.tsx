@@ -131,6 +131,8 @@ it("shows the Recording notice before the first Recording ever", async () => {
   expect(screen.getByRole("dialog")).toBeTruthy();
   expect(screen.getByRole("dialog").textContent).toMatch(/Snapshots may capture what others share/);
   expect(screen.getByRole("dialog").textContent).toMatch(/Each Snapshot is confirmed on screen/);
+  expect(screen.getByRole("dialog").textContent).toMatch(/checks locally which apps use the Microphone/);
+  expect(screen.getByRole("dialog").textContent).toMatch(/nothing about that check is sent/);
   expect(startRecording).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole("button", { name: "Start recording" }));
   expect(await screen.findByText(/Recording/, { selector: "p" })).toBeTruthy();

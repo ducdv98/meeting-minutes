@@ -1,4 +1,8 @@
-use std::{fmt, time::Duration};
+use std::{
+    fmt,
+    sync::atomic::{AtomicUsize, Ordering},
+    time::Duration,
+};
 
 use crate::{
     ai::{AiError, ProviderKind},
@@ -897,7 +901,40 @@ fn parse_transcription_rtf(event: &str) -> Option<&str> {
     .then_some(rtf)
 }
 
+/// How often the Record prompt and Source health warnings appeared in this app session.
+/// Counts only: no app names, device names or audio content.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct SessionDiagnosticCounts {
+    pub record_prompts_shown: usize,
+    pub source_health_warnings: usize,
+}
+
+static RECORD_PROMPTS_SHOWN: AtomicUsize = AtomicUsize::new(0);
+static SOURCE_HEALTH_WARNINGS: AtomicUsize = AtomicUsize::new(0);
+
+pub fn count_record_prompt_shown() {
+    RECORD_PROMPTS_SHOWN.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn count_source_health_warning() {
+    SOURCE_HEALTH_WARNINGS.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn session_counts() -> SessionDiagnosticCounts {
+    SessionDiagnosticCounts {
+        record_prompts_shown: RECORD_PROMPTS_SHOWN.load(Ordering::Relaxed),
+        source_health_warnings: SOURCE_HEALTH_WARNINGS.load(Ordering::Relaxed),
+    }
+}
+
 pub fn build_diagnostics(input: &DiagnosticsInput) -> String {
+    build_diagnostics_with_session_counts(input, SessionDiagnosticCounts::default())
+}
+
+pub fn build_diagnostics_with_session_counts(
+    input: &DiagnosticsInput,
+    counts: SessionDiagnosticCounts,
+) -> String {
     let devices = match &input.audio_devices {
         Ok(devices) if devices.is_empty() => "None detected".to_owned(),
         Ok(devices) => devices.join("\n"),
@@ -938,7 +975,7 @@ pub fn build_diagnostics(input: &DiagnosticsInput) -> String {
         })
         .map_or("None", String::as_str);
     format!(
-        "Meeting Minutes {}\nWindows: {}\nCPU: {}\nRAM: {} MB\nAudio devices:\n{}\nSelected model: {}\nProvider: {}\nwhisper.cpp system info: {}\nTranscription backend: {}\nLast transcription RTF: {}\nLast processing failure: {}\nRecent log lines:\n{}",
+        "Meeting Minutes {}\nWindows: {}\nCPU: {}\nRAM: {} MB\nAudio devices:\n{}\nSelected model: {}\nProvider: {}\nwhisper.cpp system info: {}\nTranscription backend: {}\nLast transcription RTF: {}\nLast processing failure: {}\nRecord prompts shown this session: {}\nSource health warnings this session: {}\nRecent log lines:\n{}",
         input.version,
         input.windows_version,
         input.cpu,
@@ -950,6 +987,8 @@ pub fn build_diagnostics(input: &DiagnosticsInput) -> String {
         input.transcription_backend.as_deref().unwrap_or("Unavailable"),
         if last_rtf == "None" || last_rtf == "none" { "None".to_owned() } else { format!("{last_rtf}x") },
         last_failure,
+        counts.record_prompts_shown,
+        counts.source_health_warnings,
         lines,
     )
 }

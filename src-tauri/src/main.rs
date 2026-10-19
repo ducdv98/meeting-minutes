@@ -31,7 +31,7 @@ use meeting_minutes_core::{
         managed::{self, ManagedEngine, ManagedKey, ManagedKeyState, ManagedKeyStore},
         CloudEngine,
     },
-    diagnostics::{build_diagnostics, log_event, DiagnosticsInput, LogEvent},
+    diagnostics::{build_diagnostics_with_session_counts, count_source_health_warning, log_event, session_counts, DiagnosticsInput, LogEvent},
     import::import_extension,
     language_models::{LanguageModel, LanguageModelSettings},
     microphone_usage::{MicrophoneApp, MicrophoneUsage, SystemMicrophoneUsage},
@@ -106,6 +106,7 @@ fn notify_source_health(app: &AppHandle, status: &RecorderStatus) {
         Err(_) => return,
     };
     for source in started {
+        count_source_health_warning();
         let (title, source_name) = match source {
             Source::Microphone => ("Microphone has no signal", "Microphone"),
             Source::SystemAudio => ("System audio is silent", "System audio"),
@@ -228,7 +229,7 @@ fn get_diagnostics(app: AppHandle) -> Result<String, String> {
     let log = fs::read_to_string(log_dir.join("meeting-minutes.log")).unwrap_or_default();
     let recent_log_lines = log.lines().map(str::to_owned).collect();
     let settings = Settings::load(&app.state::<SettingsPath>().0);
-    Ok(build_diagnostics(&DiagnosticsInput {
+    Ok(build_diagnostics_with_session_counts(&DiagnosticsInput {
         version: app.package_info().version.to_string(),
         windows_version: sysinfo::System::long_os_version().unwrap_or_else(|| "Unknown".into()),
         cpu: system
@@ -246,7 +247,7 @@ fn get_diagnostics(app: AppHandle) -> Result<String, String> {
         whisper_system_info: Some(WhisperEngine::system_info().to_owned()),
         transcription_backend: Some(WhisperEngine::backend_description()),
         recent_log_lines,
-    }))
+    }, session_counts()))
 }
 
 #[tauri::command]
