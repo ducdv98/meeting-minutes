@@ -121,3 +121,27 @@ fn silenced_apps_and_the_off_switch_do_not_prompt() {
         PromptDecision::None
     );
 }
+
+#[test]
+fn removing_a_silenced_app_prompts_on_its_next_microphone_session() {
+    let mut decider = RecordPromptDecider::default();
+    check(&mut decider, &[]);
+    let silenced = vec!["Teams".to_owned()];
+    assert_eq!(
+        decider.observe(
+            &[app("Teams")],
+            false,
+            PromptSettings {
+                enabled: true,
+                silenced_app_ids: &silenced
+            },
+        ),
+        PromptDecision::None
+    );
+    assert_eq!(check(&mut decider, &[app("Teams")]), PromptDecision::None);
+    assert_eq!(check(&mut decider, &[]), PromptDecision::None);
+    assert_eq!(
+        check(&mut decider, &[app("Teams")]),
+        PromptDecision::Show(app("Teams"))
+    );
+}

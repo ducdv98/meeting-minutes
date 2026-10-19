@@ -1,4 +1,4 @@
-import { type Language, type Settings } from "../processing";
+import { type Language, type Settings, type SilencedApp } from "../processing";
 import { MEETING_LANGUAGES } from "../languages";
 import { Input } from "../components/ui/Input";
 import { Switch } from "../components/ui/Switch";
@@ -15,7 +15,9 @@ function pressedHotkey(event: React.KeyboardEvent<HTMLInputElement>): string | n
   return [event.ctrlKey && "Ctrl", event.altKey && "Alt", event.shiftKey && "Shift", key].filter(Boolean).join("+");
 }
 
-export function GeneralTab({ settings, save, libraryLocation, changeSnapshotHotkey, hotkeyError }: { settings: Settings; save: (next: Settings) => void; libraryLocation: string | null; changeSnapshotHotkey: (snapshotHotkey: string, drawSnapshotHotkey: string) => void; hotkeyError: string | null }) {
+export function GeneralTab({ settings, save, libraryLocation, changeSnapshotHotkey, changeRecordPrompt, hotkeyError }: { settings: Settings; save: (next: Settings) => void; libraryLocation: string | null; changeSnapshotHotkey: (snapshotHotkey: string, drawSnapshotHotkey: string) => void; changeRecordPrompt: (enabled: boolean, silencedApps: SilencedApp[]) => void; hotkeyError: string | null }) {
+  const promptEnabled = settings.record_prompt_enabled ?? true;
+  const silencedApps = settings.silenced_record_prompt_apps ?? [];
   const snapshotHotkey = settings.snapshot_hotkey ?? "Ctrl+Alt+S";
   const drawSnapshotHotkey = settings.draw_snapshot_hotkey ?? "Ctrl+Alt+Shift+S";
   return <><FormSection title="Meetings">
@@ -41,6 +43,21 @@ export function GeneralTab({ settings, save, libraryLocation, changeSnapshotHotk
       <Switch aria-labelledby="auto-process" aria-describedby="auto-process-note" checked={settings.auto_process} onCheckedChange={(auto_process) => save({ ...settings, auto_process })} />
     </div>
   </FormSection>
+    <FormSection title="Recording">
+      <div className="flex items-center justify-between gap-4 rounded-md border border-line bg-raised px-3.5 py-3">
+        <div className="grid gap-0.5">
+          <span id="record-prompt" className="text-base font-medium">Record prompt</span>
+          <span id="record-prompt-note" className="text-xs text-ink-muted">Offer to record when another app starts using your Microphone. Checked on this PC only.</span>
+        </div>
+        <Switch aria-labelledby="record-prompt" aria-describedby="record-prompt-note" checked={promptEnabled} onCheckedChange={(enabled) => changeRecordPrompt(enabled, silencedApps)} />
+      </div>
+      {silencedApps.length > 0 && <div className="grid gap-1.5">
+        <span className="text-sm font-medium">Apps you silenced</span>
+        <ul className="m-0 grid list-none gap-1 p-0">
+          {silencedApps.map((silenced) => <li key={silenced.id} className="flex items-center justify-between gap-3 rounded-md border border-line bg-raised px-3 py-2 text-sm"><span>{silenced.display_name}</span><button type="button" className="text-sm text-accent hover:underline" aria-label={`Remove ${silenced.display_name}`} onClick={() => changeRecordPrompt(promptEnabled, silencedApps.filter((other) => other.id !== silenced.id))}>Remove</button></li>)}
+        </ul>
+      </div>}
+    </FormSection>
     <FormSection title="Hotkeys">
       <p className="m-0 text-xs text-ink-muted">Press a new combination in a Snapshot field. Changes apply to the next Recording.</p>
       <div className="grid gap-1 text-sm text-ink-muted"><span>Record: {recordHotkey}</span><span>Pause or resume: {pauseHotkey}</span></div>

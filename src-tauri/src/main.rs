@@ -938,6 +938,37 @@ fn update_snapshot_hotkeys(
 }
 
 #[tauri::command]
+fn update_record_prompt_settings(
+    path: State<'_, SettingsPath>,
+    enabled: bool,
+    silenced_apps: Vec<meeting_minutes_core::microphone_usage::MicrophoneApp>,
+) -> Result<Settings, String> {
+    let mut settings = Settings::load(&path.0);
+    settings.record_prompt_enabled = enabled;
+    settings.silenced_record_prompt_apps = silenced_apps;
+    settings.save(&path.0).map_err(|error| error.to_string())?;
+    Ok(settings)
+}
+
+#[cfg(windows)]
+#[tauri::command]
+fn silence_record_prompt_app(app: AppHandle, path: State<'_, SettingsPath>) -> Result<(), String> {
+    let Some(prompt) = record_prompt_windows::current(&app) else {
+        return Ok(());
+    };
+    let mut settings = Settings::load(&path.0);
+    if !settings
+        .silenced_record_prompt_apps
+        .iter()
+        .any(|silenced| silenced.id == prompt.id)
+    {
+        settings.silenced_record_prompt_apps.push(prompt);
+        settings.save(&path.0).map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
 fn installed_models(models_dir: State<'_, ModelsDir>) -> Vec<&'static str> {
     MODELS
         .iter()
@@ -3805,6 +3836,9 @@ fn main() {
             complete_first_run,
             update_settings,
             update_snapshot_hotkeys,
+            update_record_prompt_settings,
+            #[cfg(windows)]
+            silence_record_prompt_app,
             installed_models,
             model_download_status,
             start_model_download,

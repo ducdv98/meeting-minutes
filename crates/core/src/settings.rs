@@ -1,6 +1,6 @@
 use crate::{
-    ai::ProviderKind, language_models::LanguageModelSettings, models::TURBO_MODEL,
-    speech_models::SpeechSettings, transcript::Language,
+    ai::ProviderKind, language_models::LanguageModelSettings, microphone_usage::MicrophoneApp,
+    models::TURBO_MODEL, speech_models::SpeechSettings, transcript::Language,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -26,6 +26,8 @@ fn default_draw_snapshot_hotkey() -> String {
 pub struct Settings {
     pub first_run_completed: bool,
     pub recording_notice_acknowledged: bool,
+    pub record_prompt_enabled: bool,
+    pub silenced_record_prompt_apps: Vec<MicrophoneApp>,
     #[serde(default)]
     pub cloud_notice_acknowledged: bool,
     pub auto_process: bool,
@@ -49,6 +51,8 @@ impl Default for Settings {
         Self {
             first_run_completed: false,
             recording_notice_acknowledged: false,
+            record_prompt_enabled: true,
+            silenced_record_prompt_apps: Vec::new(),
             cloud_notice_acknowledged: false,
             auto_process: true,
             model: "small".into(),
@@ -188,6 +192,8 @@ mod tests {
         assert_eq!(settings.model, "small");
         assert!(settings.vocabulary.is_empty());
         assert_eq!(settings.language, None);
+        assert!(settings.record_prompt_enabled);
+        assert!(settings.silenced_record_prompt_apps.is_empty());
     }
 
     #[test]

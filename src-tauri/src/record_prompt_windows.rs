@@ -4,11 +4,12 @@ use meeting_minutes_core::{
     microphone_usage::{MicrophoneApp, MicrophoneUsage, SystemMicrophoneUsage},
     record_prompt::{PromptDecision, PromptSettings, RecordPromptDecider},
     recorder::Phase,
+    settings::Settings,
 };
 use tauri::{AppHandle, Manager, PhysicalPosition, WebviewUrl, WebviewWindowBuilder};
 use windows::Win32::UI::WindowsAndMessaging::{SetWindowDisplayAffinity, WDA_EXCLUDEFROMCAPTURE};
 
-use crate::status;
+use crate::{status, SettingsPath};
 
 const LABEL: &str = "record-prompt";
 
@@ -95,6 +96,12 @@ pub fn start_polling(app: AppHandle) {
             let recording_active = status(&app)
                 .map(|status| status.phase != Phase::Idle)
                 .unwrap_or(true);
+            let settings = Settings::load(&app.state::<SettingsPath>().0);
+            let silenced_app_ids: Vec<String> = settings
+                .silenced_record_prompt_apps
+                .iter()
+                .map(|silenced| silenced.id.clone())
+                .collect();
             let decision = {
                 let state = app.state::<PromptState>();
                 let Ok(mut ui) = state.0.lock() else {
@@ -105,8 +112,14 @@ pub fn start_polling(app: AppHandle) {
                     ui.decider.dismiss();
                     ui.current = None;
                 }
-                ui.decider
-                    .observe(&apps, recording_active, PromptSettings::default())
+                ui.decider.observe(
+                    &apps,
+                    recording_active,
+                    PromptSettings {
+                        enabled: settings.record_prompt_enabled,
+                        silenced_app_ids: &silenced_app_ids,
+                    },
+                )
             };
             match decision {
                 PromptDecision::Show(prompt) => {

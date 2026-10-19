@@ -2,14 +2,14 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import SettingsView, { type SettingsTabId } from "./SettingsView";
 import type { AiSettings } from "./ai";
-import { acknowledgeCloudNotice, firstRunInfo, getSettings, installedModels, modelDownloadStatus, onModelDownloadStatus, updateSettings, type Settings } from "./processing";
+import { acknowledgeCloudNotice, firstRunInfo, getSettings, installedModels, modelDownloadStatus, onModelDownloadStatus, updateRecordPromptSettings, updateSettings, type Settings } from "./processing";
 import { aiStatus, deleteApiKey, listAiModels, managedAccount, managedSendCode, managedSignIn, managedDisconnect, managedRemoveKey, managedSaveKey, managedStatus, saveApiKey, testCloudApiKey, testLanguageModel, updateLanguageModels, type AiStatus } from "./ai";
 import { openLink } from "./app-info";
 import { CLOUD_NOTICE_SUMMARY, CLOUD_NOTICE_TEXT, PRIVACY_INTRO } from "./privacy-text";
 import { onSnapshotHotkeyError } from "./recording";
 import { updateSnapshotHotkeys } from "./processing";
 
-vi.mock("./processing", async (importOriginal) => ({ ...(await importOriginal<typeof import("./processing")>()), firstRunInfo: vi.fn(), getSettings: vi.fn(), updateSettings: vi.fn(), updateSnapshotHotkeys: vi.fn(), installedModels: vi.fn(), acknowledgeCloudNotice: vi.fn(), modelDownloadStatus: vi.fn(), onModelDownloadStatus: vi.fn() }));
+vi.mock("./processing", async (importOriginal) => ({ ...(await importOriginal<typeof import("./processing")>()), firstRunInfo: vi.fn(), getSettings: vi.fn(), updateSettings: vi.fn(), updateRecordPromptSettings: vi.fn(), updateSnapshotHotkeys: vi.fn(), installedModels: vi.fn(), acknowledgeCloudNotice: vi.fn(), modelDownloadStatus: vi.fn(), onModelDownloadStatus: vi.fn() }));
 vi.mock("./ai", async (importOriginal) => ({ ...(await importOriginal<typeof import("./ai")>()), aiStatus: vi.fn(), listAiModels: vi.fn(), managedStatus: vi.fn(), managedAccount: vi.fn(), managedSendCode: vi.fn(), managedSignIn: vi.fn(), managedDisconnect: vi.fn(), managedRemoveKey: vi.fn(), managedSaveKey: vi.fn(), saveApiKey: vi.fn(), deleteApiKey: vi.fn(), updateLanguageModels: vi.fn(), testLanguageModel: vi.fn(), testCloudApiKey: vi.fn() }));
 vi.mock("./app-info", () => ({ openLink: vi.fn() }));
 vi.mock("./recording", async (importOriginal) => ({ ...(await importOriginal<typeof import("./recording")>()), onSnapshotHotkeyError: vi.fn() }));
@@ -32,6 +32,20 @@ const empty: AiStatus = { provider: null, model: null, configured: false, has_op
 const base: Settings = { first_run_completed: true, recording_notice_acknowledged: true, cloud_notice_acknowledged: false, auto_process: true, model: "small", vocabulary: ["Nguyễn"], language: null, your_name: null, ai: noAi, language_models: { models: [], correction: null, summary: null, ask: null, confirmed_correction_providers: [], legacy_correction_pending: false } };
 
 async function openTab(name: string) { fireEvent.mouseDown(await screen.findByRole("tab", { name }), { button: 0, ctrlKey: false }); }
+
+it("turns the Record prompt off and removes a silenced app", async () => {
+  const withSilencedApp = { ...base, record_prompt_enabled: true, silenced_record_prompt_apps: [{ id: "teams.exe", display_name: "Teams" }] };
+  vi.mocked(getSettings).mockResolvedValue(withSilencedApp);
+  vi.mocked(aiStatus).mockResolvedValue(empty);
+  vi.mocked(updateRecordPromptSettings).mockImplementation(async (enabled, apps) => ({ ...withSilencedApp, record_prompt_enabled: enabled, silenced_record_prompt_apps: apps }));
+  render(<SettingsView initialTab="general" />);
+  fireEvent.click(await screen.findByRole("switch", { name: "Record prompt" }));
+  await waitFor(() => expect(updateRecordPromptSettings).toHaveBeenCalledWith(false, [{ id: "teams.exe", display_name: "Teams" }]));
+  expect(screen.getByText("Teams")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Remove Teams" }));
+  await waitFor(() => expect(updateRecordPromptSettings).toHaveBeenLastCalledWith(false, []));
+  expect(screen.queryByText("Teams")).toBeNull();
+});
 
 it("shows the resolved Library root in General", async () => {
   vi.mocked(getSettings).mockResolvedValue(base);

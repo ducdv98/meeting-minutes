@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Check } from "lucide-react";
-import { firstRunInfo, getSettings, installedModels, onProcessingStatus, updateSettings, updateSnapshotHotkeys, type Settings } from "./processing";
+import { firstRunInfo, getSettings, installedModels, onProcessingStatus, updateSettings, updateRecordPromptSettings, updateSnapshotHotkeys, type Settings, type SilencedApp } from "./processing";
 import { onSnapshotHotkeyError } from "./recording";
 import { aiStatus, type AiStatus } from "./ai";
 import { ErrorState } from "./components/states/ErrorState";
@@ -116,6 +116,20 @@ export default function SettingsView({ initialTab }: { initialTab?: SettingsTabI
       }
     });
   }
+  function changeRecordPrompt(enabled: boolean, silencedApps: SilencedApp[]) {
+    setSaved(false);
+    setSavedLeaving(false);
+    setSettings((current) => current && { ...current, record_prompt_enabled: enabled, silenced_record_prompt_apps: silencedApps });
+    saveQueue.current = saveQueue.current.then(async () => {
+      try {
+        await updateRecordPromptSettings(enabled, silencedApps);
+        setSavedLeaving(false);
+        setSaved(true);
+      } catch (reason) {
+        if (settings) setError({ reason: String(reason), settings });
+      }
+    });
+  }
   function saveVocabulary() {
     const next = withVocabulary(settings, vocabulary);
     if (!next) return;
@@ -135,7 +149,7 @@ export default function SettingsView({ initialTab }: { initialTab?: SettingsTabI
       {error && <ErrorState title="Couldn't save Settings" guidance={`${error.reason}. The change shown below isn't saved yet.`} onRetry={() => save(error.settings)} />}
       {loadFailed ? <ErrorState title="Couldn't load Settings" guidance="Try again in a moment." onRetry={() => setLoad((value) => value + 1)} /> : !settings ? <Loading message="Loading Settings…" /> : <Tabs value={tab} onValueChange={(value) => setTab(value as SettingsTabId)} className="motion-content-enter min-w-0">
         <TabsList aria-label="Settings tabs" className="flex-wrap px-0"><TabsTrigger value="general">General</TabsTrigger><TabsTrigger value="speech-to-text">Speech-to-text</TabsTrigger><TabsTrigger value="language-models">Language models</TabsTrigger><TabsTrigger value="keys">Keys</TabsTrigger><TabsTrigger value="privacy">Privacy</TabsTrigger></TabsList>
-        <TabsContent forceMount hidden={tab !== "general"} value="general" className="settings-tab pt-7"><GeneralTab settings={settings} save={save} libraryLocation={libraryLocation} changeSnapshotHotkey={changeSnapshotHotkey} hotkeyError={hotkeyError} /></TabsContent>
+        <TabsContent forceMount hidden={tab !== "general"} value="general" className="settings-tab pt-7"><GeneralTab settings={settings} save={save} libraryLocation={libraryLocation} changeSnapshotHotkey={changeSnapshotHotkey} changeRecordPrompt={changeRecordPrompt} hotkeyError={hotkeyError} /></TabsContent>
         <TabsContent forceMount hidden={tab !== "speech-to-text"} value="speech-to-text" className="settings-tab pt-7"><SpeechToTextTab settings={settings} save={save} installed={installed} vocabulary={vocabulary} setVocabulary={setVocabulary} saveVocabulary={saveVocabulary} providerStatus={providerStatus} onManageKeys={() => setTab("keys")} active={tab === "speech-to-text"} /></TabsContent>
         <TabsContent forceMount hidden={tab !== "language-models"} value="language-models" className="settings-tab pt-7"><LanguageModelsTab settings={settings} setSettings={setSettings} providerStatus={providerStatus} setProviderStatus={setProviderStatus} aiError={aiError} setAiError={setAiError} onManageKeys={() => setTab("keys")} /></TabsContent>
         <TabsContent forceMount hidden={tab !== "keys"} value="keys" className="settings-tab pt-7"><KeysTab settings={settings} setSettings={setSettings} providerStatus={providerStatus} setProviderStatus={setProviderStatus} active={tab === "keys"} /></TabsContent>

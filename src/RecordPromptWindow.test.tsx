@@ -1,11 +1,11 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import RecordPromptWindow from "./RecordPromptWindow";
-import { dismissRecordPrompt, getRecordPrompt, showRecordingNotice } from "./record-prompt";
+import { dismissRecordPrompt, getRecordPrompt, showRecordingNotice, silenceRecordPromptApp } from "./record-prompt";
 import { recordingStatus, startRecording, type RecorderStatus } from "./recording";
 
 vi.mock("./record-prompt", () => ({
-  dismissRecordPrompt: vi.fn(), getRecordPrompt: vi.fn(), showRecordingNotice: vi.fn(),
+  dismissRecordPrompt: vi.fn(), getRecordPrompt: vi.fn(), showRecordingNotice: vi.fn(), silenceRecordPromptApp: vi.fn(),
 }));
 vi.mock("./recording", async (original) => ({
   ...await original<typeof import("./recording")>(), recordingStatus: vi.fn(), startRecording: vi.fn(),
@@ -22,6 +22,7 @@ beforeEach(() => {
   vi.mocked(startRecording).mockResolvedValue({ ...idle, phase: "recording", meeting_id: "m1" });
   vi.mocked(dismissRecordPrompt).mockResolvedValue(undefined);
   vi.mocked(showRecordingNotice).mockResolvedValue(undefined);
+  vi.mocked(silenceRecordPromptApp).mockResolvedValue(undefined);
 });
 
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.resetAllMocks(); });
@@ -40,6 +41,14 @@ it("Record uses the usual start command", async () => {
   fireEvent.click(await screen.findByRole("button", { name: "Record" }));
   await waitFor(() => expect(startRecording).toHaveBeenCalledOnce());
   expect(dismissRecordPrompt).toHaveBeenCalledOnce();
+});
+
+it("Never for this app silences the displayed app and closes the prompt", async () => {
+  render(<RecordPromptWindow />);
+  fireEvent.click(await screen.findByRole("button", { name: "Never for this app" }));
+  await waitFor(() => expect(silenceRecordPromptApp).toHaveBeenCalledOnce());
+  expect(dismissRecordPrompt).toHaveBeenCalledOnce();
+  expect(startRecording).not.toHaveBeenCalled();
 });
 
 it("Record opens the main window's Recording notice when needed", async () => {
