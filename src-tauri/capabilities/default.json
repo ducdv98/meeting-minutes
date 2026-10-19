@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default permissions for the main window, Capture bar and Capture region overlays",
-  "windows": ["main", "capture-bar", "capture-region-*"],
+  "description": "Default permissions for the main window, Capture bar, Capture region overlays and Record prompt",
+  "windows": ["main", "capture-bar", "capture-region-*", "record-prompt"],
   "permissions": ["core:default", "core:window:allow-start-dragging", "core:window:allow-set-size"]
 }
