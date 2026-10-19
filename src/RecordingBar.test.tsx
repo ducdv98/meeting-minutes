@@ -5,10 +5,12 @@ import {
   acknowledgeRecordingNotice,
   continueMeeting,
   dismissContinue,
+  dismissSourceWarning,
   formatElapsed,
   onRecordingNoticeRequested,
   onRecordingStatus,
   onSnapshotError,
+  openSoundSettings,
   pauseRecording,
   recordingStatus,
   retrySave,
@@ -30,6 +32,8 @@ vi.mock("./recording", async (importOriginal) => {
     acknowledgeRecordingNotice: vi.fn(),
     continueMeeting: vi.fn(),
     dismissContinue: vi.fn(),
+    dismissSourceWarning: vi.fn(),
+    openSoundSettings: vi.fn(),
     onRecordingStatus: vi.fn(),
     onSnapshotError: vi.fn(),
     onRecordingNoticeRequested: vi.fn(),
@@ -195,6 +199,27 @@ it("shows actual Source devices, levels and hotkeys", async () => {
   expect(screen.getAllByRole("meter")).toHaveLength(2);
   expect(screen.getByRole("meter", { name: "Microphone level" }).getAttribute("aria-valuenow")).toBe("70");
   expect(screen.getByText("Silent")).toBeTruthy();
+});
+
+it("shows the Microphone no signal warning and handles its actions", async () => {
+  const warning: RecorderStatus = {
+    ...recording,
+    source_devices: [{ source: "microphone", device: "USB Microphone" }],
+    source_health: [{ source: "microphone", warning: "no_signal" }],
+  };
+  vi.mocked(recordingStatus).mockResolvedValue(warning);
+  vi.mocked(openSoundSettings).mockResolvedValue(undefined);
+  vi.mocked(dismissSourceWarning).mockResolvedValue({ ...warning, source_health: [{ source: "microphone", warning: null }] });
+  render(<RecordingBar />);
+
+  expect((await screen.findByRole("alert")).textContent).toContain("Microphone has no signal");
+  expect(screen.getByRole("alert").textContent).toContain("USB Microphone");
+  fireEvent.click(screen.getByRole("button", { name: "Open sound settings" }));
+  await vi.waitFor(() => expect(openSoundSettings).toHaveBeenCalledTimes(1));
+  fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+  await vi.waitFor(() => expect(dismissSourceWarning).toHaveBeenCalledWith("microphone"));
+  await vi.waitFor(() => expect(screen.queryByText(/Microphone has no signal/)).toBeNull());
+  expect(screen.getByRole("button", { name: "Stop" })).toBeTruthy();
 });
 
 it("pauses and stops the active Recording", async () => {

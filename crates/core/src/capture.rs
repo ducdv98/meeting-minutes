@@ -105,6 +105,9 @@ impl SourceClock {
     pub(crate) fn is_paused(&self) -> bool {
         self.paused_at.is_some()
     }
+    pub(crate) fn active_ms(&self, at: u64) -> u64 {
+        self.frame_at(at).saturating_mul(1000) / SAMPLE_RATE as u64
+    }
     fn frame_at(&self, at: u64) -> u64 {
         let active = at
             .saturating_sub(self.start_100ns)

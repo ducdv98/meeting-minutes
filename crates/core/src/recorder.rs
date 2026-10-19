@@ -47,6 +47,19 @@ pub struct RecorderStatus {
     pub device_switches: Vec<DeviceSwitch>,
     pub source_devices: Vec<SourceDevice>,
     pub source_levels: Vec<SourceMeter>,
+    pub source_health: Vec<SourceHealth>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceHealthWarning {
+    NoSignal,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct SourceHealth {
+    pub source: Source,
+    pub warning: Option<SourceHealthWarning>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -227,7 +240,28 @@ impl<O: InputOpener, C: Clock> Recorder<O, C> {
                     })
                     .collect()
             }),
+            source_health: self.active.as_ref().map_or_else(Vec::new, |active| {
+                vec![
+                    SourceHealth {
+                        source: Source::Microphone,
+                        warning: active
+                            .session
+                            .microphone_no_signal()
+                            .then_some(SourceHealthWarning::NoSignal),
+                    },
+                    SourceHealth {
+                        source: Source::SystemAudio,
+                        warning: None,
+                    },
+                ]
+            }),
         }
+    }
+
+    pub fn dismiss_source_warning(&mut self, source: Source) -> Result<(), RecorderError> {
+        let active = self.active.as_ref().ok_or(RecorderError::NotActive)?;
+        active.session.dismiss_source_warning(source);
+        Ok(())
     }
 
     pub fn collect_device_switches(&mut self) -> Result<(), RecorderError> {

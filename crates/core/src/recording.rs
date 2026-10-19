@@ -33,6 +33,8 @@ use std::{
 const REOPEN_INTERVAL: Duration = Duration::from_secs(1);
 const DEFAULT_CHECK_INTERVAL: Duration = Duration::from_millis(500);
 const MAX_PACKETS_PER_TICK: usize = 64;
+const MICROPHONE_NO_SIGNAL_MS: u64 = 60_000;
+const NO_PACKET: u64 = u64::MAX;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct DeviceSwitch {
@@ -277,6 +279,10 @@ struct SourceLevel {
     value: AtomicU32,
     at_100ns: AtomicU64,
     audible_at_100ns: AtomicU64,
+    digital_silence_since_ms: AtomicU64,
+    last_packet_100ns: AtomicU64,
+    warning_active: std::sync::atomic::AtomicBool,
+    warning_dismissed: std::sync::atomic::AtomicBool,
 }
 
 impl SourceLevel {
@@ -285,15 +291,57 @@ impl SourceLevel {
             value: AtomicU32::new(0),
             at_100ns: AtomicU64::new(start),
             audible_at_100ns: AtomicU64::new(start),
+            digital_silence_since_ms: AtomicU64::new(NO_PACKET),
+            last_packet_100ns: AtomicU64::new(NO_PACKET),
+            warning_active: std::sync::atomic::AtomicBool::new(false),
+            warning_dismissed: std::sync::atomic::AtomicBool::new(false),
         }
     }
-    fn report(&self, samples: &[f32], at: u64) {
+    fn report(&self, packet: &crate::capture::Packet, at: u64, active_ms: u64) {
+        let samples = &packet.samples;
         let value = crate::capture::buffer_level(samples);
         self.value.store(value.to_bits(), Ordering::Relaxed);
         self.at_100ns.store(at, Ordering::Relaxed);
         if value > 0.0 {
             self.audible_at_100ns.store(at, Ordering::Relaxed);
         }
+        self.last_packet_100ns.store(at, Ordering::Relaxed);
+        if packet.silent || samples.iter().all(|sample| *sample == 0.0) {
+            let _ = self.digital_silence_since_ms.compare_exchange(
+                NO_PACKET,
+                active_ms,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            );
+        } else {
+            self.digital_silence_since_ms
+                .store(NO_PACKET, Ordering::Relaxed);
+            self.warning_active.store(false, Ordering::Relaxed);
+            self.warning_dismissed.store(false, Ordering::Relaxed);
+        }
+    }
+    fn reset_health(&self) {
+        self.digital_silence_since_ms
+            .store(NO_PACKET, Ordering::Relaxed);
+        self.last_packet_100ns.store(NO_PACKET, Ordering::Relaxed);
+        self.warning_active.store(false, Ordering::Relaxed);
+        self.warning_dismissed.store(false, Ordering::Relaxed);
+    }
+    fn no_signal(&self, now_100ns: u64, active_ms: u64) -> bool {
+        let since = self.digital_silence_since_ms.load(Ordering::Relaxed);
+        let last_packet = self.last_packet_100ns.load(Ordering::Relaxed);
+        if since != NO_PACKET
+            && last_packet != NO_PACKET
+            && now_100ns.saturating_sub(last_packet) <= HNS_PER_SECOND
+            && active_ms.saturating_sub(since) >= MICROPHONE_NO_SIGNAL_MS
+        {
+            self.warning_active.store(true, Ordering::Relaxed);
+        }
+        self.warning_active.load(Ordering::Relaxed)
+            && !self.warning_dismissed.load(Ordering::Relaxed)
+    }
+    fn dismiss_warning(&self) {
+        self.warning_dismissed.store(true, Ordering::Relaxed);
     }
     fn current(&self, now: u64) -> (f32, bool) {
         let age = now.saturating_sub(self.at_100ns.load(Ordering::Relaxed));
@@ -429,6 +477,22 @@ impl<C: Clock> CaptureSession<C> {
                 )
             })
             .collect()
+    }
+    pub fn microphone_no_signal(&self) -> bool {
+        if self.is_paused() {
+            return false;
+        }
+        let now = self.clock.now_100ns();
+        let active_ms = self.timeline.elapsed_ms(now);
+        self.source_levels
+            .iter()
+            .find(|(source, _)| *source == Source::Microphone)
+            .is_some_and(|(_, level)| level.no_signal(now, active_ms))
+    }
+    pub fn dismiss_source_warning(&self, source: Source) {
+        if let Some((_, level)) = self.source_levels.iter().find(|(item, _)| *item == source) {
+            level.dismiss_warning();
+        }
     }
     fn control(
         &self,
@@ -602,6 +666,9 @@ fn capture_pending<O: InputOpener, C: Clock>(
                 .last_opened
                 .as_ref()
                 .is_some_and(|previous| previous.id != info.id);
+            if switched {
+                feedback.level.reset_health();
+            }
             let _ = feedback.switches.send(SwitchReport {
                 at_100ns: clock.now_100ns(),
                 source,
@@ -622,7 +689,7 @@ fn capture_pending<O: InputOpener, C: Clock>(
         match device.read_packet() {
             Ok(Some(packet)) => {
                 let now = clock.now_100ns();
-                feedback.level.report(&packet.samples, now);
+                feedback.level.report(&packet, now, timeline.active_ms(now));
                 writer.write(&timeline.packet(&packet, now))?
             }
             Ok(None) => break,

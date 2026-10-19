@@ -2,6 +2,8 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import CaptureBarWindow from "./CaptureBarWindow";
 import {
+  dismissSourceWarning,
+  openSoundSettings,
   onRecordingStatus,
   onSnapshotError,
   pauseRecording,
@@ -16,6 +18,8 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 vi.mock("./recording", async (importOriginal) => ({
   ...await importOriginal<typeof import("./recording")>(),
   onRecordingStatus: vi.fn(),
+  dismissSourceWarning: vi.fn(),
+  openSoundSettings: vi.fn(),
   onSnapshotError: vi.fn(),
   recordingStatus: vi.fn(),
   pauseRecording: vi.fn(),
@@ -85,4 +89,25 @@ it("collapses to a draggable timer and expands back to the controls", async () =
   fireEvent.click(screen.getByRole("button", { name: "Expand Capture bar" }));
   await waitFor(() => expect(windowApi.setSize).toHaveBeenCalledWith(expect.objectContaining({ width: 354, height: 58 })));
   expect(screen.getByRole("button", { name: "Take Snapshot" })).toBeTruthy();
+});
+
+it("shows the Microphone no signal warning and offers sound settings and Dismiss", async () => {
+  const warning = {
+    ...recording,
+    source_devices: [{ source: "microphone" as const, device: "USB Microphone" }],
+    source_health: [{ source: "microphone" as const, warning: "no_signal" as const }],
+  };
+  vi.mocked(recordingStatus).mockResolvedValue(warning);
+  vi.mocked(openSoundSettings).mockResolvedValue(undefined);
+  vi.mocked(dismissSourceWarning).mockResolvedValue({ ...warning, source_health: [{ source: "microphone", warning: null }] });
+  render(<CaptureBarWindow />);
+
+  expect((await screen.findByRole("alert")).textContent).toContain("Microphone has no signal");
+  expect(screen.getByRole("alert").textContent).toContain("USB Microphone");
+  fireEvent.click(screen.getByRole("button", { name: "Open sound settings" }));
+  await waitFor(() => expect(openSoundSettings).toHaveBeenCalledTimes(1));
+  fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+  await waitFor(() => expect(dismissSourceWarning).toHaveBeenCalledWith("microphone"));
+  await waitFor(() => expect(screen.queryByText(/Microphone has no signal/)).toBeNull());
+  expect(screen.getByRole("button", { name: "Stop" })).toBeTruthy();
 });

@@ -2765,6 +2765,30 @@ fn dismiss_continue(app: AppHandle, meeting_id: String) -> Result<RecorderStatus
 }
 
 #[tauri::command]
+fn dismiss_source_warning(app: AppHandle, source: Source) -> Result<RecorderStatus, String> {
+    lock_recorder(&app)?
+        .dismiss_source_warning(source)
+        .map_err(|error| error.to_string())?;
+    publish(&app)
+}
+
+#[tauri::command]
+fn open_sound_settings() -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        std::process::Command::new("explorer.exe")
+            .arg("ms-settings:sound")
+            .spawn()
+            .map_err(|error| format!("Couldn't open Windows Sound settings: {error}"))?;
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        Err("Sound settings are available on Windows".into())
+    }
+}
+
+#[tauri::command]
 fn acknowledge_recording_notice(
     app: AppHandle,
     settings_path: State<'_, SettingsPath>,
@@ -3656,6 +3680,8 @@ fn main() {
             retry_save,
             continue_meeting,
             dismiss_continue,
+            dismiss_source_warning,
+            open_sound_settings,
             acknowledge_recording_notice,
             processing_status,
             transcript_draft,

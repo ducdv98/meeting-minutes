@@ -27,6 +27,7 @@ export interface RecorderStatus {
   /** Device names reported by the active capture workers. */
   source_devices?: { source: "microphone" | "system_audio"; device: string }[];
   source_levels?: { source: "microphone" | "system_audio"; level: number; silent: boolean }[];
+  source_health?: { source: "microphone" | "system_audio"; warning: "no_signal" | null }[];
 }
 
 export const recordHotkey = "Ctrl+Alt+Shift+R";
@@ -66,6 +67,14 @@ export function continueMeeting(meetingId: string): Promise<RecorderStatus> {
 
 export function dismissContinue(meetingId: string): Promise<RecorderStatus> {
   return invoke<RecorderStatus>("dismiss_continue", { meetingId });
+}
+
+export function dismissSourceWarning(source: "microphone" | "system_audio"): Promise<RecorderStatus> {
+  return invoke<RecorderStatus>("dismiss_source_warning", { source });
+}
+
+export function openSoundSettings(): Promise<void> {
+  return invoke("open_sound_settings");
 }
 
 export function acknowledgeRecordingNotice(): Promise<RecorderStatus> {
