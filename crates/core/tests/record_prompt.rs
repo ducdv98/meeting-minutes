@@ -49,6 +49,30 @@ fn a_second_app_prompts_only_when_it_starts() {
 }
 
 #[test]
+fn an_app_suppressed_by_an_open_prompt_prompts_after_that_prompt_closes() {
+    let mut decider = RecordPromptDecider::default();
+    check(&mut decider, &[]);
+    assert_eq!(
+        check(&mut decider, &[app("Teams")]),
+        PromptDecision::Show(app("Teams"))
+    );
+    assert_eq!(
+        check(&mut decider, &[app("Teams"), app("Zoom")]),
+        PromptDecision::None
+    );
+    decider.dismiss();
+    assert_eq!(
+        check(&mut decider, &[app("Teams"), app("Zoom")]),
+        PromptDecision::Show(app("Zoom"))
+    );
+    decider.dismiss();
+    assert_eq!(
+        check(&mut decider, &[app("Teams"), app("Zoom")]),
+        PromptDecision::None
+    );
+}
+
+#[test]
 fn apps_present_on_the_first_check_are_not_new() {
     let mut decider = RecordPromptDecider::default();
     assert_eq!(check(&mut decider, &[app("Teams")]), PromptDecision::None);

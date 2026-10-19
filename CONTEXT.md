@@ -35,6 +35,13 @@ _Avoid_: Screenshot, capture, screen grab
 **Capture region**:
 The rectangle of the screen the user drags out for Snapshots. The Capture bar's Snapshot button asks for a new one each time; the Take Snapshot hotkey reuses the last one in the same Recording, and a second hotkey draws a new one. It lasts for the Recording and is not saved to the Meeting.
 
+**Record prompt**:
+The offer to start a Recording, shown when another app begins using the Microphone and no Recording runs. It appears once each time that app starts using the Microphone, the user can silence it for that app, and it never starts a Recording by itself.
+_Avoid_: Auto-record, meeting detection
+
+**Source health**:
+Whether each Source of a running Recording is actually carrying sound. A Source silent for longer than expected is flagged to the user while the Recording runs, not discovered after Stop.
+
 **Capture bar**:
 The small always-on-top floating bar shown while a Recording runs, with pause, stop, Snapshot and a timer. Starting a Recording stays in the main window. The bar and the region overlay never appear in a Snapshot or in screen sharing.
 
@@ -140,10 +147,17 @@ A named person in one Meeting, chosen by the user. Each Speaker label starts wit
 _Avoid_: Speaker name, attendee, person
 
 **Summary**:
-A generated overview of a Meeting with fixed sections (Overview, Key points, Decisions, Action items). Every item has a Citation; an item without one is dropped.
+A generated overview of a Meeting, laid out by its Summary format. Every item has a Citation; an item without one is dropped.
+
+**Summary format**:
+One of the app's built-in layouts for a Summary (Standard, 1:1, Interview, Client minutes), each a fixed set of sections. Standard is Overview, Key points, Decisions, Action items. Every format has Action items.
+_Avoid_: Template, prompt
 
 **Action item**:
-A task stated in a Meeting, derived from its Transcript, citing the Segments it came from.
+A task stated in a Meeting, derived from its Transcript, citing the Segments it came from. It is **Open** or **Done**, and the user may edit or remove it. Once the user has touched an Action item it belongs to the user: a new Summary proposes Action items but never overwrites, reopens or brings back ones the user has changed.
+
+**Open items**:
+Every Open Action item across the Library, each linked to its Meeting.
 
 ### Asking
 
@@ -154,11 +168,15 @@ _Avoid_: Chat, query, prompt
 **Answer**:
 The response to an Ask: either supported by Citations, or an explicit **Insufficient evidence** result. An Answer may also be **Incomplete** (stopped or failed mid-stream) or **Unverified** (contains invalid Citations); neither is used as context for later Asks.
 
+**Library Ask**:
+A question the user poses about the whole Library, answered only from the Transcripts of the Meetings found relevant to it. Its Answer follows the same rules as an Ask's, and each Citation names its Meeting. It is not an Ask: an Ask never reaches beyond its one Meeting.
+_Avoid_: Global chat, cross-meeting Ask
+
 **Library search**:
-Keyword search across every Transcript in the Library, landing on a Segment. Not an Ask: it never generates an answer.
+Keyword search across every Transcript in the Library, landing on a Segment. Not an Ask or a Library Ask: it never generates an answer.
 
 **Citation**:
-A reference from an Answer, Summary or Action item to a Segment ID in the same Meeting. Model-written timestamps are never Citations.
+A reference from an Answer, Summary or Action item to a Segment ID. For an Ask, Summary or Action item the Segment is in the same Meeting; for a Library Ask it may be in any Meeting it answered from. Model-written timestamps are never Citations.
 
 ## Relationships
 
@@ -171,6 +189,8 @@ A reference from an Answer, Summary or Action item to a Segment ID in the same M
 - A **Participant** belongs to exactly one **Meeting**
 - A **Citation** points to a Segment in a specific **Revision**
 - An **Ask** belongs to exactly one **Meeting**; its **Citations** point only to that Meeting's **Segments**
+- A **Library Ask** belongs to the **Library**; its **Citations** point to **Segments** of the Meetings it answered from
+- A **Summary** has one **Summary format**; its **Action items** outlive it once the user has touched them
 
 ## Example dialogue
 
@@ -182,4 +202,5 @@ A reference from an Answer, Summary or Action item to a Segment ID in the same M
 
 ## Flagged ambiguities
 
+- "Record prompt" (offer to start) and "Recording notice" (consent reminder and indicator) are different things.
 - "Task" means an Action item. Transcription, Correction, Summary and Ask are not tasks; name them directly.

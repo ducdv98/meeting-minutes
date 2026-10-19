@@ -300,7 +300,11 @@ impl SourceLevel {
             value: AtomicU32::new(0),
             at_100ns: AtomicU64::new(start),
             audible_at_100ns: AtomicU64::new(start),
-            silence_since_ms: AtomicU64::new(NO_PACKET),
+            silence_since_ms: AtomicU64::new(if source == Source::Microphone {
+                0
+            } else {
+                NO_PACKET
+            }),
             last_packet_100ns: AtomicU64::new(NO_PACKET),
             previous_packet_ms: AtomicU64::new(NO_PACKET),
             speech: Mutex::new(VecDeque::new()),
@@ -339,7 +343,11 @@ impl SourceLevel {
         if silent {
             let _ = self.silence_since_ms.compare_exchange(
                 NO_PACKET,
-                active_ms,
+                if self.source == Source::Microphone && previous != NO_PACKET {
+                    previous
+                } else {
+                    active_ms
+                },
                 Ordering::Relaxed,
                 Ordering::Relaxed,
             );
@@ -349,21 +357,31 @@ impl SourceLevel {
             self.warning_dismissed.store(false, Ordering::Relaxed);
         }
     }
-    fn reset_health(&self) {
-        self.silence_since_ms.store(NO_PACKET, Ordering::Relaxed);
+    fn reset_health(&self, active_ms: u64) {
+        self.silence_since_ms.store(
+            if self.source == Source::Microphone {
+                active_ms
+            } else {
+                NO_PACKET
+            },
+            Ordering::Relaxed,
+        );
         self.last_packet_100ns.store(NO_PACKET, Ordering::Relaxed);
         self.previous_packet_ms.store(NO_PACKET, Ordering::Relaxed);
         self.speech.lock().unwrap().clear();
         self.warning_active.store(false, Ordering::Relaxed);
         self.warning_dismissed.store(false, Ordering::Relaxed);
     }
-    fn no_signal(&self, now_100ns: u64, active_ms: u64) -> bool {
+    fn no_signal(&self, active_ms: u64) -> bool {
         let since = self.silence_since_ms.load(Ordering::Relaxed);
-        let last_packet = self.last_packet_100ns.load(Ordering::Relaxed);
-        if since != NO_PACKET
-            && last_packet != NO_PACKET
-            && now_100ns.saturating_sub(last_packet) <= HNS_PER_SECOND
-            && active_ms.saturating_sub(since) >= MICROPHONE_NO_SIGNAL_MS
+        let last_packet_ms = self.previous_packet_ms.load(Ordering::Relaxed);
+        let without_signal_since = if since != NO_PACKET {
+            since
+        } else {
+            last_packet_ms
+        };
+        if without_signal_since != NO_PACKET
+            && active_ms.saturating_sub(without_signal_since) >= MICROPHONE_NO_SIGNAL_MS
         {
             self.warning_active.store(true, Ordering::Relaxed);
         }
@@ -540,7 +558,7 @@ impl<C: Clock> CaptureSession<C> {
         self.source_levels
             .iter()
             .find(|(source, _)| *source == Source::Microphone)
-            .is_some_and(|(_, level)| level.no_signal(now, active_ms))
+            .is_some_and(|(_, level)| level.no_signal(active_ms))
     }
     pub fn remote_silent(&self) -> bool {
         if self.is_paused() {
@@ -743,7 +761,9 @@ fn capture_pending<O: InputOpener, C: Clock>(
                 .as_ref()
                 .is_some_and(|previous| previous.id != info.id);
             if switched {
-                feedback.level.reset_health();
+                feedback
+                    .level
+                    .reset_health(timeline.active_ms(clock.now_100ns()));
             }
             let _ = feedback.switches.send(SwitchReport {
                 at_100ns: clock.now_100ns(),

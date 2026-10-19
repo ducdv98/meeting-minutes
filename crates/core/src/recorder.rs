@@ -139,6 +139,7 @@ impl From<std::io::Error> for RecorderError {
 struct Active<C: Clock> {
     session: CaptureSession<C>,
     job: SaveJob,
+    voice_note: bool,
 }
 
 struct Save {
@@ -252,9 +253,7 @@ impl<O: InputOpener, C: Clock> Recorder<O, C> {
                     },
                     SourceHealth {
                         source: Source::SystemAudio,
-                        warning: active
-                            .session
-                            .remote_silent()
+                        warning: (!active.voice_note && active.session.remote_silent())
                             .then_some(SourceHealthWarning::RemoteSilent),
                     },
                 ]
@@ -290,6 +289,35 @@ impl<O: InputOpener, C: Clock> Recorder<O, C> {
         started_at: DateTime<FixedOffset>,
         language: Option<crate::transcript::Language>,
     ) -> Result<(), RecorderError> {
+        self.start_with_mode(library, started_at, language, false)
+    }
+
+    /// Starts with Voice note Source health rules. The current capture pipeline
+    /// still opens both Sources; System audio silence is not a warning here.
+    pub fn start_voice_note(
+        &mut self,
+        library: &mut Library,
+        started_at: DateTime<FixedOffset>,
+    ) -> Result<(), RecorderError> {
+        self.start_voice_note_with_language(library, started_at, None)
+    }
+
+    pub fn start_voice_note_with_language(
+        &mut self,
+        library: &mut Library,
+        started_at: DateTime<FixedOffset>,
+        language: Option<crate::transcript::Language>,
+    ) -> Result<(), RecorderError> {
+        self.start_with_mode(library, started_at, language, true)
+    }
+
+    fn start_with_mode(
+        &mut self,
+        library: &mut Library,
+        started_at: DateTime<FixedOffset>,
+        language: Option<crate::transcript::Language>,
+        voice_note: bool,
+    ) -> Result<(), RecorderError> {
         if !self.notice_acknowledged {
             return Err(RecorderError::NoticeRequired);
         }
@@ -305,7 +333,11 @@ impl<O: InputOpener, C: Clock> Recorder<O, C> {
         };
         let session =
             CaptureSession::start(chunk_dir, manifest, self.opener.clone(), self.clock.clone())?;
-        self.active = Some(Active { session, job });
+        self.active = Some(Active {
+            session,
+            job,
+            voice_note,
+        });
         Ok(())
     }
 
@@ -435,7 +467,11 @@ impl<O: InputOpener, C: Clock> Recorder<O, C> {
         };
         let session =
             CaptureSession::start(chunk_dir, manifest, self.opener.clone(), self.clock.clone())?;
-        self.active = Some(Active { session, job });
+        self.active = Some(Active {
+            session,
+            job,
+            voice_note: false,
+        });
         self.dismiss_continue(meeting_id);
         Ok(())
     }

@@ -16,26 +16,27 @@ import SourceHealthNotice from "./SourceHealthNotice";
 
 const expandedSize = new LogicalSize(354, 58);
 const collapsedSize = new LogicalSize(174, 58);
-const warningSize = new LogicalSize(354, 134);
+const warningHeight = 76;
 
 export default function CaptureBarWindow() {
   const [status, setStatus] = useState<RecorderStatus | null>(null);
   const [collapsed, setCollapsed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const warningWasVisible = useRef(false);
-  const hasWarning = status?.phase === "recording" && status.source_health?.some((health) => health.warning !== null) === true;
+  const previousWarningCount = useRef(0);
+  const warningCount = status?.phase === "recording" ? status.source_health?.filter((health) => health.warning !== null).length ?? 0 : 0;
+  const hasWarning = warningCount > 0;
 
   useEffect(() => {
-    if (hasWarning === warningWasVisible.current) return;
-    warningWasVisible.current = hasWarning;
+    if (warningCount === previousWarningCount.current) return;
+    previousWarningCount.current = warningCount;
     if (hasWarning) {
       setCollapsed(false);
-      void getCurrentWindow().setSize(warningSize).catch((reason) => setError(String(reason)));
+      void getCurrentWindow().setSize(new LogicalSize(354, expandedSize.height + warningHeight * warningCount)).catch((reason) => setError(String(reason)));
     } else {
       void getCurrentWindow().setSize(expandedSize).catch((reason) => setError(String(reason)));
     }
-  }, [hasWarning]);
+  }, [hasWarning, warningCount]);
 
   useEffect(() => {
     let active = true;

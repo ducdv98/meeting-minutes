@@ -51,7 +51,8 @@ export const completeFirstRun = () => invoke<void>("complete_first_run");
 export const acknowledgeCloudNotice = () => invoke<Settings>("acknowledge_cloud_notice");
 export const updateSettings = (autoProcess: boolean, model: string, vocabulary: string[], language: Language | null, yourName: string | null, speech?: SpeechSettings) => invoke<Settings>("update_settings", { autoProcess, model, vocabulary, language, yourName, speech: speech ?? null });
 export const updateSnapshotHotkeys = (snapshotHotkey: string, drawSnapshotHotkey: string) => invoke<Settings>("update_snapshot_hotkeys", { snapshotHotkey, drawSnapshotHotkey });
-export const updateRecordPromptSettings = (enabled: boolean, silencedApps: SilencedApp[]) => invoke<Settings>("update_record_prompt_settings", { enabled, silencedApps });
+export const setRecordPromptEnabled = (enabled: boolean) => invoke<Settings>("set_record_prompt_enabled", { enabled });
+export const removeSilencedRecordPromptApp = (id: string) => invoke<Settings>("remove_silenced_record_prompt_app", { id });
 export const testSpeechModel = (provider: SpeechProvider, model: string) => invoke<void>("test_speech_model", { provider, model });
 export const installedModels = () => invoke<string[]>("installed_models");
 export interface ModelDownloadStatus { model_id: string; state: "not_downloaded" | "downloading" | "downloaded" | "failed" | "cancelled"; progress: number; error: string | null }

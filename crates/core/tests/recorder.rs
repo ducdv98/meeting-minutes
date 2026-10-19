@@ -348,12 +348,16 @@ fn low_level_system_audio_is_still_remote_silence() {
 fn microphone_only_recording_has_no_remote_silent_warning() {
     let _guard = REMOTE_TEST_LOCK.lock().unwrap();
     let (_temp, mut library, time, opener, mut recorder) = packet_recording();
-    recorder.start(&mut library, started_at()).unwrap();
+    recorder
+        .start_voice_note(&mut library, started_at())
+        .unwrap();
+    deliver_source(&opener, Source::SystemAudio, vec![0.0, 0.0], true);
     for _ in 0..30 {
         time.fetch_add(10_000_000, Ordering::SeqCst);
         deliver(&opener, vec![0.1, 0.1], false);
     }
     time.fetch_add(150 * 10_000_000, Ordering::SeqCst);
+    deliver_source(&opener, Source::SystemAudio, vec![0.0, 0.0], true);
     assert!(system_warning(&recorder.status()).is_none());
     recorder.stop().unwrap();
 }
@@ -480,6 +484,42 @@ fn microphone_no_signal_needs_sixty_seconds_of_digital_silence() {
         "no_signal"
     );
     assert_eq!(recorder.status().phase, Phase::Recording);
+    recorder.stop().unwrap();
+}
+
+#[test]
+fn microphone_no_signal_warns_when_no_packets_arrive() {
+    let mut s = setup(true);
+    s.recorder.start(&mut s.library, started_at()).unwrap();
+    s.time.fetch_add(59 * 10_000_000, Ordering::SeqCst);
+    assert!(microphone_warning(&s.recorder.status()).is_none());
+    s.time.fetch_add(10_000_000, Ordering::SeqCst);
+    assert_eq!(
+        microphone_warning(&s.recorder.status()),
+        Some(SourceHealthWarning::NoSignal)
+    );
+    s.recorder.stop().unwrap();
+}
+
+#[test]
+fn microphone_no_signal_warns_after_packets_stop_with_paused_time_excluded() {
+    let (_temp, mut library, time, opener, mut recorder) = packet_recording();
+    recorder.start(&mut library, started_at()).unwrap();
+    deliver(&opener, vec![0.0001, 0.0001], false);
+    time.fetch_add(30 * 10_000_000, Ordering::SeqCst);
+    recorder.pause().unwrap();
+    time.fetch_add(120 * 10_000_000, Ordering::SeqCst);
+    assert!(microphone_warning(&recorder.status()).is_none());
+    recorder.resume().unwrap();
+    time.fetch_add(29 * 10_000_000, Ordering::SeqCst);
+    assert!(microphone_warning(&recorder.status()).is_none());
+    time.fetch_add(10_000_000, Ordering::SeqCst);
+    assert_eq!(
+        microphone_warning(&recorder.status()),
+        Some(SourceHealthWarning::NoSignal)
+    );
+    deliver(&opener, vec![0.0001, 0.0001], false);
+    assert!(microphone_warning(&recorder.status()).is_none());
     recorder.stop().unwrap();
 }
 

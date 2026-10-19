@@ -131,3 +131,21 @@ it("explains when System audio may be missing and handles its warning actions", 
   await waitFor(() => expect(dismissSourceWarning).toHaveBeenCalledWith("system_audio"));
   await waitFor(() => expect(screen.queryByText(/the other side may not be captured/)).toBeNull());
 });
+
+it("resizes to show both Source health warnings and their actions", async () => {
+  const microphone = { source: "microphone" as const, warning: "no_signal" as const };
+  const systemAudio = { source: "system_audio" as const, warning: "remote_silent" as const };
+  const oneWarning = { ...recording, source_health: [microphone] };
+  vi.mocked(recordingStatus).mockResolvedValue(oneWarning);
+  render(<CaptureBarWindow />);
+  await waitFor(() => expect(windowApi.setSize).toHaveBeenCalledWith(expect.objectContaining({ width: 354, height: 134 })));
+
+  act(() => pushStatus({ ...recording, source_health: [microphone, systemAudio] }));
+  await waitFor(() => expect(windowApi.setSize).toHaveBeenLastCalledWith(expect.objectContaining({ width: 354, height: 210 })));
+  expect(screen.getAllByRole("alert")).toHaveLength(2);
+  expect(screen.getAllByRole("button", { name: "Open sound settings" })).toHaveLength(2);
+  expect(screen.getAllByRole("button", { name: "Dismiss" })).toHaveLength(2);
+
+  act(() => pushStatus(oneWarning));
+  await waitFor(() => expect(windowApi.setSize).toHaveBeenLastCalledWith(expect.objectContaining({ width: 354, height: 134 })));
+});

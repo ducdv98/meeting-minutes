@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 
 use crate::microphone_usage::MicrophoneApp;
 
@@ -28,6 +28,7 @@ pub enum PromptDecision {
 pub struct RecordPromptDecider {
     previous: Option<HashSet<String>>,
     open_app: Option<String>,
+    pending: VecDeque<MicrophoneApp>,
 }
 
 impl RecordPromptDecider {
@@ -42,6 +43,23 @@ impl RecordPromptDecider {
             return PromptDecision::None;
         };
 
+        if recording_active || !settings.enabled {
+            self.pending.clear();
+        } else {
+            self.pending.retain(|app| {
+                current.contains(&app.id) && !settings.silenced_app_ids.contains(&app.id)
+            });
+            self.pending.extend(
+                apps.iter()
+                    .filter(|app| {
+                        !previous.contains(&app.id)
+                            && !settings.silenced_app_ids.contains(&app.id)
+                            && self.open_app.as_ref() != Some(&app.id)
+                    })
+                    .cloned(),
+            );
+        }
+
         if self.open_app.as_ref().is_some_and(|id| {
             recording_active
                 || !settings.enabled
@@ -54,12 +72,9 @@ impl RecordPromptDecider {
         if recording_active || !settings.enabled || self.open_app.is_some() {
             return PromptDecision::None;
         }
-        if let Some(app) = apps
-            .iter()
-            .find(|app| !previous.contains(&app.id) && !settings.silenced_app_ids.contains(&app.id))
-        {
+        if let Some(app) = self.pending.pop_front() {
             self.open_app = Some(app.id.clone());
-            return PromptDecision::Show(app.clone());
+            return PromptDecision::Show(app);
         }
         PromptDecision::None
     }

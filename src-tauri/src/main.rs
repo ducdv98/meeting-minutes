@@ -31,7 +31,10 @@ use meeting_minutes_core::{
         managed::{self, ManagedEngine, ManagedKey, ManagedKeyState, ManagedKeyStore},
         CloudEngine,
     },
-    diagnostics::{build_diagnostics_with_session_counts, count_source_health_warning, log_event, session_counts, DiagnosticsInput, LogEvent},
+    diagnostics::{
+        build_diagnostics_with_session_counts, count_source_health_warning, log_event,
+        session_counts, DiagnosticsInput, LogEvent,
+    },
     import::import_extension,
     language_models::{LanguageModel, LanguageModelSettings},
     microphone_usage::{MicrophoneApp, MicrophoneUsage, SystemMicrophoneUsage},
@@ -229,25 +232,28 @@ fn get_diagnostics(app: AppHandle) -> Result<String, String> {
     let log = fs::read_to_string(log_dir.join("meeting-minutes.log")).unwrap_or_default();
     let recent_log_lines = log.lines().map(str::to_owned).collect();
     let settings = Settings::load(&app.state::<SettingsPath>().0);
-    Ok(build_diagnostics_with_session_counts(&DiagnosticsInput {
-        version: app.package_info().version.to_string(),
-        windows_version: sysinfo::System::long_os_version().unwrap_or_else(|| "Unknown".into()),
-        cpu: system
-            .cpus()
-            .first()
-            .map(|cpu| cpu.brand().to_owned())
-            .unwrap_or_else(|| "Unknown".into()),
-        ram_mb: system.total_memory() / (1024 * 1024),
-        audio_devices: audio_devices(),
-        selected_model: MODELS
-            .iter()
-            .find(|model| model.name == settings.model)
-            .map(|model| model.name.to_owned()),
-        provider: settings.ai.provider,
-        whisper_system_info: Some(WhisperEngine::system_info().to_owned()),
-        transcription_backend: Some(WhisperEngine::backend_description()),
-        recent_log_lines,
-    }, session_counts()))
+    Ok(build_diagnostics_with_session_counts(
+        &DiagnosticsInput {
+            version: app.package_info().version.to_string(),
+            windows_version: sysinfo::System::long_os_version().unwrap_or_else(|| "Unknown".into()),
+            cpu: system
+                .cpus()
+                .first()
+                .map(|cpu| cpu.brand().to_owned())
+                .unwrap_or_else(|| "Unknown".into()),
+            ram_mb: system.total_memory() / (1024 * 1024),
+            audio_devices: audio_devices(),
+            selected_model: MODELS
+                .iter()
+                .find(|model| model.name == settings.model)
+                .map(|model| model.name.to_owned()),
+            provider: settings.ai.provider,
+            whisper_system_info: Some(WhisperEngine::system_info().to_owned()),
+            transcription_backend: Some(WhisperEngine::backend_description()),
+            recent_log_lines,
+        },
+        session_counts(),
+    ))
 }
 
 #[tauri::command]
@@ -938,15 +944,34 @@ fn update_snapshot_hotkeys(
     Ok(settings)
 }
 
+static RECORD_PROMPT_SETTINGS_LOCK: Mutex<()> = Mutex::new(());
+
 #[tauri::command]
-fn update_record_prompt_settings(
+fn set_record_prompt_enabled(
     path: State<'_, SettingsPath>,
     enabled: bool,
-    silenced_apps: Vec<meeting_minutes_core::microphone_usage::MicrophoneApp>,
 ) -> Result<Settings, String> {
+    let _guard = RECORD_PROMPT_SETTINGS_LOCK
+        .lock()
+        .map_err(|error| error.to_string())?;
     let mut settings = Settings::load(&path.0);
     settings.record_prompt_enabled = enabled;
-    settings.silenced_record_prompt_apps = silenced_apps;
+    settings.save(&path.0).map_err(|error| error.to_string())?;
+    Ok(settings)
+}
+
+#[tauri::command]
+fn remove_silenced_record_prompt_app(
+    path: State<'_, SettingsPath>,
+    id: String,
+) -> Result<Settings, String> {
+    let _guard = RECORD_PROMPT_SETTINGS_LOCK
+        .lock()
+        .map_err(|error| error.to_string())?;
+    let mut settings = Settings::load(&path.0);
+    settings
+        .silenced_record_prompt_apps
+        .retain(|app| app.id != id);
     settings.save(&path.0).map_err(|error| error.to_string())?;
     Ok(settings)
 }
@@ -957,6 +982,9 @@ fn silence_record_prompt_app(app: AppHandle, path: State<'_, SettingsPath>) -> R
     let Some(prompt) = record_prompt_windows::current(&app) else {
         return Ok(());
     };
+    let _guard = RECORD_PROMPT_SETTINGS_LOCK
+        .lock()
+        .map_err(|error| error.to_string())?;
     let mut settings = Settings::load(&path.0);
     if !settings
         .silenced_record_prompt_apps
@@ -3837,7 +3865,8 @@ fn main() {
             complete_first_run,
             update_settings,
             update_snapshot_hotkeys,
-            update_record_prompt_settings,
+            set_record_prompt_enabled,
+            remove_silenced_record_prompt_app,
             #[cfg(windows)]
             silence_record_prompt_app,
             installed_models,

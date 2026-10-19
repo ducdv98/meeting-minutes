@@ -2,14 +2,14 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import SettingsView, { type SettingsTabId } from "./SettingsView";
 import type { AiSettings } from "./ai";
-import { acknowledgeCloudNotice, firstRunInfo, getSettings, installedModels, modelDownloadStatus, onModelDownloadStatus, updateRecordPromptSettings, updateSettings, type Settings } from "./processing";
+import { acknowledgeCloudNotice, firstRunInfo, getSettings, installedModels, modelDownloadStatus, onModelDownloadStatus, removeSilencedRecordPromptApp, setRecordPromptEnabled, updateSettings, type Settings } from "./processing";
 import { aiStatus, deleteApiKey, listAiModels, managedAccount, managedSendCode, managedSignIn, managedDisconnect, managedRemoveKey, managedSaveKey, managedStatus, saveApiKey, testCloudApiKey, testLanguageModel, updateLanguageModels, type AiStatus } from "./ai";
 import { openLink } from "./app-info";
 import { CLOUD_NOTICE_SUMMARY, CLOUD_NOTICE_TEXT, PRIVACY_INTRO } from "./privacy-text";
 import { onSnapshotHotkeyError } from "./recording";
 import { updateSnapshotHotkeys } from "./processing";
 
-vi.mock("./processing", async (importOriginal) => ({ ...(await importOriginal<typeof import("./processing")>()), firstRunInfo: vi.fn(), getSettings: vi.fn(), updateSettings: vi.fn(), updateRecordPromptSettings: vi.fn(), updateSnapshotHotkeys: vi.fn(), installedModels: vi.fn(), acknowledgeCloudNotice: vi.fn(), modelDownloadStatus: vi.fn(), onModelDownloadStatus: vi.fn() }));
+vi.mock("./processing", async (importOriginal) => ({ ...(await importOriginal<typeof import("./processing")>()), firstRunInfo: vi.fn(), getSettings: vi.fn(), updateSettings: vi.fn(), setRecordPromptEnabled: vi.fn(), removeSilencedRecordPromptApp: vi.fn(), updateSnapshotHotkeys: vi.fn(), installedModels: vi.fn(), acknowledgeCloudNotice: vi.fn(), modelDownloadStatus: vi.fn(), onModelDownloadStatus: vi.fn() }));
 vi.mock("./ai", async (importOriginal) => ({ ...(await importOriginal<typeof import("./ai")>()), aiStatus: vi.fn(), listAiModels: vi.fn(), managedStatus: vi.fn(), managedAccount: vi.fn(), managedSendCode: vi.fn(), managedSignIn: vi.fn(), managedDisconnect: vi.fn(), managedRemoveKey: vi.fn(), managedSaveKey: vi.fn(), saveApiKey: vi.fn(), deleteApiKey: vi.fn(), updateLanguageModels: vi.fn(), testLanguageModel: vi.fn(), testCloudApiKey: vi.fn() }));
 vi.mock("./app-info", () => ({ openLink: vi.fn() }));
 vi.mock("./recording", async (importOriginal) => ({ ...(await importOriginal<typeof import("./recording")>()), onSnapshotHotkeyError: vi.fn() }));
@@ -37,14 +37,47 @@ it("turns the Record prompt off and removes a silenced app", async () => {
   const withSilencedApp = { ...base, record_prompt_enabled: true, silenced_record_prompt_apps: [{ id: "teams.exe", display_name: "Teams" }] };
   vi.mocked(getSettings).mockResolvedValue(withSilencedApp);
   vi.mocked(aiStatus).mockResolvedValue(empty);
-  vi.mocked(updateRecordPromptSettings).mockImplementation(async (enabled, apps) => ({ ...withSilencedApp, record_prompt_enabled: enabled, silenced_record_prompt_apps: apps }));
+  const withNewApp = { ...withSilencedApp, record_prompt_enabled: false, silenced_record_prompt_apps: [...withSilencedApp.silenced_record_prompt_apps, { id: "zoom.exe", display_name: "Zoom" }] };
+  vi.mocked(setRecordPromptEnabled).mockResolvedValue(withNewApp);
+  vi.mocked(removeSilencedRecordPromptApp).mockResolvedValue({ ...withNewApp, silenced_record_prompt_apps: [{ id: "zoom.exe", display_name: "Zoom" }] });
   render(<SettingsView initialTab="general" />);
   fireEvent.click(await screen.findByRole("switch", { name: "Record prompt" }));
-  await waitFor(() => expect(updateRecordPromptSettings).toHaveBeenCalledWith(false, [{ id: "teams.exe", display_name: "Teams" }]));
+  await waitFor(() => expect(setRecordPromptEnabled).toHaveBeenCalledWith(false));
+  expect(await screen.findByText("Zoom")).toBeTruthy();
   expect(screen.getByText("Teams")).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Remove Teams" }));
-  await waitFor(() => expect(updateRecordPromptSettings).toHaveBeenLastCalledWith(false, []));
+  await waitFor(() => expect(removeSilencedRecordPromptApp).toHaveBeenCalledWith("teams.exe"));
   expect(screen.queryByText("Teams")).toBeNull();
+  expect(screen.getByText("Zoom")).toBeTruthy();
+});
+
+it("retries a failed Record prompt switch with its attempted value", async () => {
+  const withSilencedApp = { ...base, record_prompt_enabled: true, silenced_record_prompt_apps: [{ id: "teams.exe", display_name: "Teams" }] };
+  vi.mocked(getSettings).mockResolvedValue(withSilencedApp);
+  vi.mocked(aiStatus).mockResolvedValue(empty);
+  vi.mocked(setRecordPromptEnabled).mockRejectedValueOnce("disk full").mockResolvedValue({ ...withSilencedApp, record_prompt_enabled: false });
+  render(<SettingsView initialTab="general" />);
+  fireEvent.click(await screen.findByRole("switch", { name: "Record prompt" }));
+  expect((await screen.findByRole("alert")).textContent).toContain("disk full");
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  await waitFor(() => expect(setRecordPromptEnabled).toHaveBeenCalledTimes(2));
+  expect(setRecordPromptEnabled).toHaveBeenNthCalledWith(2, false);
+  expect(updateSettings).not.toHaveBeenCalled();
+  await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+});
+
+it("retries removing the same silenced app after a save failure", async () => {
+  const withSilencedApp = { ...base, record_prompt_enabled: true, silenced_record_prompt_apps: [{ id: "teams.exe", display_name: "Teams" }] };
+  vi.mocked(getSettings).mockResolvedValue(withSilencedApp);
+  vi.mocked(aiStatus).mockResolvedValue(empty);
+  vi.mocked(removeSilencedRecordPromptApp).mockRejectedValueOnce("disk full").mockResolvedValue({ ...withSilencedApp, silenced_record_prompt_apps: [] });
+  render(<SettingsView initialTab="general" />);
+  fireEvent.click(await screen.findByRole("button", { name: "Remove Teams" }));
+  expect((await screen.findByRole("alert")).textContent).toContain("disk full");
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  await waitFor(() => expect(removeSilencedRecordPromptApp).toHaveBeenCalledTimes(2));
+  expect(removeSilencedRecordPromptApp).toHaveBeenNthCalledWith(2, "teams.exe");
+  expect(updateSettings).not.toHaveBeenCalled();
 });
 
 it("shows the resolved Library root in General", async () => {
