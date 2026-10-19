@@ -59,11 +59,11 @@ export function CaptureRegionWindow() {
   } : null;
 
   return <div onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={(event) => void pointerUp(event)}
-    style={{ position: "fixed", inset: 0, background: "rgba(8, 15, 25, 0.28)", cursor: "crosshair", touchAction: "none", userSelect: "none" }}>
-    <div style={{ position: "absolute", left: 20, top: 20, padding: "10px 14px", borderRadius: 8, color: "white", background: "#172234", font: "14px system-ui" }}>
+    style={{ position: "fixed", inset: 0, background: selection ? "transparent" : "rgba(8, 15, 25, 0.12)", cursor: "crosshair", touchAction: "none", userSelect: "none" }}>
+    <div style={{ position: "absolute", left: 20, top: 20, padding: "10px 14px", borderRadius: 8, color: "white", background: "rgba(23, 34, 52, 0.92)", font: "14px system-ui" }}>
       Drag to draw a Capture region · Esc to cancel
     </div>
-    {selection && <div aria-hidden="true" style={{ position: "absolute", ...selection, border: "2px solid #fff", background: "rgba(255,255,255,.08)", boxShadow: "0 0 0 1px #20324b", pointerEvents: "none" }} />}
+    {selection && <div aria-hidden="true" style={{ position: "absolute", ...selection, border: "2px solid #fff", boxShadow: "0 0 0 1px #20324b, 0 0 0 9999px rgba(8, 15, 25, 0.35)", pointerEvents: "none" }} />}
     {error && <p role="alert" style={{ position: "absolute", left: 20, bottom: 20, padding: 12, background: "#792d2d", color: "white" }}>{error}</p>}
   </div>;
 }

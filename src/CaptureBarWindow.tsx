@@ -68,7 +68,7 @@ export default function CaptureBarWindow() {
   if (!status || status.phase === "idle") return null;
 
   const control = "flex size-9 shrink-0 items-center justify-center rounded-md text-white hover:bg-white/15 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-white disabled:opacity-50";
-  return <div aria-label="Capture bar" className="flex h-[58px] items-center gap-1 rounded-xl border border-white/15 bg-[#172234] px-2 text-white shadow-2xl select-none">
+  return <div aria-label="Capture bar" className="box-border flex h-screen w-screen items-center gap-1 overflow-hidden rounded-xl border border-white/25 bg-[#172234] px-2 text-white select-none">
     <button type="button" aria-label="Drag Capture bar" title="Drag Capture bar" className="flex h-9 w-5 shrink-0 cursor-move items-center justify-center text-white/60 hover:text-white" onPointerDown={() => void getCurrentWindow().startDragging().catch((reason) => setError(String(reason)))}><GripVertical size={17} aria-hidden="true" /></button>
     <div role="status" aria-live="polite" title={error ?? undefined} className={`min-w-0 shrink-0 whitespace-nowrap text-xs font-semibold tabular-nums ${error ? "text-red-300" : "text-white"}`}>
       <span aria-hidden="true" className={`mr-2 inline-block size-2 rounded-full ${status.phase === "paused" ? "bg-amber-400" : "bg-red-500"}`} />

@@ -186,6 +186,7 @@ fn show_capture_bar(app: &AppHandle) -> Result<(), String> {
     .always_on_top(true)
     .skip_taskbar(true)
     .transparent(true)
+    .shadow(false)
     .visible(false)
     .inner_size(354.0, 58.0)
     .build()
@@ -268,6 +269,7 @@ fn show_overlay(app: &AppHandle) -> Result<(), String> {
         .always_on_top(true)
         .skip_taskbar(true)
         .transparent(true)
+        .shadow(false)
         .visible(false)
         .build();
         let window = match window {
@@ -331,6 +333,7 @@ fn show_confirmation(app: &AppHandle) -> Result<(), String> {
     .skip_taskbar(true)
     .focusable(false)
     .transparent(true)
+    .shadow(false)
     .visible(false)
     .inner_size(220.0, 54.0)
     .build()
