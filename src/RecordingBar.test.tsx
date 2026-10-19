@@ -222,6 +222,26 @@ it("shows the Microphone no signal warning and handles its actions", async () =>
   expect(screen.getByRole("button", { name: "Stop" })).toBeTruthy();
 });
 
+it("explains when System audio may be missing and handles its warning actions", async () => {
+  const warning: RecorderStatus = {
+    ...recording,
+    source_devices: [{ source: "system_audio", device: "USB Headset" }],
+    source_health: [{ source: "system_audio", warning: "remote_silent" }],
+  };
+  vi.mocked(recordingStatus).mockResolvedValue(warning);
+  vi.mocked(openSoundSettings).mockResolvedValue(undefined);
+  vi.mocked(dismissSourceWarning).mockResolvedValue({ ...warning, source_health: [{ source: "system_audio", warning: null }] });
+  render(<RecordingBar />);
+
+  expect((await screen.findByRole("alert")).textContent).toContain("the other side may not be captured");
+  expect(screen.getByRole("alert").textContent).toContain("USB Headset");
+  fireEvent.click(screen.getByRole("button", { name: "Open sound settings" }));
+  await vi.waitFor(() => expect(openSoundSettings).toHaveBeenCalledTimes(1));
+  fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+  await vi.waitFor(() => expect(dismissSourceWarning).toHaveBeenCalledWith("system_audio"));
+  await vi.waitFor(() => expect(screen.queryByText(/the other side may not be captured/)).toBeNull());
+});
+
 it("pauses and stops the active Recording", async () => {
   vi.mocked(recordingStatus).mockResolvedValue(recording);
   vi.mocked(pauseRecording).mockResolvedValue({ ...recording, phase: "paused" });

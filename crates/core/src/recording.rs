@@ -17,6 +17,7 @@ use flacenc::{
 };
 use mp3lame_encoder::{Bitrate, Builder, FlushGap, InterleavedPcm, VbrMode};
 use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
 use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::{
     fs::{self, File, OpenOptions},
@@ -24,7 +25,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicU32, AtomicU64, Ordering},
-        mpsc, Arc,
+        mpsc, Arc, Mutex,
     },
     thread,
     time::{Duration, Instant},
@@ -34,6 +35,10 @@ const REOPEN_INTERVAL: Duration = Duration::from_secs(1);
 const DEFAULT_CHECK_INTERVAL: Duration = Duration::from_millis(500);
 const MAX_PACKETS_PER_TICK: usize = 64;
 const MICROPHONE_NO_SIGNAL_MS: u64 = 60_000;
+const REMOTE_SILENT_MS: u64 = 180_000;
+// Fifteen seconds of speech-level Microphone packets in the three-minute window.
+const MICROPHONE_SPEECH_MS: u64 = 15_000;
+const MICROPHONE_SPEECH_LEVEL: f32 = 0.2;
 const NO_PACKET: u64 = u64::MAX;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -276,23 +281,29 @@ pub struct CaptureSession<C: Clock> {
 }
 
 struct SourceLevel {
+    source: Source,
     value: AtomicU32,
     at_100ns: AtomicU64,
     audible_at_100ns: AtomicU64,
-    digital_silence_since_ms: AtomicU64,
+    silence_since_ms: AtomicU64,
     last_packet_100ns: AtomicU64,
+    previous_packet_ms: AtomicU64,
+    speech: Mutex<VecDeque<(u64, u64)>>,
     warning_active: std::sync::atomic::AtomicBool,
     warning_dismissed: std::sync::atomic::AtomicBool,
 }
 
 impl SourceLevel {
-    fn new(start: u64) -> Self {
+    fn new(start: u64, source: Source) -> Self {
         Self {
+            source,
             value: AtomicU32::new(0),
             at_100ns: AtomicU64::new(start),
             audible_at_100ns: AtomicU64::new(start),
-            digital_silence_since_ms: AtomicU64::new(NO_PACKET),
+            silence_since_ms: AtomicU64::new(NO_PACKET),
             last_packet_100ns: AtomicU64::new(NO_PACKET),
+            previous_packet_ms: AtomicU64::new(NO_PACKET),
+            speech: Mutex::new(VecDeque::new()),
             warning_active: std::sync::atomic::AtomicBool::new(false),
             warning_dismissed: std::sync::atomic::AtomicBool::new(false),
         }
@@ -306,34 +317,76 @@ impl SourceLevel {
             self.audible_at_100ns.store(at, Ordering::Relaxed);
         }
         self.last_packet_100ns.store(at, Ordering::Relaxed);
-        if packet.silent || samples.iter().all(|sample| *sample == 0.0) {
-            let _ = self.digital_silence_since_ms.compare_exchange(
+        let previous = self.previous_packet_ms.swap(active_ms, Ordering::Relaxed);
+        if self.source == Source::Microphone {
+            let mut speech = self.speech.lock().unwrap();
+            while speech
+                .front()
+                .is_some_and(|(_, end)| *end <= active_ms.saturating_sub(REMOTE_SILENT_MS))
+            {
+                speech.pop_front();
+            }
+            if !packet.silent && value >= MICROPHONE_SPEECH_LEVEL && previous != NO_PACKET {
+                let duration = active_ms.saturating_sub(previous).min(1_000);
+                speech.push_back((active_ms.saturating_sub(duration), active_ms));
+            }
+        }
+        let silent = if self.source == Source::Microphone {
+            packet.silent || samples.iter().all(|sample| *sample == 0.0)
+        } else {
+            packet.silent || value == 0.0
+        };
+        if silent {
+            let _ = self.silence_since_ms.compare_exchange(
                 NO_PACKET,
                 active_ms,
                 Ordering::Relaxed,
                 Ordering::Relaxed,
             );
         } else {
-            self.digital_silence_since_ms
-                .store(NO_PACKET, Ordering::Relaxed);
+            self.silence_since_ms.store(NO_PACKET, Ordering::Relaxed);
             self.warning_active.store(false, Ordering::Relaxed);
             self.warning_dismissed.store(false, Ordering::Relaxed);
         }
     }
     fn reset_health(&self) {
-        self.digital_silence_since_ms
-            .store(NO_PACKET, Ordering::Relaxed);
+        self.silence_since_ms.store(NO_PACKET, Ordering::Relaxed);
         self.last_packet_100ns.store(NO_PACKET, Ordering::Relaxed);
+        self.previous_packet_ms.store(NO_PACKET, Ordering::Relaxed);
+        self.speech.lock().unwrap().clear();
         self.warning_active.store(false, Ordering::Relaxed);
         self.warning_dismissed.store(false, Ordering::Relaxed);
     }
     fn no_signal(&self, now_100ns: u64, active_ms: u64) -> bool {
-        let since = self.digital_silence_since_ms.load(Ordering::Relaxed);
+        let since = self.silence_since_ms.load(Ordering::Relaxed);
         let last_packet = self.last_packet_100ns.load(Ordering::Relaxed);
         if since != NO_PACKET
             && last_packet != NO_PACKET
             && now_100ns.saturating_sub(last_packet) <= HNS_PER_SECOND
             && active_ms.saturating_sub(since) >= MICROPHONE_NO_SIGNAL_MS
+        {
+            self.warning_active.store(true, Ordering::Relaxed);
+        }
+        self.warning_active.load(Ordering::Relaxed)
+            && !self.warning_dismissed.load(Ordering::Relaxed)
+    }
+    fn speech_ms_last(&self, active_ms: u64, window_ms: u64) -> u64 {
+        let start = active_ms.saturating_sub(window_ms);
+        self.speech
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(from, to)| to.saturating_sub((*from).max(start)))
+            .sum()
+    }
+    fn remote_silent(&self, now_100ns: u64, active_ms: u64, speech_ms: u64) -> bool {
+        let since = self.silence_since_ms.load(Ordering::Relaxed);
+        let last_packet = self.last_packet_100ns.load(Ordering::Relaxed);
+        if since != NO_PACKET
+            && last_packet != NO_PACKET
+            && now_100ns.saturating_sub(last_packet) <= HNS_PER_SECOND
+            && active_ms.saturating_sub(since) >= REMOTE_SILENT_MS
+            && speech_ms >= MICROPHONE_SPEECH_MS
         {
             self.warning_active.store(true, Ordering::Relaxed);
         }
@@ -368,7 +421,7 @@ impl<C: Clock> CaptureSession<C> {
         let mut source_levels = Vec::new();
         let (switch_tx, switch_rx) = mpsc::channel();
         for source in [Source::Microphone, Source::SystemAudio] {
-            let level = Arc::new(SourceLevel::new(start));
+            let level = Arc::new(SourceLevel::new(start, source));
             source_levels.push((source, level.clone()));
             let writer = ChunkWriter::new(&chunk_dir, source)?;
             let (tx, rx) = mpsc::channel();
@@ -488,6 +541,29 @@ impl<C: Clock> CaptureSession<C> {
             .iter()
             .find(|(source, _)| *source == Source::Microphone)
             .is_some_and(|(_, level)| level.no_signal(now, active_ms))
+    }
+    pub fn remote_silent(&self) -> bool {
+        if self.is_paused() {
+            return false;
+        }
+        let now = self.clock.now_100ns();
+        let active_ms = self.timeline.elapsed_ms(now);
+        let microphone = self
+            .source_levels
+            .iter()
+            .find(|(source, _)| *source == Source::Microphone);
+        let system = self
+            .source_levels
+            .iter()
+            .find(|(source, _)| *source == Source::SystemAudio);
+        match (microphone, system) {
+            (Some((_, microphone)), Some((_, system))) => system.remote_silent(
+                now,
+                active_ms,
+                microphone.speech_ms_last(active_ms, REMOTE_SILENT_MS),
+            ),
+            _ => false,
+        }
     }
     pub fn dismiss_source_warning(&self, source: Source) {
         if let Some((_, level)) = self.source_levels.iter().find(|(item, _)| *item == source) {

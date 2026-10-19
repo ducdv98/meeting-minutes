@@ -54,6 +54,7 @@ pub struct RecorderStatus {
 #[serde(rename_all = "snake_case")]
 pub enum SourceHealthWarning {
     NoSignal,
+    RemoteSilent,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -251,7 +252,10 @@ impl<O: InputOpener, C: Clock> Recorder<O, C> {
                     },
                     SourceHealth {
                         source: Source::SystemAudio,
-                        warning: None,
+                        warning: active
+                            .session
+                            .remote_silent()
+                            .then_some(SourceHealthWarning::RemoteSilent),
                     },
                 ]
             }),

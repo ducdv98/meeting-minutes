@@ -27,7 +27,7 @@ export interface RecorderStatus {
   /** Device names reported by the active capture workers. */
   source_devices?: { source: "microphone" | "system_audio"; device: string }[];
   source_levels?: { source: "microphone" | "system_audio"; level: number; silent: boolean }[];
-  source_health?: { source: "microphone" | "system_audio"; warning: "no_signal" | null }[];
+  source_health?: { source: "microphone" | "system_audio"; warning: "no_signal" | "remote_silent" | null }[];
 }
 
 export const recordHotkey = "Ctrl+Alt+Shift+R";

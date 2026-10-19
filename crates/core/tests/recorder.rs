@@ -10,6 +10,10 @@ use std::sync::{
 };
 use tempfile::TempDir;
 
+// Long fake-clock Recording tests write large padded Chunks; running them together
+// can starve their capture workers on a busy test machine.
+static REMOTE_TEST_LOCK: Mutex<()> = Mutex::new(());
+
 #[derive(Clone)]
 struct FakeClock(Arc<AtomicU64>);
 impl Clock for FakeClock {
@@ -156,8 +160,10 @@ fn started_at() -> chrono::DateTime<chrono::FixedOffset> {
 #[derive(Clone)]
 struct PacketOpener {
     packets: Arc<Mutex<VecDeque<Packet>>>,
+    system_packets: Arc<Mutex<VecDeque<Packet>>>,
     processed: Arc<AtomicU64>,
     device: Arc<Mutex<String>>,
+    system_device: Arc<Mutex<String>>,
 }
 
 struct PacketDevice {
@@ -177,7 +183,11 @@ impl InputOpener for PacketOpener {
                 name: id.clone(),
                 id,
             },
-            packets: self.packets.clone(),
+            packets: if source == Source::Microphone {
+                self.packets.clone()
+            } else {
+                self.system_packets.clone()
+            },
             processed: self.processed.clone(),
             pending_report: false,
         })
@@ -187,7 +197,7 @@ impl InputOpener for PacketOpener {
         Ok(if source == Source::Microphone {
             self.device.lock().unwrap().clone()
         } else {
-            "speaker".into()
+            self.system_device.lock().unwrap().clone()
         })
     }
 }
@@ -198,11 +208,7 @@ impl InputDevice for PacketDevice {
             self.processed.fetch_add(1, Ordering::SeqCst);
             self.pending_report = false;
         }
-        let packet = if self.info.id == "speaker" {
-            None
-        } else {
-            self.packets.lock().unwrap().pop_front()
-        };
+        let packet = self.packets.lock().unwrap().pop_front();
         if packet.is_some() {
             self.pending_report = true;
         }
@@ -230,26 +236,217 @@ fn packet_recording() -> (
     let time = Arc::new(AtomicU64::new(10_000_000));
     let opener = PacketOpener {
         packets: Arc::new(Mutex::new(VecDeque::new())),
+        system_packets: Arc::new(Mutex::new(VecDeque::new())),
         processed: Arc::new(AtomicU64::new(0)),
         device: Arc::new(Mutex::new("microphone".into())),
+        system_device: Arc::new(Mutex::new("speaker".into())),
     };
     let recorder = Recorder::new(opener.clone(), FakeClock(time.clone()), true);
     (temp, library, time, opener, recorder)
 }
 
 fn deliver(opener: &PacketOpener, samples: Vec<f32>, silent: bool) {
+    deliver_source(opener, Source::Microphone, samples, silent);
+}
+
+fn deliver_source(opener: &PacketOpener, source: Source, samples: Vec<f32>, silent: bool) {
     let before = opener.processed.load(Ordering::SeqCst);
-    opener.packets.lock().unwrap().push_back(Packet {
+    let packets = if source == Source::Microphone {
+        &opener.packets
+    } else {
+        &opener.system_packets
+    };
+    packets.lock().unwrap().push_back(Packet {
         samples,
         qpc_100ns: None,
         silent,
         discontinuity: false,
     });
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
     while opener.processed.load(Ordering::SeqCst) == before {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "{source:?} packet was not processed"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
+fn system_warning(status: &RecorderStatus) -> Option<SourceHealthWarning> {
+    status
+        .source_health
+        .iter()
+        .find(|health| health.source == Source::SystemAudio)
+        .and_then(|health| health.warning)
+}
+
+#[test]
+fn system_audio_silence_warns_after_three_minutes_with_microphone_speech() {
+    let _guard = REMOTE_TEST_LOCK.lock().unwrap();
+    let (_temp, mut library, time, opener, mut recorder) = packet_recording();
+    recorder.start(&mut library, started_at()).unwrap();
+    deliver_source(&opener, Source::SystemAudio, vec![0.0, 0.0], true);
+    for _ in 0..30 {
+        time.fetch_add(10_000_000, Ordering::SeqCst);
+        deliver(&opener, vec![0.1, 0.1], false);
+    }
+    time.fetch_add(149 * 10_000_000, Ordering::SeqCst);
+    deliver_source(&opener, Source::SystemAudio, vec![0.0, 0.0], true);
+    assert!(system_warning(&recorder.status()).is_none());
+    time.fetch_add(10_000_000, Ordering::SeqCst);
+    deliver_source(&opener, Source::SystemAudio, vec![0.0, 0.0], true);
+    assert_eq!(
+        system_warning(&recorder.status()),
+        Some(SourceHealthWarning::RemoteSilent)
+    );
+    assert_eq!(
+        serde_json::to_value(recorder.status()).unwrap()["source_health"][1]["warning"],
+        "remote_silent"
+    );
+    assert_eq!(recorder.status().phase, Phase::Recording);
+    recorder.stop().unwrap();
+}
+
+#[test]
+fn quiet_sources_and_low_microphone_noise_do_not_warn_about_remote_audio() {
+    let _guard = REMOTE_TEST_LOCK.lock().unwrap();
+    for microphone_samples in [vec![0.0, 0.0], vec![0.0001, 0.0001]] {
+        let (_temp, mut library, time, opener, mut recorder) = packet_recording();
+        recorder.start(&mut library, started_at()).unwrap();
+        deliver_source(&opener, Source::SystemAudio, vec![0.0, 0.0], true);
+        for _ in 0..30 {
+            time.fetch_add(10_000_000, Ordering::SeqCst);
+            deliver(&opener, microphone_samples.clone(), false);
+        }
+        time.fetch_add(150 * 10_000_000, Ordering::SeqCst);
+        deliver_source(&opener, Source::SystemAudio, vec![0.0, 0.0], true);
+        assert!(system_warning(&recorder.status()).is_none());
+        recorder.stop().unwrap();
+    }
+}
+
+#[test]
+fn low_level_system_audio_is_still_remote_silence() {
+    let _guard = REMOTE_TEST_LOCK.lock().unwrap();
+    let (_temp, mut library, time, opener, mut recorder) = packet_recording();
+    recorder.start(&mut library, started_at()).unwrap();
+    deliver_source(&opener, Source::SystemAudio, vec![0.0001, 0.0001], false);
+    for _ in 0..30 {
+        time.fetch_add(10_000_000, Ordering::SeqCst);
+        deliver(&opener, vec![0.1, 0.1], false);
+    }
+    time.fetch_add(150 * 10_000_000, Ordering::SeqCst);
+    deliver_source(&opener, Source::SystemAudio, vec![0.0001, 0.0001], false);
+    assert_eq!(
+        system_warning(&recorder.status()),
+        Some(SourceHealthWarning::RemoteSilent)
+    );
+    recorder.stop().unwrap();
+}
+
+#[test]
+fn microphone_only_recording_has_no_remote_silent_warning() {
+    let _guard = REMOTE_TEST_LOCK.lock().unwrap();
+    let (_temp, mut library, time, opener, mut recorder) = packet_recording();
+    recorder.start(&mut library, started_at()).unwrap();
+    for _ in 0..30 {
+        time.fetch_add(10_000_000, Ordering::SeqCst);
+        deliver(&opener, vec![0.1, 0.1], false);
+    }
+    time.fetch_add(150 * 10_000_000, Ordering::SeqCst);
+    assert!(system_warning(&recorder.status()).is_none());
+    recorder.stop().unwrap();
+}
+
+#[test]
+fn paused_time_does_not_count_toward_remote_silent() {
+    let _guard = REMOTE_TEST_LOCK.lock().unwrap();
+    let (_temp, mut library, time, opener, mut recorder) = packet_recording();
+    recorder.start(&mut library, started_at()).unwrap();
+    deliver_source(&opener, Source::SystemAudio, vec![0.0, 0.0], true);
+    for _ in 0..30 {
+        time.fetch_add(10_000_000, Ordering::SeqCst);
+        deliver(&opener, vec![0.1, 0.1], false);
+    }
+    recorder.pause().unwrap();
+    time.fetch_add(300 * 10_000_000, Ordering::SeqCst);
+    assert!(system_warning(&recorder.status()).is_none());
+    recorder.resume().unwrap();
+    time.fetch_add(149 * 10_000_000, Ordering::SeqCst);
+    deliver_source(&opener, Source::SystemAudio, vec![0.0, 0.0], true);
+    assert!(system_warning(&recorder.status()).is_none());
+    time.fetch_add(10_000_000, Ordering::SeqCst);
+    deliver_source(&opener, Source::SystemAudio, vec![0.0, 0.0], true);
+    assert_eq!(
+        system_warning(&recorder.status()),
+        Some(SourceHealthWarning::RemoteSilent)
+    );
+    recorder.stop().unwrap();
+}
+
+#[test]
+fn system_device_switch_restarts_remote_silence_window() {
+    let _guard = REMOTE_TEST_LOCK.lock().unwrap();
+    let (_temp, mut library, time, opener, mut recorder) = packet_recording();
+    recorder.start(&mut library, started_at()).unwrap();
+    deliver_source(&opener, Source::SystemAudio, vec![0.0, 0.0], true);
+    for _ in 0..30 {
+        time.fetch_add(10_000_000, Ordering::SeqCst);
+        deliver(&opener, vec![0.1, 0.1], false);
+    }
+    time.fetch_add(90 * 10_000_000, Ordering::SeqCst);
+    *opener.system_device.lock().unwrap() = "headset".into();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    while !recorder
+        .status()
+        .device_switches
+        .iter()
+        .any(|switch| switch.source == Source::SystemAudio)
+    {
+        recorder.collect_device_switches().unwrap();
         assert!(std::time::Instant::now() < deadline);
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
+    deliver_source(&opener, Source::SystemAudio, vec![0.0, 0.0], true);
+    time.fetch_add(60 * 10_000_000, Ordering::SeqCst);
+    deliver_source(&opener, Source::SystemAudio, vec![0.0, 0.0], true);
+    assert!(system_warning(&recorder.status()).is_none());
+    recorder.stop().unwrap();
+}
+
+#[test]
+fn remote_audio_recovery_clears_warning_and_allows_a_new_warning_after_dismissal() {
+    let _guard = REMOTE_TEST_LOCK.lock().unwrap();
+    let (_temp, mut library, time, opener, mut recorder) = packet_recording();
+    recorder.start(&mut library, started_at()).unwrap();
+    deliver_source(&opener, Source::SystemAudio, vec![0.0, 0.0], true);
+    for _ in 0..30 {
+        time.fetch_add(10_000_000, Ordering::SeqCst);
+        deliver(&opener, vec![0.1, 0.1], false);
+    }
+    time.fetch_add(150 * 10_000_000, Ordering::SeqCst);
+    deliver_source(&opener, Source::SystemAudio, vec![0.0, 0.0], true);
+    assert!(system_warning(&recorder.status()).is_some());
+    recorder
+        .dismiss_source_warning(Source::SystemAudio)
+        .unwrap();
+    assert!(system_warning(&recorder.status()).is_none());
+    deliver_source(&opener, Source::SystemAudio, vec![0.0, 0.0], true);
+    assert!(system_warning(&recorder.status()).is_none());
+    deliver_source(&opener, Source::SystemAudio, vec![0.1, 0.1], false);
+    assert!(system_warning(&recorder.status()).is_none());
+    deliver_source(&opener, Source::SystemAudio, vec![0.0, 0.0], true);
+    for _ in 0..30 {
+        time.fetch_add(10_000_000, Ordering::SeqCst);
+        deliver(&opener, vec![0.1, 0.1], false);
+    }
+    time.fetch_add(150 * 10_000_000, Ordering::SeqCst);
+    deliver_source(&opener, Source::SystemAudio, vec![0.0, 0.0], true);
+    assert_eq!(
+        system_warning(&recorder.status()),
+        Some(SourceHealthWarning::RemoteSilent)
+    );
+    recorder.stop().unwrap();
 }
 
 fn microphone_warning(status: &RecorderStatus) -> Option<SourceHealthWarning> {
