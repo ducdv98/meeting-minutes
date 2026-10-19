@@ -1,6 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 #[cfg(windows)]
+mod record_prompt_windows;
+#[cfg(windows)]
 mod snapshot_windows;
 
 use std::{
@@ -189,6 +191,26 @@ fn get_microphone_usage() -> Result<Vec<MicrophoneApp>, String> {
     SystemMicrophoneUsage
         .apps_using_microphone()
         .map_err(|error| error.to_string())
+}
+
+#[cfg(windows)]
+#[tauri::command]
+fn current_record_prompt(app: AppHandle) -> Option<MicrophoneApp> {
+    record_prompt_windows::current(&app)
+}
+
+#[cfg(windows)]
+#[tauri::command]
+fn dismiss_record_prompt(app: AppHandle) {
+    record_prompt_windows::dismiss(&app);
+}
+
+#[cfg(windows)]
+#[tauri::command]
+fn show_recording_notice(app: AppHandle) {
+    record_prompt_windows::dismiss(&app);
+    show_window(&app);
+    let _ = app.emit("recording-notice-requested", ());
 }
 
 #[derive(Clone, Copy, serde::Serialize)]
@@ -3520,6 +3542,8 @@ fn main() {
             #[cfg(windows)]
             app.manage(snapshot_windows::SnapshotState::default());
             #[cfg(windows)]
+            app.manage(record_prompt_windows::PromptState::default());
+            #[cfg(windows)]
             app.manage(SnapshotUndoState::default());
 
             let open_item = MenuItem::with_id(app, "open", "Open", true, None::<&str>)?;
@@ -3590,6 +3614,8 @@ fn main() {
             });
 
             recover(app.handle());
+            #[cfg(windows)]
+            record_prompt_windows::start_polling(app.handle().clone());
             processing_worker(app.handle().clone());
             tauri::async_runtime::spawn(check_for_update(app.handle().clone()));
 
@@ -3641,6 +3667,12 @@ fn main() {
             app_info,
             get_diagnostics,
             get_microphone_usage,
+            #[cfg(windows)]
+            current_record_prompt,
+            #[cfg(windows)]
+            dismiss_record_prompt,
+            #[cfg(windows)]
+            show_recording_notice,
             pick_audio_files,
             import_status,
             dismiss_import_errors,
