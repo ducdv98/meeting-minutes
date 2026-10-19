@@ -82,6 +82,26 @@ export const segments: Segment[] = lines.map(([speaker, start, end, text], index
   text,
 }));
 
+// Fictional shared slides, drawn at run time so no image files are needed.
+export const demoSnapshots = [
+  { order: 1, timeline_ms: 42_500, caption: "Pricing slide: Free and Pro", title: "Plans", lines: ["Free — local Processing + your own keys", "Pro — cloud allowance (planned)", "No price until costs are measured"] },
+  { order: 2, timeline_ms: 134_500, caption: "Release checklist", title: "Release checklist", lines: ["Publish SHA-256 with every release", "Explain the SmartScreen warning", "Add build attestation to the workflow"] },
+];
+
+export async function snapshotPng(order: number): Promise<number[]> {
+  const slide = demoSnapshots.find((item) => item.order === order)!;
+  const canvas = document.createElement("canvas");
+  canvas.width = 1280; canvas.height = 720;
+  const ctx = canvas.getContext("2d")!;
+  ctx.fillStyle = "#f4f6fb"; ctx.fillRect(0, 0, 1280, 720);
+  ctx.fillStyle = "#2f4ea2"; ctx.fillRect(0, 0, 1280, 14);
+  ctx.fillStyle = "#14213d"; ctx.font = "700 72px Inter, system-ui, sans-serif"; ctx.fillText(slide.title, 80, 190);
+  ctx.font = "400 44px Inter, system-ui, sans-serif";
+  slide.lines.forEach((line, index) => { ctx.fillStyle = "#2f4ea2"; ctx.fillRect(80, 290 + index * 110, 12, 12); ctx.fillStyle = "#14213d"; ctx.fillText(line, 120, 305 + index * 110); });
+  const blob: Blob = await new Promise((resolve) => canvas.toBlob((value) => resolve(value!), "image/png"));
+  return Array.from(new Uint8Array(await blob.arrayBuffer()));
+}
+
 export function transcript(id: string): Transcript | null {
   if (id !== DEMO_ID) return { ...demoTranscript, segments: segments.slice(0, 8) };
   return demoTranscript;

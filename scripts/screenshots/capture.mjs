@@ -50,6 +50,17 @@ const shots = {
       element.scrollTop += row.getBoundingClientRect().top - element.getBoundingClientRect().top - header.offsetHeight;
     });
   },
+  async snapshots(page) {
+    await openDemo(page);
+    await page.getByRole("button", { name: /Open Snapshot: Pricing slide/ }).waitFor();
+    const transcript = page.getByRole("region", { name: "Transcript" });
+    // Start the view on the Segment before the first Snapshot.
+    await transcript.evaluate((element) => {
+      const row = element.querySelector('[data-segment-start="30000"]');
+      const header = element.querySelector(".sticky");
+      element.scrollTop += row.getBoundingClientRect().top - element.getBoundingClientRect().top - header.offsetHeight;
+    });
+  },
   async search(page) {
     await page.getByRole("searchbox", { name: "Search transcripts" }).fill("pricing");
     await page.getByText("Customer interview — Northwind").last().waitFor();

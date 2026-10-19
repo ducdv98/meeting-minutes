@@ -7,6 +7,7 @@ Demo content is fictional: never real people, calls or device details, and only 
 - `meeting-*.png`: an open Meeting after Processing, with the Transcript, Participants and a Summary with Citations.
 - `ask-*.png`: the Ask tab with two Answers and their Citations.
 - `transcript-*.png`: the Transcript scrolled to the middle of the Meeting, with Participant names and timestamps.
+- `snapshots-*.png`: the Transcript with a Snapshot of a fictional shared slide between two Segments, a caption and the Meeting's Snapshot size.
 - `search-*.png`: Library search for “pricing” with matches across several Meetings.
 - `diagnostics-*.png`: the Help view with Copy diagnostics and a fictional diagnostics preview.
 - `library-*.png`: the Library home table. It isn't on the website; it's for launch galleries.

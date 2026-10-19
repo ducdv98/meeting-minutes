@@ -15,7 +15,7 @@ Serve `website/dist/` with any static file server. The draft build uses neutral 
 
 The Request a key page uses a pre-filled email draft. It has no form backend. The pricing page describes the Managed key allowance without promising a specific number of minutes during the experiment.
 
-Run `node website/build.mjs --check-ready` to list what blocks publishing; it exits successfully and writes `ready=true` or `ready=false` to `GITHUB_OUTPUT` when set. The privacy page must be the real policy (no `PRIVACY_STUB_TICKET_14` marker). Once a Release is published, all twelve screenshots listed in [`src/assets/screens/README.md`](src/assets/screens/README.md) are required. A published Release needs a valid NSIS `.exe` and a matching readable `.sha256` asset. The build fails when either is missing or invalid; it does not expose an older installer.
+Run `node website/build.mjs --check-ready` to list what blocks publishing; it exits successfully and writes `ready=true` or `ready=false` to `GITHUB_OUTPUT` when set. The privacy page must be the real policy (no `PRIVACY_STUB_TICKET_14` marker). Once a Release is published, all fourteen screenshots listed in [`src/assets/screens/README.md`](src/assets/screens/README.md) are required. A published Release needs a valid NSIS `.exe` and a matching readable `.sha256` asset. The build fails when either is missing or invalid; it does not expose an older installer.
 
 ## One-time owner setup
 

@@ -41,6 +41,10 @@ mockIPC((cmd, args) => {
     case "list_meetings": return demo.meetings;
     case "meeting_detail": return demo.detail(meetingId);
     case "meeting_transcript": return demo.transcript(meetingId);
+    case "list_snapshots": return meetingId === demo.DEMO_ID
+      ? { snapshots: demo.demoSnapshots.map(({ order, timeline_ms, caption }) => ({ order, timeline_ms, caption })), total_size_bytes: 412_000 }
+      : { snapshots: [], total_size_bytes: 0 };
+    case "read_snapshot_image": return demo.snapshotPng(a.order as number);
     case "meeting_summary": return meetingId === demo.DEMO_ID ? demo.summary : null;
     case "meeting_asks": return meetingId === demo.DEMO_ID ? demo.asks : { asks: [], active: null, retryable_id: null };
     case "summary_participants_changed": return false;

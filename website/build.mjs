@@ -24,7 +24,7 @@ const checkReady = args.includes('--check-ready');
 const fixtureIndex = args.indexOf('--fixture');
 if (fixtureIndex !== -1 && !args[fixtureIndex + 1]) { console.error('--fixture needs a JSON file path'); process.exit(1); }
 const fixture = fixtureIndex === -1 ? null : resolve(args[fixtureIndex + 1]);
-const screens = ['meeting', 'ask', 'transcript', 'search', 'diagnostics', 'firstrun-model'];
+const screens = ['meeting', 'ask', 'transcript', 'snapshots', 'search', 'diagnostics', 'firstrun-model'];
 const missing = [];
 const missingScreens = [];
 
@@ -140,6 +140,7 @@ const substitutions = {
   '{{SCREEN_MEETING}}': screen('meeting', 'Meeting view with a Transcript and a cited Summary'),
   '{{SCREEN_ASK}}': screen('ask', 'Ask view with an Answer linked to Transcript Citations'),
   '{{SCREEN_TRANSCRIPT}}': screen('transcript', 'Transcript with Speaker labels and playback controls'),
+  '{{SCREEN_SNAPSHOTS}}': screen('snapshots', 'Transcript with a Snapshot of a shared pricing slide shown between two Segments'),
   '{{SCREEN_SEARCH}}': screen('search', 'Library search results with matching Transcript Segments'),
   '{{SCREEN_DIAGNOSTICS}}': screen('diagnostics', 'Help menu with Copy diagnostics selected'),
   '{{SCREEN_FIRSTRUN_MODEL}}': screen('firstrun-model', 'First-run guide recommending a transcription model'),
