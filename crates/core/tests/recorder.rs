@@ -1,8 +1,9 @@
 use meeting_minutes_core::{
     capture::{Clock, DeviceInfo, InputDevice, InputOpener, Packet, Source},
-    recorder::{Phase, Recorder, RecorderError, SaveState},
+    recorder::{Phase, Recorder, RecorderError, RecorderStatus, SaveState, SourceHealthWarning},
     Library,
 };
+use std::collections::VecDeque;
 use std::sync::{
     atomic::{AtomicU64, Ordering},
     Arc, Mutex,
@@ -150,6 +151,219 @@ fn setup(notice_acknowledged: bool) -> Setup {
 
 fn started_at() -> chrono::DateTime<chrono::FixedOffset> {
     chrono::DateTime::parse_from_rfc3339("2026-10-12T09:30:00+07:00").unwrap()
+}
+
+#[derive(Clone)]
+struct PacketOpener {
+    packets: Arc<Mutex<VecDeque<Packet>>>,
+    processed: Arc<AtomicU64>,
+    device: Arc<Mutex<String>>,
+}
+
+struct PacketDevice {
+    info: DeviceInfo,
+    packets: Arc<Mutex<VecDeque<Packet>>>,
+    processed: Arc<AtomicU64>,
+    pending_report: bool,
+}
+
+impl InputOpener for PacketOpener {
+    type Device = PacketDevice;
+
+    fn open(&self, source: Source) -> Result<Self::Device, String> {
+        let id = self.default_device_id(source)?;
+        Ok(PacketDevice {
+            info: DeviceInfo {
+                name: id.clone(),
+                id,
+            },
+            packets: self.packets.clone(),
+            processed: self.processed.clone(),
+            pending_report: false,
+        })
+    }
+
+    fn default_device_id(&self, source: Source) -> Result<String, String> {
+        Ok(if source == Source::Microphone {
+            self.device.lock().unwrap().clone()
+        } else {
+            "speaker".into()
+        })
+    }
+}
+
+impl InputDevice for PacketDevice {
+    fn read_packet(&mut self) -> Result<Option<Packet>, String> {
+        if self.pending_report {
+            self.processed.fetch_add(1, Ordering::SeqCst);
+            self.pending_report = false;
+        }
+        let packet = if self.info.id == "speaker" {
+            None
+        } else {
+            self.packets.lock().unwrap().pop_front()
+        };
+        if packet.is_some() {
+            self.pending_report = true;
+        }
+        Ok(packet)
+    }
+
+    fn info(&self) -> &DeviceInfo {
+        &self.info
+    }
+}
+
+fn packet_recording() -> (
+    TempDir,
+    Library,
+    Arc<AtomicU64>,
+    PacketOpener,
+    Recorder<PacketOpener, FakeClock>,
+) {
+    let temp = TempDir::new().unwrap();
+    let library = Library::open(
+        temp.path().join("Library"),
+        temp.path().join("index.sqlite3"),
+    )
+    .unwrap();
+    let time = Arc::new(AtomicU64::new(10_000_000));
+    let opener = PacketOpener {
+        packets: Arc::new(Mutex::new(VecDeque::new())),
+        processed: Arc::new(AtomicU64::new(0)),
+        device: Arc::new(Mutex::new("microphone".into())),
+    };
+    let recorder = Recorder::new(opener.clone(), FakeClock(time.clone()), true);
+    (temp, library, time, opener, recorder)
+}
+
+fn deliver(opener: &PacketOpener, samples: Vec<f32>, silent: bool) {
+    let before = opener.processed.load(Ordering::SeqCst);
+    opener.packets.lock().unwrap().push_back(Packet {
+        samples,
+        qpc_100ns: None,
+        silent,
+        discontinuity: false,
+    });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    while opener.processed.load(Ordering::SeqCst) == before {
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
+fn microphone_warning(status: &RecorderStatus) -> Option<SourceHealthWarning> {
+    status
+        .source_health
+        .iter()
+        .find(|health| health.source == Source::Microphone)
+        .and_then(|health| health.warning)
+}
+
+#[test]
+fn microphone_no_signal_needs_sixty_seconds_of_digital_silence() {
+    let (_temp, mut library, time, opener, mut recorder) = packet_recording();
+    recorder.start(&mut library, started_at()).unwrap();
+    deliver(&opener, vec![0.0, 0.0], true);
+    time.fetch_add(59 * 10_000_000, Ordering::SeqCst);
+    deliver(&opener, vec![0.0, 0.0], false);
+    assert!(recorder
+        .status()
+        .source_health
+        .iter()
+        .all(|health| health.warning.is_none()));
+    time.fetch_add(10_000_000, Ordering::SeqCst);
+    deliver(&opener, vec![0.0, 0.0], true);
+    assert_eq!(
+        microphone_warning(&recorder.status()),
+        Some(SourceHealthWarning::NoSignal)
+    );
+    assert_eq!(
+        serde_json::to_value(recorder.status()).unwrap()["source_health"][0]["warning"],
+        "no_signal"
+    );
+    assert_eq!(recorder.status().phase, Phase::Recording);
+    recorder.stop().unwrap();
+}
+
+#[test]
+fn low_level_microphone_noise_is_not_no_signal() {
+    let (_temp, mut library, time, opener, mut recorder) = packet_recording();
+    recorder.start(&mut library, started_at()).unwrap();
+    deliver(&opener, vec![0.0001, 0.0001], false);
+    time.fetch_add(60 * 10_000_000, Ordering::SeqCst);
+    deliver(&opener, vec![0.0001, 0.0001], false);
+    assert!(recorder
+        .status()
+        .source_health
+        .iter()
+        .all(|health| health.warning.is_none()));
+    recorder.stop().unwrap();
+}
+
+#[test]
+fn paused_time_does_not_count_toward_microphone_no_signal() {
+    let (_temp, mut library, time, opener, mut recorder) = packet_recording();
+    recorder.start(&mut library, started_at()).unwrap();
+    deliver(&opener, vec![0.0, 0.0], true);
+    time.fetch_add(30 * 10_000_000, Ordering::SeqCst);
+    deliver(&opener, vec![0.0, 0.0], true);
+    recorder.pause().unwrap();
+    time.fetch_add(120 * 10_000_000, Ordering::SeqCst);
+    assert!(microphone_warning(&recorder.status()).is_none());
+    recorder.resume().unwrap();
+    time.fetch_add(29 * 10_000_000, Ordering::SeqCst);
+    deliver(&opener, vec![0.0, 0.0], true);
+    assert!(microphone_warning(&recorder.status()).is_none());
+    time.fetch_add(10_000_000, Ordering::SeqCst);
+    deliver(&opener, vec![0.0, 0.0], true);
+    assert!(microphone_warning(&recorder.status()).is_some());
+    recorder.stop().unwrap();
+}
+
+#[test]
+fn microphone_device_switch_starts_a_new_silence_window() {
+    let (_temp, mut library, time, opener, mut recorder) = packet_recording();
+    recorder.start(&mut library, started_at()).unwrap();
+    deliver(&opener, vec![0.0, 0.0], true);
+    time.fetch_add(40 * 10_000_000, Ordering::SeqCst);
+    *opener.device.lock().unwrap() = "headset".into();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    while recorder.status().device_switches.is_empty() {
+        recorder.collect_device_switches().unwrap();
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    deliver(&opener, vec![0.0, 0.0], true);
+    time.fetch_add(20 * 10_000_000, Ordering::SeqCst);
+    deliver(&opener, vec![0.0, 0.0], true);
+    assert!(microphone_warning(&recorder.status()).is_none());
+    recorder.stop().unwrap();
+}
+
+#[test]
+fn microphone_warning_clears_on_signal_and_dismissal_lasts_until_recovery() {
+    let (_temp, mut library, time, opener, mut recorder) = packet_recording();
+    recorder.start(&mut library, started_at()).unwrap();
+    deliver(&opener, vec![0.0, 0.0], true);
+    time.fetch_add(60 * 10_000_000, Ordering::SeqCst);
+    deliver(&opener, vec![0.1, 0.1], true);
+    assert!(microphone_warning(&recorder.status()).is_some());
+    time.fetch_add(2 * 10_000_000, Ordering::SeqCst);
+    assert!(microphone_warning(&recorder.status()).is_some());
+    recorder.dismiss_source_warning(Source::Microphone).unwrap();
+    assert!(microphone_warning(&recorder.status()).is_none());
+    time.fetch_add(60 * 10_000_000, Ordering::SeqCst);
+    deliver(&opener, vec![0.0, 0.0], true);
+    assert!(microphone_warning(&recorder.status()).is_none());
+    deliver(&opener, vec![0.0001, 0.0001], false);
+    assert!(microphone_warning(&recorder.status()).is_none());
+    deliver(&opener, vec![0.0, 0.0], true);
+    time.fetch_add(60 * 10_000_000, Ordering::SeqCst);
+    deliver(&opener, vec![0.0, 0.0], true);
+    assert!(microphone_warning(&recorder.status()).is_some());
+    assert_eq!(recorder.status().phase, Phase::Recording);
+    recorder.stop().unwrap();
 }
 
 #[test]

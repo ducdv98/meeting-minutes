@@ -6,6 +6,7 @@ import { ErrorState } from "./components/states/ErrorState";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "./components/ui/Dialog";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./components/ui/Tooltip";
 import { RECORDING_NOTICE } from "./recording-notice";
+import SourceHealthNotice from "./SourceHealthNotice";
 import {
   acknowledgeRecordingNotice,
   continueMeeting,
@@ -125,6 +126,7 @@ export default function RecordingBar({ recordRequest = 0, hideIdleButton = false
         <RecordingControl label="Stop" hotkey={recordHotkey} variant="record" onClick={() => run(stopRecording)}><Square size={16} strokeWidth={1.5} fill="currentColor" aria-hidden="true" /></RecordingControl>
       </TooltipProvider></div>
     </div>}
+    <SourceHealthNotice status={status} onStatus={setStatus} />
     {latestSwitch && <div role="status" className="mx-5 mt-3 flex max-w-[420px] items-start gap-2.5 rounded-md border border-line bg-raised px-3 py-2.5 text-[13px] leading-[19px] shadow-pop">
       {latestSwitch.source === "microphone" ? <Mic size={16} strokeWidth={1.5} className="mt-0.5 shrink-0 text-ink-muted" aria-hidden="true" /> : <Speaker size={16} strokeWidth={1.5} className="mt-0.5 shrink-0 text-ink-muted" aria-hidden="true" />}
       <p className="m-0 min-w-0 flex-1"><span className="font-medium">{latestSwitch.source === "microphone" ? "Microphone" : "System audio"} switched to {latestSwitch.device}</span><br /><span className="text-ink-muted">Recording continued. The switch is marked on the Timeline at {formatElapsed(latestSwitch.at_ms)}.</span></p>
