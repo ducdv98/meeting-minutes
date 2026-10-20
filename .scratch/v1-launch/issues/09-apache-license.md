@@ -8,4 +8,6 @@ Status: ready-for-human
 
 - [x] The dependency check is recorded in `docs/research/`
 - [ ] LICENSE is present and the manifests declare Apache-2.0
+
+Note 2026-10-20: deferred until after the Product Hunt launch. Blockers in `docs/research/dependency-licenses.md`: LGPL LAME static link, brand artwork rights.
 - [ ] Site copy may say "open source" and links to the repo

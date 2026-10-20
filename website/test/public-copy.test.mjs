@@ -81,7 +81,7 @@ test('published Windows Release shows installer and SHA-256', async () => {
     assert.ok(home.includes(`href="${installer}"`), 'download links to the published installer');
     assert.match(home, /Version v1\.0\.0 · 14 MB · Windows 11, 64-bit · Free/);
     assert.match(home, new RegExp(`SHA-256: <code>${checksum}</code>`));
-    assert.match(home, /href="\/support\/#smartscreen">see the SmartScreen note/);
+    assert.match(home, /href="\/support\/#smartscreen">How to verify it/);
     const llms = await readFile(join(output, 'llms.txt'), 'utf8');
     assert.doesNotMatch(llms, /roadmap|December 2026|\(target\)/i);
     const changelog = await readFile(join(output, 'changelog', 'index.html'), 'utf8');

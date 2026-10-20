@@ -121,7 +121,7 @@ if (blockers.length && (!draft || releaseBlocked)) {
 const releaseButton = latest ? `<a class="button primary" href="${escapeHtml(latest.url)}">Download for Windows</a>` : '';
 const unavailable = '<span class="status-line">No public download available</span>';
 const heroAction = latest
-  ? `${releaseButton}<small>Version ${escapeHtml(latest.version)} · ${escapeHtml(latest.size)} · Windows 11, 64-bit · Free</small><small class="checksum">SHA-256: <code>${checksum}</code></small><small>Unsigned installer: <a href="/support/#smartscreen">see the SmartScreen note</a></small>`
+  ? `${releaseButton}<small>Version ${escapeHtml(latest.version)} · ${escapeHtml(latest.size)} · Windows 11, 64-bit · Free</small><small class="checksum">SHA-256: <code>${checksum}</code></small><small>Windows will warn you: the installer is unsigned. <a href="/support/#smartscreen">How to verify it</a></small>`
   : unavailable;
 const closingAction = latest ? releaseButton : unavailable;
 const headerAction = latest ? `<a class="button primary header-download" href="${escapeHtml(latest.url)}">Download for Windows <span>${escapeHtml(latest.version)}</span></a>` : '';
@@ -168,7 +168,7 @@ function shell(title, description, body, current = '') {
 <nav class="site-nav" aria-label="Main navigation">${nav}${headerAction}</nav>
 <details class="mobile-menu"><summary aria-label="Open menu">Menu</summary><nav aria-label="Mobile navigation">${nav}${headerAction}</nav></details></div></header>
 <main id="main">${body}</main>
-<footer class="site-foot"><div class="wrap footer-grid"><div>${brand()}<p>Meeting Minutes. A local-first meeting recorder for Windows.</p></div>
+<footer class="site-foot"><div class="wrap footer-grid"><div>${brand()}<p>Meeting Minutes. A local-first meeting recorder for Windows 11. A Mac version is in progress.</p></div>
 <nav aria-label="Footer navigation">${nav}<a href="/request-a-key/">Request a key</a><a href="https://github.com/ducdv98/meeting-minutes">GitHub</a></nav>
 <div class="legal"><span>© 2026 Meeting Minutes · Duc Dao</span><a href="mailto:admin@meeting-minutes.tech">admin@meeting-minutes.tech</a></div></div></footer></body></html>`;
 }

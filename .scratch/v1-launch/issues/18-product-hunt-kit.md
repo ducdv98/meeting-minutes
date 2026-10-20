@@ -7,4 +7,4 @@
 Status: ready-for-agent
 
 - [x] The kit is in `.scratch/v1-launch/product-hunt.md`
-- [ ] The launch date is chosen
+- [x] The launch date is chosen: Saturday 2026-10-24, 00:01 PT
