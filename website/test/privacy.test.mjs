@@ -71,7 +71,7 @@ test('public copy explains when Meeting content goes to cloud providers', async 
 test('privacy page explains key requests and key-based Managed transcription', async () => {
   const policy = await readFile(policyPath, 'utf8');
   assert.match(policy, /Last updated 18 October 2026/);
-  assert.match(policy, /Request a key[\s\S]*?email draft[\s\S]*?no form backend/i);
+  assert.match(policy, /Request a key[\s\S]*?private Google Sheet[\s\S]*?email draft/i);
   assert.match(policy, /email address and your description of how you will use Managed transcription/i);
   assert.match(policy, /keys are issued by hand[\s\S]*?do not promise a response or turnaround time/i);
   assert.match(policy, /https:\/\/transcribe\.meeting-minutes\.tech/);

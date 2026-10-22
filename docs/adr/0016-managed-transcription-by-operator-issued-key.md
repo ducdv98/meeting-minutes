@@ -5,7 +5,7 @@ For the experimental period, Managed transcription is reached with a **Managed k
 - The Provider stays "Managed transcription". Its one Speech-to-text model is shown as `mm-transcription-internal`.
 - The user pastes the key into Settings and the app keeps it like any provider key, one secret in the Credential Manager, and sends it directly with each request. The refresh-token exchange and the email field go away. Saving the key is the user's consent to cloud transcription.
 - Each key carries the monthly allowance (Processed audio minutes, reset on the first day of each month in UTC, no rollover), and the operator spending ceiling still applies.
-- The request form is a pre-filled `mailto:` to the operator. The site has no backend, and the form adds no new service.
+- The request form is a pre-filled `mailto:` to the operator. The site has no backend, and the form adds no new service. (ADR 0018 later moved collection to a Google Sheet, keeping `mailto:` as the fallback.)
 - An invalid or revoked key is a visible state in Settings and is not retried until the user edits it. Allowance exhaustion and service pause keep the existing fall-through in the Transcription order.
 - The Account UI is hidden in the app and on the site while its code stays dormant.
 

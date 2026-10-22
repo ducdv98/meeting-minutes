@@ -1,13 +1,15 @@
 <article class="doc request-key"><h1>Request a key</h1>
   <p>Managed transcription is experimental. Tell us how you plan to use it, and we’ll review your request by hand. Keys are issued by hand; access is limited. We cannot promise a reply or a turnaround time.</p>
-  <p>This form opens an email in your email app. It does not submit anything to this website. Review the message before sending it.</p>
-  <form id="key-request" action="mailto:admin@meeting-minutes.tech" method="post" enctype="text/plain">
+  <p>Submitting this form sends your email address and answer to us. We keep them in a private Google Sheet. If sending fails, the form opens an email draft instead.</p>
+  <form id="key-request" action="mailto:admin@meeting-minutes.tech" method="post" enctype="text/plain" data-endpoint="">
     <label for="request-email">Your email address</label>
     <input id="request-email" name="email" type="email" autocomplete="email" required>
     <label for="request-use">How will you use it?</label>
     <textarea id="request-use" name="use" rows="6" required></textarea>
-    <button class="button primary" type="submit">Open email draft</button>
+    <input class="hp" name="website" type="text" tabindex="-1" autocomplete="off" aria-hidden="true">
+    <button class="button primary" type="submit">Send request</button>
+    <p id="key-request-status" role="status"></p>
   </form>
-  <p>If the form does not open your email app, <a href="mailto:admin@meeting-minutes.tech?subject=Managed%20key%20request">email admin@meeting-minutes.tech directly</a>. Include your email address and how you will use Managed transcription.</p>
+  <p>If the form does not work, <a href="mailto:admin@meeting-minutes.tech?subject=Managed%20key%20request">email admin@meeting-minutes.tech directly</a>. Include your email address and how you will use Managed transcription.</p>
   <p>See our <a href="/privacy/">privacy policy</a> for how we handle your request email and Managed transcription data.</p>
 </article>

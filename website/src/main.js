@@ -63,12 +63,31 @@ if ('IntersectionObserver' in window && !window.matchMedia('(prefers-reduced-mot
 }
 
 const keyRequest = document.getElementById('key-request');
-keyRequest?.addEventListener('submit', event => {
+keyRequest?.addEventListener('submit', async event => {
   event.preventDefault();
   const email = keyRequest.elements.email.value.trim();
   const use = keyRequest.elements.use.value.trim();
   if (!email || !use) { keyRequest.reportValidity(); return; }
-  const subject = encodeURIComponent('Managed key request');
-  const body = encodeURIComponent(`Email: ${email}\n\nHow I will use Managed transcription:\n${use}`);
-  window.location.href = `mailto:admin@meeting-minutes.tech?subject=${subject}&body=${body}`;
+  const status = document.getElementById('key-request-status');
+  const button = keyRequest.querySelector('button[type="submit"]');
+  const openEmailDraft = () => {
+    const subject = encodeURIComponent('Managed key request');
+    const body = encodeURIComponent(`Email: ${email}\n\nHow I will use Managed transcription:\n${use}`);
+    window.location.href = `mailto:admin@meeting-minutes.tech?subject=${subject}&body=${body}`;
+  };
+  const endpoint = keyRequest.dataset.endpoint;
+  if (!endpoint) { openEmailDraft(); return; }
+  button.disabled = true;
+  status.textContent = 'Sending…';
+  try {
+    // text/plain keeps this a simple request; Apps Script sends no CORS headers, so the reply is opaque.
+    await fetch(endpoint, { method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ email, use, website: keyRequest.elements.website.value }) });
+    keyRequest.reset();
+    status.textContent = 'Thanks. Your request is in. We review requests by hand and cannot promise a reply.';
+  } catch {
+    status.textContent = 'Sending failed. Opening an email draft instead.';
+    openEmailDraft();
+  } finally {
+    button.disabled = false;
+  }
 });

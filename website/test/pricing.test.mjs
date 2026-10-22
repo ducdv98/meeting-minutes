@@ -64,7 +64,7 @@ test('pricing and home describe experimental hand-issued Managed keys', async ()
     assert.match(pricing, /resets on the first of each month \(UTC\)[\s\S]*?without rollover/i);
     assert.match(pricing, /falls back to your own keys[\s\S]*?local Whisper/i);
     assert.doesNotMatch(pricing, /Account|waitlist|\d+ free cloud minutes/i);
-    assert.match(request, /<form id="key-request" action="mailto:admin@meeting-minutes.tech" method="post" enctype="text\/plain">/);
+    assert.match(request, /<form id="key-request" action="mailto:admin@meeting-minutes.tech" method="post" enctype="text\/plain" data-endpoint="[^"]*">/);
     assert.match(request, /name="email" type="email"[^>]*required/);
     assert.match(request, /name="use"[^>]*required/);
     assert.match(request, /href="mailto:admin@meeting-minutes.tech\?subject=Managed%20key%20request"/);
@@ -74,29 +74,57 @@ test('pricing and home describe experimental hand-issued Managed keys', async ()
   }
 });
 
-test('request form opens a pre-filled email draft from entered values', async () => {
-  const script = await readFile(join(repo, 'website/src/main.js'), 'utf8');
+function loadRequestForm({ endpoint = '', fetchImpl } = {}) {
   let submit;
-  let prevented = false;
+  const status = { textContent: '' };
+  const button = { disabled: false };
   const form = {
-    elements: { email: { value: '  person@example.com ' }, use: { value: '  Team meetings & notes  ' } },
+    dataset: { endpoint },
+    elements: { email: { value: '  person@example.com ' }, use: { value: '  Team meetings & notes  ' }, website: { value: '' } },
     addEventListener(type, listener) { if (type === 'submit') submit = listener; },
+    querySelector() { return button; },
+    reset() {},
     reportValidity() { throw new Error('valid form should not need a validity report'); },
   };
   const window = { scrollY: 0, innerHeight: 800, location: { href: '' },
     addEventListener() {}, matchMedia() { return { matches: true }; } };
   const document = { documentElement: { classList: { add() {} } },
     querySelector() { return null; }, querySelectorAll() { return []; },
-    getElementById(id) { return id === 'key-request' ? form : null; } };
-  runInNewContext(script, { document, window });
-  assert.equal(typeof submit, 'function');
-  submit({ preventDefault() { prevented = true; } });
+    getElementById(id) { return id === 'key-request' ? form : id === 'key-request-status' ? status : null; } };
+  return { form, window, status, button, getSubmit: () => submit, context: { document, window, fetch: fetchImpl } };
+}
+
+test('request form opens a pre-filled email draft when no endpoint is set', async () => {
+  const script = await readFile(join(repo, 'website/src/main.js'), 'utf8');
+  const { window, context, getSubmit } = loadRequestForm();
+  runInNewContext(script, context);
+  let prevented = false;
+  await getSubmit()({ preventDefault() { prevented = true; } });
   assert.equal(prevented, true);
   const url = new URL(window.location.href);
   assert.equal(url.protocol, 'mailto:');
   assert.equal(url.pathname, 'admin@meeting-minutes.tech');
   assert.equal(url.searchParams.get('subject'), 'Managed key request');
   assert.equal(url.searchParams.get('body'), 'Email: person@example.com\n\nHow I will use Managed transcription:\nTeam meetings & notes');
+});
+
+test('request form posts to the endpoint and falls back to email when sending fails', async () => {
+  const script = await readFile(join(repo, 'website/src/main.js'), 'utf8');
+  const calls = [];
+  const ok = loadRequestForm({ endpoint: 'https://script.google.com/macros/s/x/exec', fetchImpl: async (url, init) => { calls.push({ url, init }); } });
+  runInNewContext(script, ok.context);
+  await ok.getSubmit()({ preventDefault() {} });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, 'https://script.google.com/macros/s/x/exec');
+  assert.deepEqual(JSON.parse(calls[0].init.body), { email: 'person@example.com', use: 'Team meetings & notes', website: '' });
+  assert.equal(ok.window.location.href, '');
+  assert.match(ok.status.textContent, /request is in/i);
+  assert.equal(ok.button.disabled, false);
+
+  const failing = loadRequestForm({ endpoint: 'https://script.google.com/macros/s/x/exec', fetchImpl: async () => { throw new TypeError('offline'); } });
+  runInNewContext(script, failing.context);
+  await failing.getSubmit()({ preventDefault() {} });
+  assert.match(failing.window.location.href, /^mailto:admin@meeting-minutes\.tech/);
 });
 
 test('Free plan is available when a Windows Release is published', async () => {
