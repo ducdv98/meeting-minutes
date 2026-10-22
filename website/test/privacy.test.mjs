@@ -70,11 +70,13 @@ test('public copy explains when Meeting content goes to cloud providers', async 
 
 test('privacy page explains key requests and key-based Managed transcription', async () => {
   const policy = await readFile(policyPath, 'utf8');
-  assert.match(policy, /Last updated 18 October 2026/);
+  assert.match(policy, /Last updated 22 October 2026/);
   assert.match(policy, /Request a key[\s\S]*?private Google Sheet[\s\S]*?email draft/i);
   assert.match(policy, /email address and your description of how you will use Managed transcription/i);
   assert.match(policy, /keys are issued by hand[\s\S]*?do not promise a response or turnaround time/i);
   assert.match(policy, /https:\/\/transcribe\.meeting-minutes\.tech/);
+  assert.match(policy, /experimental free service[\s\S]*?agree to the policy of our transcription gateway[\s\S]*?several providers/i);
+  assert.doesNotMatch(policy, /forwards (it|the audio) to Groq/i);
   assert.match(policy, /sends the Managed key directly with each request and audio spans as FLAC/i);
   assert.match(policy, /Saving a Managed key is your consent[\s\S]*?no audio is uploaded/i);
   assert.match(policy, /Managed cloud privacy notice beside the key field[\s\S]*?one-time cloud notice when you save your first Groq, Gemini, OpenAI or Anthropic key/i);

@@ -46,7 +46,7 @@ test('pricing and home describe experimental hand-issued Managed keys', async ()
       assert.match(page, /experimental/i);
     }
     assert.match(home, /Is it free\?[\s\S]*?id="faq-free"[\s\S]*?request a key/i);
-    assert.match(home, /id="faq-upload"[\s\S]*?Managed key[\s\S]*?Meeting Minutes service/);
+    assert.match(home, /id="faq-upload"[\s\S]*?Managed key[\s\S]*?Meeting Minutes transcription gateway/);
     assert.match(llms, /^Request a key: https:\/\/meeting-minutes\.tech\/request-a-key\/$/m);
     assert.match(llms, /hand-issued Managed key/i);
     assert.doesNotMatch(llms, /optional Account|waitlist/i);

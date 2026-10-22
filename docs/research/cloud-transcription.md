@@ -22,7 +22,7 @@ Use **Cloudflare Workers AI `@cf/openai/whisper-large-v3-turbo`**, called from a
 - **Privacy:** Cloudflare neither trains on nor retains the audio.
 - **Timestamps:** it returns real segment timestamps.
 
-Put **Groq** behind the same Worker as a fallback (Groq key held as a Worker secret, Zero Data Retention on). Groq also offers `whisper-large-v3` if turbo's Vietnamese is weak.
+Put a second provider behind the same Worker as a fallback (its key held as a Worker secret, zero data retention on) if turbo's Vietnamese is weak.
 
 **Do not ship a provider key inside the app.** Anyone can pull it out of the binary, and Groq's terms (§3.2, §6.3) make the account owner responsible for every use of the key.
 

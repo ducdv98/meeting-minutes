@@ -95,7 +95,7 @@ Turning a Meeting's audio into a Transcript, then a Summary and Action items. Pr
 
 **Managed transcription**:
 Cloud transcription run by the Meeting Minutes service, experimental for now and enabled by a user who holds a Managed key. Saving the key is the user's consent to sending audio to the cloud, as with a provider key. Its one Speech-to-text model is **mm-transcription-internal**.
-_Avoid_: Gateway, relay, hosted Groq
+_Avoid_: Gateway, relay, hosted provider
 
 **Managed key**:
 The key the operator issues, after the user asks for it through the request form on the website, that gives access to Managed transcription. The user pastes it into Settings and it is kept like a provider key. It carries its own monthly Managed transcription allowance.
