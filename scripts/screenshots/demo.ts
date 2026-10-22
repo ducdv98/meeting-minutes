@@ -61,7 +61,7 @@ mockIPC((cmd, args) => {
     case "list_participant_names": return ["Alex", "Priya", "Sam"];
     case "list_ai_models": return ["qwen3:8b"];
     case "search_library": return demo.search(a.query as string);
-    case "app_info": return { version: "1.2.0" };
+    case "app_info": return { version: "1.2.1" };
     case "first_run_info": return { discrete_gpu: true, library_location: "C:\\Users\\Alex\\Documents\\Meeting Minutes" };
     case "model_download_status": return [];
     case "acknowledge_recording_notice": return idle;

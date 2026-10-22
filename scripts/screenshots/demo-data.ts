@@ -206,7 +206,7 @@ export function search(query: string): SearchHit[] {
   return hits;
 }
 
-export const diagnostics = `Meeting Minutes 1.2.0
+export const diagnostics = `Meeting Minutes 1.2.1
 Windows: Windows 11 Pro 24H2
 CPU: 8-core x64
 RAM: 16384 MB
