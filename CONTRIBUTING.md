@@ -16,15 +16,29 @@ By contributing, you agree that your contribution is released under the same lic
 
 - `CONTEXT.md` is the domain vocabulary (Meeting, Recording, Transcript, Snapshot, Library and so on). Use these terms in code, UI text and docs.
 - `docs/adr/` records the decisions already made, such as local-first AI with explicit cloud use (ADR 0002). Read the relevant ADRs before changing behaviour they cover. If your change contradicts one, say so in the pull request.
-- Layout: Rust core in `crates/core`, Whisper bindings in `crates/whisper`, the Tauri app in `src-tauri`, the React UI in `src`, the website in `website/`.
+- Layout: see **Project structure** in the [README](README.md). The Rust core is in `crates/core`, Whisper bindings in `crates/whisper`, the Tauri app in `src-tauri`, the React UI in `src`, and the website in `website/` (see `website/README.md`).
 
 ## Set up
 
-See **Build from source** in the [README](README.md) for prerequisites. In short:
+You can work on the Rust core and the React UI on Linux, macOS or Windows; running the full app and capture needs Windows 11.
 
-- You can work on the Rust core and the React UI on Linux, macOS or Windows; running the full app and capture needs Windows 11.
-- Install dependencies with `pnpm install --frozen-lockfile`.
-- Run the app on Windows with `pnpm tauri dev`.
+### Prerequisites
+
+- Windows 11: Rust stable with the MSVC toolchain and Microsoft C++ Build Tools, Node.js LTS, pnpm 12, Microsoft Edge WebView2 Runtime, and the Vulkan SDK (1.4.309.0, with `VULKAN_SDK` set) for GPU transcription. WebView2 is usually already installed on Windows 11.
+- Linux: Rust, Node.js and pnpm for the core and UI tests. Running or building the Tauri app on Linux also needs the GTK/WebKit development libraries; the test commands below don't.
+
+### Develop and build on Windows
+
+```sh
+pnpm install --frozen-lockfile
+pnpm tauri dev
+powershell -File scripts/copy-vulkan-loader.ps1
+pnpm tauri build --bundles nsis --config src-tauri/tauri.vulkan.conf.json
+```
+
+The installer is written to `target/release/bundle/nsis/`. The Vulkan build of whisper.cpp fails on paths longer than 260 characters, so clone to a short path or set `CARGO_TARGET_DIR` to one (CI uses `D:\t`). The extra config bundles the Vulkan loader (`vulkan-1.dll`) next to the exe, so the app also starts on PCs without a GPU driver and transcribes on the CPU.
+
+Run `pnpm screenshots` to regenerate the demo screenshots used in the README and website.
 
 ## Make a change
 
