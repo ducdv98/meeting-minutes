@@ -9,3 +9,23 @@ spikes/results/
 src-tauri/gen/
 src-tauri/vulkan-1.dll
 benchmarks/data/
+
+# Internal planning and agent state
+.scratch/
+.claude/
+.codex/
+
+# Secrets and signing material
+.env
+.env.*
+!.env.example
+.dev.vars
+*.pem
+*.key
+*.pfx
+*.p12
+
+# Wrangler / local build output
+.wrangler/
+*.local.*
+website/website-readiness.txt
