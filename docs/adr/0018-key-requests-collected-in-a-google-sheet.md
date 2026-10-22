@@ -7,6 +7,7 @@ The request form on the website sends each request to a private Google Sheet, so
 - Google becomes a processor of the request email and answer. The privacy policy says so and links Google's privacy policy.
 - The `mailto:` draft stays as the fallback when no endpoint is set or the send fails, so a request is never lost to an outage.
 - The script drops submissions that fill a hidden honeypot field, caps field lengths, and stores text so that typed formulas do not run in Sheets.
+- The web app URL is public, so the script also limits abuse: a minimum fill time sent by the page, one row per email per six hours, at most 30 rows and 10 notification emails an hour, and a reserve of the daily mail quota. A rejected request still replies `ok:true`, so a script cannot tell which check it hit. The row is written before the email, so a mail failure never loses a request.
 - Keys are still issued by hand. The Sheet's status and key-issued columns track that; nothing is issued automatically.
 
 ## Considered Options

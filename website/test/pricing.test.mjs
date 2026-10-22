@@ -116,7 +116,10 @@ test('request form posts to the endpoint and falls back to email when sending fa
   await ok.getSubmit()({ preventDefault() {} });
   assert.equal(calls.length, 1);
   assert.equal(calls[0].url, 'https://script.google.com/macros/s/x/exec');
-  assert.deepEqual(JSON.parse(calls[0].init.body), { email: 'person@example.com', use: 'Team meetings & notes', website: '' });
+  const sent = JSON.parse(calls[0].init.body);
+  assert.equal(typeof sent.elapsed, 'number');
+  delete sent.elapsed;
+  assert.deepEqual(sent, { email: 'person@example.com', use: 'Team meetings & notes', website: '' });
   assert.equal(ok.window.location.href, '');
   assert.match(ok.status.textContent, /request is in/i);
   assert.equal(ok.button.disabled, false);

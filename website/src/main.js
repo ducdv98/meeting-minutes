@@ -63,6 +63,7 @@ if ('IntersectionObserver' in window && !window.matchMedia('(prefers-reduced-mot
 }
 
 const keyRequest = document.getElementById('key-request');
+const keyRequestShownAt = Date.now();
 keyRequest?.addEventListener('submit', async event => {
   event.preventDefault();
   const email = keyRequest.elements.email.value.trim();
@@ -81,7 +82,7 @@ keyRequest?.addEventListener('submit', async event => {
   status.textContent = 'Sending…';
   try {
     // text/plain keeps this a simple request; Apps Script sends no CORS headers, so the reply is opaque.
-    await fetch(endpoint, { method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ email, use, website: keyRequest.elements.website.value }) });
+    await fetch(endpoint, { method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ email, use, website: keyRequest.elements.website.value, elapsed: Date.now() - keyRequestShownAt }) });
     keyRequest.reset();
     status.textContent = 'Thanks. Your request is in. We review requests by hand and cannot promise a reply.';
   } catch {
