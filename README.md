@@ -8,7 +8,7 @@ Your Library stays on your PC. With your own keys, audio goes to Groq for transc
 
 ## Download
 
-The first release is not published yet. When it is out, download it from [meeting-minutes.tech](https://meeting-minutes.tech) or from the [GitHub Releases page](https://github.com/ducdv98/meeting-minutes/releases/latest). The app checks for updates when it starts and asks before installing one.
+Download it from [meeting-minutes.tech](https://meeting-minutes.tech) or from the [GitHub Releases page](https://github.com/ducdv98/meeting-minutes/releases/latest). The app checks for updates when it starts and asks before installing one.
 
 - **Supported:** Windows 11 x64. Windows 10 may work but is untested.
 - **SmartScreen:** the installer is not code-signed, so Windows may say it protected your PC. Download it only from the links above, then choose **More info → Run anyway**. To check the download first, see [Verify the installer](https://meeting-minutes.tech/support/#smartscreen).
@@ -22,15 +22,7 @@ Use **Settings → Apps → Installed apps** in Windows. Your Library in `Docume
 - Privacy policy: [meeting-minutes.tech/privacy](https://meeting-minutes.tech/privacy). There is no telemetry.
 - Support: email [admin@meeting-minutes.tech](mailto:admin@meeting-minutes.tech) or open a [GitHub issue](https://github.com/ducdv98/meeting-minutes/issues). To include diagnostics, open **Help** in the app, choose **Copy diagnostics** and paste the text into your message. Diagnostics never include your Transcripts, Summaries or keys.
 
-Made by Duc Dao.
-
-## License
-
-This code is not open source. No license is granted: all rights reserved. The repository is public so that GitHub Releases can serve downloads and updates.
-
----
-
-## Developers
+## Build from source
 
 Domain vocabulary is in `CONTEXT.md` and decisions are in `docs/adr/`. The Rust core is in `crates/core`, Whisper bindings in `crates/whisper`, the Tauri app in `src-tauri`, the React UI in `src`, and the website in `website/` (see `website/README.md`).
 
@@ -64,31 +56,14 @@ pnpm tauri build --bundles nsis --config src-tauri/tauri.vulkan.conf.json
 
 The installer is written to `target/release/bundle/nsis/`. The Vulkan build of whisper.cpp fails on paths longer than 260 characters, so clone to a short path or set `CARGO_TARGET_DIR` to one (CI uses `D:\t`). The extra config bundles the Vulkan loader (`vulkan-1.dll`) next to the exe, so the app also starts on PCs without a GPU driver and transcribes on the CPU.
 
-### Release
+Maintainer guides: [releasing](docs/releasing.md) and [branding](docs/branding.md).
 
-Releases are built by `.github/workflows/release.yml` and published by hand (ADR-0007).
+## Contributing
 
-One-time setup: generate the updater key pair with `pnpm tauri signer generate`, back up the private key and its password outside GitHub (losing it means installed copies can never update again), add them as the repository secrets `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, and put the public key in `plugins.updater.pubkey` in `src-tauri/tauri.conf.json`.
+Contributions are welcome: bug reports, fixes, docs and features. Read [CONTRIBUTING.md](CONTRIBUTING.md) first, and open an [issue](https://github.com/ducdv98/meeting-minutes/issues) before starting anything large. The [Build from source](#build-from-source) section above covers building and testing.
 
-For each release:
+## License
 
-1. Set the same version in `src-tauri/tauri.conf.json`, `package.json` and `src-tauri/Cargo.toml`, and commit.
-2. Tag the commit and push the tag:
-   ```sh
-   git tag v0.1.0
-   git push origin v0.1.0
-   ```
-   A tag with a prerelease suffix, such as `v0.1.1-test`, builds a test Release the same way (the versions must say `0.1.1-test`).
-3. The workflow checks that the tag matches all three versions and refuses a tag whose Release is already published. It runs the tests and builds the NSIS installer, then creates a **draft** GitHub Release with the installer, its `.sig` signature and `latest.json`.
-4. Review the draft and its assets, then choose **Publish release**. Nothing is published automatically. Publishing also rebuilds the website, so its download link, version and Changelog follow the new Release.
+The app code is open source under the [MIT license](LICENSE). The brand artwork in `assets/brand/` and files derived from it are not covered by that license; all rights in them are reserved. The optional Managed transcription service is private and not part of this repository.
 
-### Branding
-
-The brand pack in `assets/brand/` holds the original files and is never edited. The build uses files derived from it: `src-tauri/app-icon.png` and `src-tauri/icons/` for the app, and `src/assets/` for the UI. To rebuild them after changing the pack:
-
-```sh
-python scripts/build-brand-assets.py      # needs Pillow
-pnpm tauri icon src-tauri/app-icon.png    # then keep only the files listed in tauri.conf.json
-```
-
-See `docs/adr/0004-branding-from-the-image-pack.md`.
+Made by Duc Dao and contributors with <3.
