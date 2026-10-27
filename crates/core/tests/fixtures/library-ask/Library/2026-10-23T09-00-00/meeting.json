@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "title": "Weekly product review — processing",
+  "started_at": "2026-10-23T09:00:00Z",
+  "language": "en",
+  "duration_ms": 84000,
+  "audio": null,
+  "recordings": [],
+  "markers": [],
+  "participants": {
+    "me": "Maya",
+    "remote": "Leo"
+  },
+  "segment_participants": {
+    "revision": 1,
+    "segments": {
+      "s00003": "Priya",
+      "s00006": "Priya"
+    }
+  }
+}

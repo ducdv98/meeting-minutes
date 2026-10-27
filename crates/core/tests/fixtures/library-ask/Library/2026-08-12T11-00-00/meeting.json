@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "title": "Platform engineer interview debrief",
+  "started_at": "2026-08-12T11:00:00Z",
+  "language": "en",
+  "duration_ms": 384000,
+  "audio": null,
+  "recordings": [],
+  "markers": [],
+  "participants": {
+    "me": "Maya",
+    "remote": "Leo"
+  },
+  "segment_participants": {
+    "revision": 1,
+    "segments": {
+      "s00003": "Priya",
+      "s00006": "Priya",
+      "s00009": "Priya",
+      "s00012": "Priya",
+      "s00015": "Priya",
+      "s00018": "Priya",
+      "s00020": "Priya",
+      "s00023": "Priya",
+      "s00026": "Priya",
+      "s00029": "Priya",
+      "s00032": "Priya"
+    }
+  }
+}

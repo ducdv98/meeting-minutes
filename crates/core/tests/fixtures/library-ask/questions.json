@@ -1,0 +1,542 @@
+{
+  "now": "2026-10-27T12:00:00Z",
+  "questions": [
+    {
+      "id": "q01",
+      "question": "What was the annual Northwind offer, and what was bundled in?",
+      "language": "en",
+      "tags": [
+        "answerable",
+        "paraphrased",
+        "out-of-range-for:7",
+        "out-of-range-for:30",
+        "out-of-range-for:90"
+      ],
+      "expected_answer": "$12,000 per year, including onboarding and the first data import.",
+      "supporting": [
+        {
+          "meeting_id": "2026-07-09T10-00-00",
+          "segment_id": "s00007"
+        },
+        {
+          "meeting_id": "2026-07-09T10-00-00",
+          "segment_id": "s00010"
+        }
+      ],
+      "keywords": [
+        "Northwind",
+        "twelve thousand",
+        "onboarding",
+        "first data import",
+        "annual quote"
+      ]
+    },
+    {
+      "id": "q02",
+      "question": "How many seats did the Northwind quote cover, and what happens beyond that?",
+      "language": "en",
+      "tags": [
+        "answerable",
+        "out-of-range-for:7",
+        "out-of-range-for:30",
+        "out-of-range-for:90"
+      ],
+      "expected_answer": "Fifty seats are included; additional seats cost $8 per month each.",
+      "supporting": [
+        {
+          "meeting_id": "2026-07-09T10-00-00",
+          "segment_id": "s00018"
+        }
+      ],
+      "keywords": [
+        "Northwind",
+        "fifty seats",
+        "additional seats",
+        "eight dollars"
+      ]
+    },
+    {
+      "id": "q03",
+      "question": "Khách hàng Northwind được giữ môi trường dùng thử đến khi nào?",
+      "language": "vi",
+      "tags": [
+        "answerable",
+        "cross-language",
+        "out-of-range-for:7",
+        "out-of-range-for:30",
+        "out-of-range-for:90"
+      ],
+      "expected_answer": "Đến ngày 15 tháng 8; sau đó chỉ được xem.",
+      "supporting": [
+        {
+          "meeting_id": "2026-07-09T10-00-00",
+          "segment_id": "s00020"
+        },
+        {
+          "meeting_id": "2026-07-09T10-00-00",
+          "segment_id": "s00021"
+        }
+      ],
+      "keywords": [
+        "Northwind",
+        "pilot workspace",
+        "August fifteen",
+        "read-only"
+      ]
+    },
+    {
+      "id": "q04",
+      "question": "When should Atlas leave the old platform, assuming checks pass?",
+      "language": "en",
+      "tags": [
+        "answerable",
+        "paraphrased",
+        "out-of-range-for:7",
+        "out-of-range-for:30",
+        "out-of-range-for:90"
+      ],
+      "expected_answer": "The planned cutover is October 31, 2026.",
+      "supporting": [
+        {
+          "meeting_id": "2026-07-25T14-00-00",
+          "segment_id": "s00011"
+        },
+        {
+          "meeting_id": "2026-07-25T14-00-00",
+          "segment_id": "s00029"
+        }
+      ],
+      "keywords": [
+        "Atlas",
+        "migration",
+        "cutover",
+        "October thirty-first",
+        "switch"
+      ]
+    },
+    {
+      "id": "q05",
+      "question": "What would force the Atlas switch into November?",
+      "language": "en",
+      "tags": [
+        "answerable",
+        "paraphrased",
+        "out-of-range-for:7"
+      ],
+      "expected_answer": "Failed checks would defer the cutover to November 7.",
+      "supporting": [
+        {
+          "meeting_id": "2026-07-25T14-00-00",
+          "segment_id": "s00017"
+        },
+        {
+          "meeting_id": "2026-10-17T15-00-00",
+          "segment_id": "s00015"
+        }
+      ],
+      "keywords": [
+        "Atlas",
+        "checks fail",
+        "November seventh",
+        "dời",
+        "ngày bảy tháng mười một"
+      ]
+    },
+    {
+      "id": "q06",
+      "question": "What was Linh’s pay expectation, and was it within range?",
+      "language": "en",
+      "tags": [
+        "answerable",
+        "out-of-range-for:7",
+        "out-of-range-for:30"
+      ],
+      "expected_answer": "$155,000 base, within the approved $140,000–$160,000 range.",
+      "supporting": [
+        {
+          "meeting_id": "2026-08-12T11-00-00",
+          "segment_id": "s00020"
+        },
+        {
+          "meeting_id": "2026-08-12T11-00-00",
+          "segment_id": "s00021"
+        },
+        {
+          "meeting_id": "2026-08-12T11-00-00",
+          "segment_id": "s00022"
+        }
+      ],
+      "keywords": [
+        "Linh",
+        "compensation",
+        "one hundred fifty-five thousand",
+        "approved range"
+      ]
+    },
+    {
+      "id": "q07",
+      "question": "Did the team decide to hire Linh immediately?",
+      "language": "en",
+      "tags": [
+        "answerable",
+        "out-of-range-for:7",
+        "out-of-range-for:30"
+      ],
+      "expected_answer": "No. They moved to references before deciding on an offer.",
+      "supporting": [
+        {
+          "meeting_id": "2026-08-12T11-00-00",
+          "segment_id": "s00023"
+        },
+        {
+          "meeting_id": "2026-08-12T11-00-00",
+          "segment_id": "s00032"
+        }
+      ],
+      "keywords": [
+        "Linh",
+        "references",
+        "offer",
+        "hiring decision"
+      ]
+    },
+    {
+      "id": "q08",
+      "question": "What did Anna take ownership of after the 1:1?",
+      "language": "en",
+      "tags": [
+        "answerable",
+        "out-of-range-for:7",
+        "out-of-range-for:30"
+      ],
+      "expected_answer": "Anna would lead the October readiness review for the Atlas migration.",
+      "supporting": [
+        {
+          "meeting_id": "2026-09-04T09-30-00",
+          "segment_id": "s00018"
+        },
+        {
+          "meeting_id": "2026-09-04T09-30-00",
+          "segment_id": "s00019"
+        }
+      ],
+      "keywords": [
+        "Anna",
+        "October readiness review",
+        "migration"
+      ]
+    },
+    {
+      "id": "q09",
+      "question": "How much breathing room did the investor call report before and after a platform hire?",
+      "language": "en",
+      "tags": [
+        "answerable",
+        "paraphrased",
+        "out-of-range-for:7",
+        "out-of-range-for:30"
+      ],
+      "expected_answer": "Runway was 17 months at current burn, or roughly 14 months with the hire.",
+      "supporting": [
+        {
+          "meeting_id": "2026-09-17T16-00-00",
+          "segment_id": "s00011"
+        },
+        {
+          "meeting_id": "2026-09-17T16-00-00",
+          "segment_id": "s00013"
+        }
+      ],
+      "keywords": [
+        "runway",
+        "seventeen months",
+        "fourteen months",
+        "platform engineer"
+      ]
+    },
+    {
+      "id": "q10",
+      "question": "What delivery risk did Maya flag for Atlas to investors?",
+      "language": "en",
+      "tags": [
+        "answerable",
+        "out-of-range-for:7",
+        "out-of-range-for:30"
+      ],
+      "expected_answer": "Validation of document links during the Atlas migration.",
+      "supporting": [
+        {
+          "meeting_id": "2026-09-17T16-00-00",
+          "segment_id": "s00019"
+        },
+        {
+          "meeting_id": "2026-09-17T16-00-00",
+          "segment_id": "s00020"
+        }
+      ],
+      "keywords": [
+        "Atlas",
+        "document-link validation",
+        "migration risk"
+      ]
+    },
+    {
+      "id": "q11",
+      "question": "What is the Contoso pilot trying to prove, and by when?",
+      "language": "en",
+      "tags": [
+        "answerable",
+        "out-of-range-for:7"
+      ],
+      "expected_answer": "A document upload with a signed status callback in an end-to-end demo by November 12.",
+      "supporting": [
+        {
+          "meeting_id": "2026-09-30T10-00-00",
+          "segment_id": "s00005"
+        },
+        {
+          "meeting_id": "2026-09-30T10-00-00",
+          "segment_id": "s00006"
+        },
+        {
+          "meeting_id": "2026-09-30T10-00-00",
+          "segment_id": "s00020"
+        }
+      ],
+      "keywords": [
+        "Contoso",
+        "document upload",
+        "status callback",
+        "November twelfth",
+        "end-to-end demo"
+      ]
+    },
+    {
+      "id": "q12",
+      "question": "If a partner callback fails, how long will it keep trying?",
+      "language": "en",
+      "tags": [
+        "answerable",
+        "paraphrased",
+        "out-of-range-for:7"
+      ],
+      "expected_answer": "Contoso callbacks retry for six hours with exponential backoff.",
+      "supporting": [
+        {
+          "meeting_id": "2026-09-30T10-00-00",
+          "segment_id": "s00011"
+        },
+        {
+          "meeting_id": "2026-09-30T10-00-00",
+          "segment_id": "s00012"
+        }
+      ],
+      "keywords": [
+        "Contoso",
+        "retry",
+        "six hours",
+        "exponential backoff",
+        "webhook"
+      ]
+    },
+    {
+      "id": "q13",
+      "question": "How much money was kept aside for Atlas trouble in the Q4 budget?",
+      "language": "en",
+      "tags": [
+        "answerable",
+        "cross-language",
+        "paraphrased",
+        "out-of-range-for:7"
+      ],
+      "expected_answer": "80 million VND was reserved for extra Atlas migration support if document-link checks fail.",
+      "supporting": [
+        {
+          "meeting_id": "2026-10-08T09-00-00",
+          "segment_id": "s00005"
+        },
+        {
+          "meeting_id": "2026-10-08T09-00-00",
+          "segment_id": "s00017"
+        },
+        {
+          "meeting_id": "2026-10-08T09-00-00",
+          "segment_id": "s00019"
+        }
+      ],
+      "keywords": [
+        "ngân sách",
+        "dự phòng",
+        "tám mươi triệu",
+        "Atlas",
+        "liên kết tài liệu"
+      ]
+    },
+    {
+      "id": "q14",
+      "question": "Ngân sách tuyển kỹ sư nền tảng là bao nhiêu?",
+      "language": "vi",
+      "tags": [
+        "answerable",
+        "out-of-range-for:7"
+      ],
+      "expected_answer": "Ba trăm triệu đồng, gồm lương và phí tuyển dụng đến hết năm.",
+      "supporting": [
+        {
+          "meeting_id": "2026-10-08T09-00-00",
+          "segment_id": "s00013"
+        },
+        {
+          "meeting_id": "2026-10-08T09-00-00",
+          "segment_id": "s00014"
+        }
+      ],
+      "keywords": [
+        "tuyển dụng",
+        "ba trăm triệu",
+        "kỹ sư nền tảng",
+        "lương"
+      ]
+    },
+    {
+      "id": "q15",
+      "question": "Tỷ lệ lỗi liên kết Atlas trong bản chạy thử tháng mười là bao nhiêu?",
+      "language": "vi",
+      "tags": [
+        "answerable",
+        "out-of-range-for:7"
+      ],
+      "expected_answer": "Ba phần nghìn, cao hơn ngưỡng một phần nghìn.",
+      "supporting": [
+        {
+          "meeting_id": "2026-10-17T15-00-00",
+          "segment_id": "s00005"
+        }
+      ],
+      "keywords": [
+        "Atlas",
+        "ba phần nghìn",
+        "liên kết",
+        "ngưỡng một phần nghìn"
+      ]
+    },
+    {
+      "id": "q16",
+      "question": "What must happen before the Atlas team can keep the October 31 date?",
+      "language": "en",
+      "tags": [
+        "answerable",
+        "cross-language",
+        "out-of-range-for:7"
+      ],
+      "expected_answer": "Account totals must match, broken links must fall below 0.1%, and a restore rehearsal must pass.",
+      "supporting": [
+        {
+          "meeting_id": "2026-10-17T15-00-00",
+          "segment_id": "s00011"
+        },
+        {
+          "meeting_id": "2026-10-17T15-00-00",
+          "segment_id": "s00012"
+        },
+        {
+          "meeting_id": "2026-10-17T15-00-00",
+          "segment_id": "s00013"
+        }
+      ],
+      "keywords": [
+        "Atlas",
+        "tổng tài khoản",
+        "lỗi liên kết",
+        "dưới một phần nghìn",
+        "diễn tập khôi phục"
+      ]
+    },
+    {
+      "id": "q17",
+      "question": "Where should people register interest in Pro without handing over an email?",
+      "language": "en",
+      "tags": [
+        "answerable",
+        "paraphrased"
+      ],
+      "expected_answer": "Through a GitHub Discussion linked from the Pro card.",
+      "supporting": [
+        {
+          "meeting_id": "2026-10-24T10-02-11",
+          "segment_id": "s00009"
+        },
+        {
+          "meeting_id": "2026-10-24T10-02-11",
+          "segment_id": "s00010"
+        }
+      ],
+      "keywords": [
+        "Pro",
+        "GitHub Discussion",
+        "upvote",
+        "email addresses"
+      ]
+    },
+    {
+      "id": "q18",
+      "question": "Trang hỗ trợ cần giải thích gì về bộ cài chưa ký?",
+      "language": "vi",
+      "tags": [
+        "answerable",
+        "cross-language"
+      ],
+      "expected_answer": "Cần giải thích cảnh báo SmartScreen; mỗi bản phát hành cũng có mã kiểm tra SHA-256.",
+      "supporting": [
+        {
+          "meeting_id": "2026-10-24T10-02-11",
+          "segment_id": "s00017"
+        },
+        {
+          "meeting_id": "2026-10-24T10-02-11",
+          "segment_id": "s00018"
+        },
+        {
+          "meeting_id": "2026-10-24T10-02-11",
+          "segment_id": "s00020"
+        }
+      ],
+      "keywords": [
+        "unsigned installer",
+        "SmartScreen",
+        "SHA-256 checksum",
+        "support page"
+      ]
+    },
+    {
+      "id": "q19",
+      "question": "What is the agreed price for the Contoso acquisition?",
+      "language": "en",
+      "tags": [
+        "out-of-library"
+      ],
+      "expected_answer": "Insufficient evidence.",
+      "supporting": [],
+      "keywords": [
+        "Contoso",
+        "acquisition",
+        "purchase price"
+      ]
+    },
+    {
+      "id": "q20",
+      "question": "Ai đã phê duyệt mở văn phòng tại Đà Nẵng?",
+      "language": "vi",
+      "tags": [
+        "out-of-library"
+      ],
+      "expected_answer": "Không đủ bằng chứng.",
+      "supporting": [],
+      "keywords": [
+        "Đà Nẵng",
+        "văn phòng",
+        "phê duyệt"
+      ]
+    }
+  ]
+}

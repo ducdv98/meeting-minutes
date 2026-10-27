@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "title": "Northwind pricing workshop",
+  "started_at": "2026-07-09T10:00:00Z",
+  "language": "en",
+  "duration_ms": 384000,
+  "audio": null,
+  "recordings": [],
+  "markers": [],
+  "participants": {
+    "me": "Maya",
+    "remote": "Elena"
+  },
+  "segment_participants": {
+    "revision": 1,
+    "segments": {
+      "s00003": "Noah",
+      "s00006": "Noah",
+      "s00009": "Noah",
+      "s00012": "Noah",
+      "s00015": "Noah",
+      "s00018": "Noah",
+      "s00021": "Noah",
+      "s00024": "Noah",
+      "s00027": "Noah",
+      "s00030": "Noah"
+    }
+  }
+}

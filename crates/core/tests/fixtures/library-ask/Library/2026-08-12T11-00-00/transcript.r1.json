@@ -1,0 +1,237 @@
+{
+  "schema_version": 1,
+  "revision": 1,
+  "created_at": "2026-08-12T11:00:00Z",
+  "model": [
+    "fixture"
+  ],
+  "language": "en",
+  "language_detected": false,
+  "duration_ms": 384000,
+  "segments": [
+    {
+      "id": "s00001",
+      "start_ms": 0,
+      "end_ms": 8000,
+      "text": "Let us compare notes on the platform engineer candidate, Linh.",
+      "speaker": "me"
+    },
+    {
+      "id": "s00002",
+      "start_ms": 12000,
+      "end_ms": 20000,
+      "text": "She explained the queue retry design clearly.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00003",
+      "start_ms": 24000,
+      "end_ms": 32000,
+      "text": "I liked how she asked about failure ownership before proposing a fix.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00004",
+      "start_ms": 36000,
+      "end_ms": 44000,
+      "text": "How did the coding exercise go?",
+      "speaker": "me"
+    },
+    {
+      "id": "s00005",
+      "start_ms": 48000,
+      "end_ms": 56000,
+      "text": "She found the race in the worker lease and added an expiry check.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00006",
+      "start_ms": 60000,
+      "end_ms": 68000,
+      "text": "She did not cover the backfill path until prompted.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00007",
+      "start_ms": 72000,
+      "end_ms": 80000,
+      "text": "Was that a concern for this level?",
+      "speaker": "me"
+    },
+    {
+      "id": "s00008",
+      "start_ms": 84000,
+      "end_ms": 92000,
+      "text": "A small one, but her debugging method was strong.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00009",
+      "start_ms": 96000,
+      "end_ms": 104000,
+      "text": "She was precise about what she had verified.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00010",
+      "start_ms": 108000,
+      "end_ms": 116000,
+      "text": "What did she say about on-call work?",
+      "speaker": "me"
+    },
+    {
+      "id": "s00011",
+      "start_ms": 120000,
+      "end_ms": 128000,
+      "text": "She has done a weekly rotation and wants clear escalation rules.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00012",
+      "start_ms": 132000,
+      "end_ms": 140000,
+      "text": "She asked for a written incident review process.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00013",
+      "start_ms": 144000,
+      "end_ms": 152000,
+      "text": "That aligns with our team habits.",
+      "speaker": "me"
+    },
+    {
+      "id": "s00014",
+      "start_ms": 156000,
+      "end_ms": 164000,
+      "text": "We also discussed the Atlas migration schedule.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00015",
+      "start_ms": 168000,
+      "end_ms": 176000,
+      "text": "She noticed the rollback window was only two days.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00016",
+      "start_ms": 180000,
+      "end_ms": 188000,
+      "text": "Did she offer a useful alternative?",
+      "speaker": "me"
+    },
+    {
+      "id": "s00017",
+      "start_ms": 192000,
+      "end_ms": 200000,
+      "text": "She suggested a dry run of the restore before the October checkpoint.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00018",
+      "start_ms": 204000,
+      "end_ms": 212000,
+      "text": "That is worth adding regardless of the hiring decision.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00019",
+      "start_ms": 216000,
+      "end_ms": 224000,
+      "text": "What is the compensation range we approved?",
+      "speaker": "me"
+    },
+    {
+      "id": "s00020",
+      "start_ms": 228000,
+      "end_ms": 236000,
+      "text": "One hundred forty to one hundred sixty thousand base.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00021",
+      "start_ms": 240000,
+      "end_ms": 248000,
+      "text": "Her expectation was one hundred fifty-five thousand.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00022",
+      "start_ms": 252000,
+      "end_ms": 260000,
+      "text": "So she is inside the approved range.",
+      "speaker": "me"
+    },
+    {
+      "id": "s00023",
+      "start_ms": 264000,
+      "end_ms": 272000,
+      "text": "I recommend moving to references, not an offer yet.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00024",
+      "start_ms": 276000,
+      "end_ms": 284000,
+      "text": "I agree; we should ask one reference about cross-team delivery.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00025",
+      "start_ms": 288000,
+      "end_ms": 296000,
+      "text": "Who will coordinate those calls?",
+      "speaker": "me"
+    },
+    {
+      "id": "s00026",
+      "start_ms": 300000,
+      "end_ms": 308000,
+      "text": "I will contact two references on Thursday.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00027",
+      "start_ms": 312000,
+      "end_ms": 320000,
+      "text": "I can prepare the systems-design follow-up questions.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00028",
+      "start_ms": 324000,
+      "end_ms": 332000,
+      "text": "Keep the follow-up to thirty minutes.",
+      "speaker": "me"
+    },
+    {
+      "id": "s00029",
+      "start_ms": 336000,
+      "end_ms": 344000,
+      "text": "We need the decision by August twenty-first.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00030",
+      "start_ms": 348000,
+      "end_ms": 356000,
+      "text": "I will post my written feedback this afternoon.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00031",
+      "start_ms": 360000,
+      "end_ms": 368000,
+      "text": "My summary is strong technical signal with one backfill gap.",
+      "speaker": "me"
+    },
+    {
+      "id": "s00032",
+      "start_ms": 372000,
+      "end_ms": 380000,
+      "text": "And we wait for references before deciding.",
+      "speaker": "remote"
+    }
+  ]
+}

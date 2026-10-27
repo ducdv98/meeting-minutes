@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "title": "Investor update call",
+  "started_at": "2026-09-17T16:00:00Z",
+  "language": "en",
+  "duration_ms": 396000,
+  "audio": null,
+  "recordings": [],
+  "markers": [],
+  "participants": {
+    "me": "Maya",
+    "remote": "Dana"
+  },
+  "segment_participants": {
+    "revision": 1,
+    "segments": {
+      "s00004": "Omar",
+      "s00008": "Omar",
+      "s00012": "Omar",
+      "s00015": "Omar",
+      "s00019": "Omar",
+      "s00023": "Omar",
+      "s00027": "Omar",
+      "s00031": "Omar"
+    }
+  }
+}

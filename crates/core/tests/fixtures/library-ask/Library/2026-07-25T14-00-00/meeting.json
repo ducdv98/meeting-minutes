@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "title": "Atlas migration planning",
+  "started_at": "2026-07-25T14:00:00Z",
+  "language": "en",
+  "duration_ms": 384000,
+  "audio": null,
+  "recordings": [],
+  "markers": [],
+  "participants": {
+    "me": "Maya",
+    "remote": "Anna"
+  },
+  "segment_participants": {
+    "revision": 1,
+    "segments": {
+      "s00003": "Ben",
+      "s00006": "Ben",
+      "s00008": "Ben",
+      "s00012": "Ben",
+      "s00015": "Ben",
+      "s00018": "Ben",
+      "s00021": "Ben",
+      "s00024": "Ben",
+      "s00027": "Ben",
+      "s00030": "Ben"
+    }
+  }
+}

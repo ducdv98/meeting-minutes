@@ -1,0 +1,237 @@
+{
+  "schema_version": 1,
+  "revision": 1,
+  "created_at": "2026-10-08T09:00:00Z",
+  "model": [
+    "fixture"
+  ],
+  "language": "vi",
+  "language_detected": false,
+  "duration_ms": 384000,
+  "segments": [
+    {
+      "id": "s00001",
+      "start_ms": 0,
+      "end_ms": 8000,
+      "text": "Hôm nay mình chốt ngân sách quý bốn cho nhóm sản phẩm.",
+      "speaker": "me"
+    },
+    {
+      "id": "s00002",
+      "start_ms": 12000,
+      "end_ms": 20000,
+      "text": "Dự toán ban đầu là một tỷ hai trăm triệu đồng.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00003",
+      "start_ms": 24000,
+      "end_ms": 32000,
+      "text": "Chi phí hạ tầng tháng chín thấp hơn kế hoạch.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00004",
+      "start_ms": 36000,
+      "end_ms": 44000,
+      "text": "Phần tiết kiệm đó được bao nhiêu?",
+      "speaker": "me"
+    },
+    {
+      "id": "s00005",
+      "start_ms": 48000,
+      "end_ms": 56000,
+      "text": "Khoảng tám mươi triệu đồng trong cả quý.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00006",
+      "start_ms": 60000,
+      "end_ms": 68000,
+      "text": "Tôi đề nghị giữ khoản đó làm dự phòng cho đợt chuyển dữ liệu Atlas.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00007",
+      "start_ms": 72000,
+      "end_ms": 80000,
+      "text": "Đồng ý, đừng dùng khoản dự phòng để tăng quảng cáo.",
+      "speaker": "me"
+    },
+    {
+      "id": "s00008",
+      "start_ms": 84000,
+      "end_ms": 92000,
+      "text": "Vậy ngân sách tiếp thị vẫn là hai trăm triệu đồng?",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00009",
+      "start_ms": 96000,
+      "end_ms": 104000,
+      "text": "Đúng, nhưng chỉ giải ngân sau khi thử nghiệm trang đăng ký xong.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00010",
+      "start_ms": 108000,
+      "end_ms": 116000,
+      "text": "Thời hạn thử nghiệm là khi nào?",
+      "speaker": "me"
+    },
+    {
+      "id": "s00011",
+      "start_ms": 120000,
+      "end_ms": 128000,
+      "text": "Ngày hai mươi tháng mười sẽ có số liệu đầu tiên.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00012",
+      "start_ms": 132000,
+      "end_ms": 140000,
+      "text": "Tôi cần biết khoản dành cho tuyển dụng.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00013",
+      "start_ms": 144000,
+      "end_ms": 152000,
+      "text": "Chúng ta dành ba trăm triệu đồng cho vị trí kỹ sư nền tảng.",
+      "speaker": "me"
+    },
+    {
+      "id": "s00014",
+      "start_ms": 156000,
+      "end_ms": 164000,
+      "text": "Khoản đó bao gồm lương và phí tuyển dụng đến hết năm.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00015",
+      "start_ms": 168000,
+      "end_ms": 176000,
+      "text": "Nếu ứng viên Linh nhận việc muộn thì tiền chưa dùng sẽ chuyển sang quý sau?",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00016",
+      "start_ms": 180000,
+      "end_ms": 188000,
+      "text": "Không tự động; tháng mười hai chúng ta sẽ xem lại.",
+      "speaker": "me"
+    },
+    {
+      "id": "s00017",
+      "start_ms": 192000,
+      "end_ms": 200000,
+      "text": "Về Atlas, dự phòng tám mươi triệu đủ cho một tuần hỗ trợ thêm.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00018",
+      "start_ms": 204000,
+      "end_ms": 212000,
+      "text": "Tôi sẽ ghi rõ điều kiện sử dụng trong bảng ngân sách.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00019",
+      "start_ms": 216000,
+      "end_ms": 224000,
+      "text": "Chỉ dùng khi kiểm tra liên kết tài liệu không đạt.",
+      "speaker": "me"
+    },
+    {
+      "id": "s00020",
+      "start_ms": 228000,
+      "end_ms": 236000,
+      "text": "Ai phê duyệt việc dùng quỹ dự phòng?",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00021",
+      "start_ms": 240000,
+      "end_ms": 248000,
+      "text": "Tôi và trưởng nhóm tài chính cùng ký.",
+      "speaker": "me"
+    },
+    {
+      "id": "s00022",
+      "start_ms": 252000,
+      "end_ms": 260000,
+      "text": "Tôi sẽ gửi phiên bản ngân sách mới chiều nay.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00023",
+      "start_ms": 264000,
+      "end_ms": 272000,
+      "text": "Đừng quên thêm giả định giá lưu trữ.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00024",
+      "start_ms": 276000,
+      "end_ms": 284000,
+      "text": "Giá lưu trữ giữ nguyên đến hết tháng mười hai.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00025",
+      "start_ms": 288000,
+      "end_ms": 296000,
+      "text": "Khách hàng Northwind đã ký hợp đồng chưa?",
+      "speaker": "me"
+    },
+    {
+      "id": "s00026",
+      "start_ms": 300000,
+      "end_ms": 308000,
+      "text": "Chưa; báo cáo thu chưa tính khoản đó.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00027",
+      "start_ms": 312000,
+      "end_ms": 320000,
+      "text": "Tốt, như vậy dự báo không quá lạc quan.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00028",
+      "start_ms": 324000,
+      "end_ms": 332000,
+      "text": "Chốt lại ngân sách một tỷ hai trăm triệu và dự phòng tám mươi triệu.",
+      "speaker": "me"
+    },
+    {
+      "id": "s00029",
+      "start_ms": 336000,
+      "end_ms": 344000,
+      "text": "Tôi sẽ kiểm tra con số cùng phòng tài chính.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00030",
+      "start_ms": 348000,
+      "end_ms": 356000,
+      "text": "Tôi sẽ gửi bảng chi tiết trước năm giờ.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00031",
+      "start_ms": 360000,
+      "end_ms": 368000,
+      "text": "Cảm ơn mọi người, tuần sau xem lại số liệu tiếp thị.",
+      "speaker": "me"
+    },
+    {
+      "id": "s00032",
+      "start_ms": 372000,
+      "end_ms": 380000,
+      "text": "Tôi sẽ chuẩn bị báo cáo thử nghiệm trang đăng ký.",
+      "speaker": "remote"
+    }
+  ]
+}

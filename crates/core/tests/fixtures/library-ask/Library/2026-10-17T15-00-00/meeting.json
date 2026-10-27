@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "title": "Rà soát chuyển dữ liệu Atlas",
+  "started_at": "2026-10-17T15:00:00Z",
+  "language": "vi",
+  "duration_ms": 384000,
+  "audio": null,
+  "recordings": [],
+  "markers": [],
+  "participants": {
+    "me": "Mai",
+    "remote": "An"
+  },
+  "segment_participants": {
+    "revision": 1,
+    "segments": {
+      "s00003": "Bình",
+      "s00006": "Bình",
+      "s00008": "Bình",
+      "s00012": "Bình",
+      "s00015": "Bình",
+      "s00018": "Bình",
+      "s00021": "Bình",
+      "s00024": "Bình",
+      "s00027": "Bình",
+      "s00030": "Bình"
+    }
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "title": "Contoso partner kickoff",
+  "started_at": "2026-09-30T10:00:00Z",
+  "language": "en",
+  "duration_ms": 384000,
+  "audio": null,
+  "recordings": [],
+  "markers": [],
+  "participants": {
+    "me": "Maya",
+    "remote": "Sam"
+  },
+  "segment_participants": {
+    "revision": 1,
+    "segments": {
+      "s00003": "Nina",
+      "s00006": "Nina",
+      "s00009": "Nina",
+      "s00012": "Nina",
+      "s00015": "Nina",
+      "s00018": "Nina",
+      "s00021": "Nina",
+      "s00025": "Nina",
+      "s00028": "Nina",
+      "s00031": "Nina"
+    }
+  }
+}

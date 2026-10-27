@@ -1,0 +1,237 @@
+{
+  "schema_version": 1,
+  "revision": 1,
+  "created_at": "2026-10-17T15:00:00Z",
+  "model": [
+    "fixture"
+  ],
+  "language": "vi",
+  "language_detected": false,
+  "duration_ms": 384000,
+  "segments": [
+    {
+      "id": "s00001",
+      "start_ms": 0,
+      "end_ms": 8000,
+      "text": "Chúng ta rà soát tiến độ chuyển dữ liệu Atlas.",
+      "speaker": "me"
+    },
+    {
+      "id": "s00002",
+      "start_ms": 12000,
+      "end_ms": 20000,
+      "text": "Bản chạy thử tháng mười đã chuyển xong tài khoản.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00003",
+      "start_ms": 24000,
+      "end_ms": 32000,
+      "text": "Tổng số tài khoản khớp với hệ thống cũ.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00004",
+      "start_ms": 36000,
+      "end_ms": 44000,
+      "text": "Còn liên kết tài liệu thì sao?",
+      "speaker": "me"
+    },
+    {
+      "id": "s00005",
+      "start_ms": 48000,
+      "end_ms": 56000,
+      "text": "Có ba phần nghìn liên kết bị lỗi, cao hơn ngưỡng một phần nghìn.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00006",
+      "start_ms": 60000,
+      "end_ms": 68000,
+      "text": "Lỗi tập trung ở hồ sơ tạo trước năm hai nghìn không trăm mười tám.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00007",
+      "start_ms": 72000,
+      "end_ms": 80000,
+      "text": "Ai sẽ sửa bộ ánh xạ đó?",
+      "speaker": "me"
+    },
+    {
+      "id": "s00008",
+      "start_ms": 84000,
+      "end_ms": 92000,
+      "text": "Tôi sẽ sửa và chạy lại kiểm tra trước ngày hai mươi hai.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00009",
+      "start_ms": 96000,
+      "end_ms": 104000,
+      "text": "Mốc chuyển chính thức vẫn là ngày ba mươi mốt tháng mười.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00010",
+      "start_ms": 108000,
+      "end_ms": 116000,
+      "text": "Điều kiện để giữ mốc đó là gì?",
+      "speaker": "me"
+    },
+    {
+      "id": "s00011",
+      "start_ms": 120000,
+      "end_ms": 128000,
+      "text": "Tất cả tổng tài khoản phải khớp và lỗi liên kết dưới một phần nghìn.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00012",
+      "start_ms": 132000,
+      "end_ms": 140000,
+      "text": "Còn cần diễn tập khôi phục trước khi khóa dữ liệu.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00013",
+      "start_ms": 144000,
+      "end_ms": 152000,
+      "text": "Buổi diễn tập diễn ra ngày hai mươi chín tháng mười?",
+      "speaker": "me"
+    },
+    {
+      "id": "s00014",
+      "start_ms": 156000,
+      "end_ms": 164000,
+      "text": "Đúng, ngày ba mươi dành để xác nhận kết quả.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00015",
+      "start_ms": 168000,
+      "end_ms": 176000,
+      "text": "Nếu không đạt, dời sang ngày bảy tháng mười một.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00016",
+      "start_ms": 180000,
+      "end_ms": 188000,
+      "text": "Hãy nói rõ phương án dự phòng với khách hàng.",
+      "speaker": "me"
+    },
+    {
+      "id": "s00017",
+      "start_ms": 192000,
+      "end_ms": 200000,
+      "text": "Tôi sẽ gửi cập nhật bằng cả tiếng Anh và tiếng Việt.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00018",
+      "start_ms": 204000,
+      "end_ms": 212000,
+      "text": "Bảng điều khiển sẽ tạm dừng khoảng chín mươi phút khi chuyển.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00019",
+      "start_ms": 216000,
+      "end_ms": 224000,
+      "text": "Đội báo cáo đã biết chưa?",
+      "speaker": "me"
+    },
+    {
+      "id": "s00020",
+      "start_ms": 228000,
+      "end_ms": 236000,
+      "text": "Tôi đã báo cho họ, nhưng sẽ nhắc lại trước ba ngày làm việc.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00021",
+      "start_ms": 240000,
+      "end_ms": 248000,
+      "text": "Thanh đang hỗ trợ đối chiếu các trường cũ.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00022",
+      "start_ms": 252000,
+      "end_ms": 260000,
+      "text": "Sự hỗ trợ đó có đủ cho tuần này không?",
+      "speaker": "me"
+    },
+    {
+      "id": "s00023",
+      "start_ms": 264000,
+      "end_ms": 272000,
+      "text": "Có, Thanh dành hai buổi chiều để kiểm tra dữ liệu.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00024",
+      "start_ms": 276000,
+      "end_ms": 284000,
+      "text": "Tôi sẽ bổ sung mã kiểm tra cho từng bộ sưu tập.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00025",
+      "start_ms": 288000,
+      "end_ms": 296000,
+      "text": "Đừng quên lưu kết quả vào tài liệu vận hành.",
+      "speaker": "me"
+    },
+    {
+      "id": "s00026",
+      "start_ms": 300000,
+      "end_ms": 308000,
+      "text": "Tài liệu đã có người phụ trách từng bước quay lui.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00027",
+      "start_ms": 312000,
+      "end_ms": 320000,
+      "text": "Tôi sẽ xác nhận lại quyền truy cập trước buổi diễn tập.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00028",
+      "start_ms": 324000,
+      "end_ms": 332000,
+      "text": "Điều gì cần báo cáo ở cuộc họp ngày hai mươi sáu?",
+      "speaker": "me"
+    },
+    {
+      "id": "s00029",
+      "start_ms": 336000,
+      "end_ms": 344000,
+      "text": "Tỷ lệ lỗi liên kết, tổng tài khoản và kết quả chạy thử khôi phục.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00030",
+      "start_ms": 348000,
+      "end_ms": 356000,
+      "text": "Tôi sẽ chuẩn bị bảng số liệu cho An.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00031",
+      "start_ms": 360000,
+      "end_ms": 368000,
+      "text": "Tốt, quyết định chuyển chỉ được đưa ra sau cuộc họp đó.",
+      "speaker": "me"
+    },
+    {
+      "id": "s00032",
+      "start_ms": 372000,
+      "end_ms": 380000,
+      "text": "Tôi sẽ không gọi ngày ba mươi mốt là cam kết vô điều kiện.",
+      "speaker": "remote"
+    }
+  ]
+}

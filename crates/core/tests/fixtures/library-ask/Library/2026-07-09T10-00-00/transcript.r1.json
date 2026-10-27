@@ -1,0 +1,237 @@
+{
+  "schema_version": 1,
+  "revision": 1,
+  "created_at": "2026-07-09T10:00:00Z",
+  "model": [
+    "fixture"
+  ],
+  "language": "en",
+  "language_detected": false,
+  "duration_ms": 384000,
+  "segments": [
+    {
+      "id": "s00001",
+      "start_ms": 0,
+      "end_ms": 8000,
+      "text": "Thanks for joining. We need to settle the Northwind commercial proposal today.",
+      "speaker": "me"
+    },
+    {
+      "id": "s00002",
+      "start_ms": 12000,
+      "end_ms": 20000,
+      "text": "The pilot showed forty active seats across three teams.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00003",
+      "start_ms": 24000,
+      "end_ms": 32000,
+      "text": "The support queue averaged six requests per week during the trial.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00004",
+      "start_ms": 36000,
+      "end_ms": 44000,
+      "text": "What is the purchasing ceiling on their side?",
+      "speaker": "me"
+    },
+    {
+      "id": "s00005",
+      "start_ms": 48000,
+      "end_ms": 56000,
+      "text": "Their procurement lead can approve up to twenty thousand dollars this quarter.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00006",
+      "start_ms": 60000,
+      "end_ms": 68000,
+      "text": "Anything above that goes to the finance committee in November.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00007",
+      "start_ms": 72000,
+      "end_ms": 80000,
+      "text": "Our draft was twelve thousand dollars per year for the platform.",
+      "speaker": "me"
+    },
+    {
+      "id": "s00008",
+      "start_ms": 84000,
+      "end_ms": 92000,
+      "text": "That is acceptable if onboarding is included and there is no surprise setup fee.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00009",
+      "start_ms": 96000,
+      "end_ms": 104000,
+      "text": "The old draft listed two thousand dollars for migration services.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00010",
+      "start_ms": 108000,
+      "end_ms": 116000,
+      "text": "Remove that separate fee; onboarding and the first data import are included.",
+      "speaker": "me"
+    },
+    {
+      "id": "s00011",
+      "start_ms": 120000,
+      "end_ms": 128000,
+      "text": "Do we keep a cap on archived projects?",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00012",
+      "start_ms": 132000,
+      "end_ms": 140000,
+      "text": "No cap for the first year, provided storage stays under five terabytes.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00013",
+      "start_ms": 144000,
+      "end_ms": 152000,
+      "text": "Put the storage condition in plain language in the order form.",
+      "speaker": "me"
+    },
+    {
+      "id": "s00014",
+      "start_ms": 156000,
+      "end_ms": 164000,
+      "text": "Their legal team wants a thirty day exit window after renewal notice.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00015",
+      "start_ms": 168000,
+      "end_ms": 176000,
+      "text": "We can offer that without changing the twelve month term.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00016",
+      "start_ms": 180000,
+      "end_ms": 188000,
+      "text": "The renewal notice should go out sixty days before the term ends.",
+      "speaker": "me"
+    },
+    {
+      "id": "s00017",
+      "start_ms": 192000,
+      "end_ms": 200000,
+      "text": "Northwind also asked whether the price rises with each new seat.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00018",
+      "start_ms": 204000,
+      "end_ms": 212000,
+      "text": "The quote covers fifty seats, then additional seats cost eight dollars monthly.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00019",
+      "start_ms": 216000,
+      "end_ms": 224000,
+      "text": "Let us state the included fifty seats explicitly.",
+      "speaker": "me"
+    },
+    {
+      "id": "s00020",
+      "start_ms": 228000,
+      "end_ms": 236000,
+      "text": "Can we keep the pilot workspace alive while procurement signs?",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00021",
+      "start_ms": 240000,
+      "end_ms": 248000,
+      "text": "Yes, through August fifteen, with read-only access after that.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00022",
+      "start_ms": 252000,
+      "end_ms": 260000,
+      "text": "I will send the revised order form by Friday.",
+      "speaker": "me"
+    },
+    {
+      "id": "s00023",
+      "start_ms": 264000,
+      "end_ms": 272000,
+      "text": "I will check the wording with Priya in legal.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00024",
+      "start_ms": 276000,
+      "end_ms": 284000,
+      "text": "I will update the usage estimate for storage.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00025",
+      "start_ms": 288000,
+      "end_ms": 296000,
+      "text": "One more point: the security review is separate from price approval.",
+      "speaker": "me"
+    },
+    {
+      "id": "s00026",
+      "start_ms": 300000,
+      "end_ms": 308000,
+      "text": "Their security lead expects our pen test summary next Tuesday.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00027",
+      "start_ms": 312000,
+      "end_ms": 320000,
+      "text": "We already have the summary from the June audit.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00028",
+      "start_ms": 324000,
+      "end_ms": 332000,
+      "text": "Send only the summary, not the full report.",
+      "speaker": "me"
+    },
+    {
+      "id": "s00029",
+      "start_ms": 336000,
+      "end_ms": 344000,
+      "text": "I will schedule a call with procurement for next week.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00030",
+      "start_ms": 348000,
+      "end_ms": 356000,
+      "text": "The contract should name Northwind as the billing entity.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00031",
+      "start_ms": 360000,
+      "end_ms": 368000,
+      "text": "Agreed. Twelve thousand annually, fifty seats, and onboarding included.",
+      "speaker": "me"
+    },
+    {
+      "id": "s00032",
+      "start_ms": 372000,
+      "end_ms": 380000,
+      "text": "I will record those terms in the follow-up email.",
+      "speaker": "remote"
+    }
+  ]
+}

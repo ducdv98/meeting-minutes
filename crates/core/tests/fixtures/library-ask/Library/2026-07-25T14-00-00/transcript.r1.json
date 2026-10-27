@@ -1,0 +1,237 @@
+{
+  "schema_version": 1,
+  "revision": 1,
+  "created_at": "2026-07-25T14:00:00Z",
+  "model": [
+    "fixture"
+  ],
+  "language": "en",
+  "language_detected": false,
+  "duration_ms": 384000,
+  "segments": [
+    {
+      "id": "s00001",
+      "start_ms": 0,
+      "end_ms": 8000,
+      "text": "We need a realistic finish line for the Atlas migration.",
+      "speaker": "me"
+    },
+    {
+      "id": "s00002",
+      "start_ms": 12000,
+      "end_ms": 20000,
+      "text": "The legacy export contains 1.8 million records across four collections.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00003",
+      "start_ms": 24000,
+      "end_ms": 32000,
+      "text": "The account table has inconsistent time zones in older rows.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00004",
+      "start_ms": 36000,
+      "end_ms": 44000,
+      "text": "Can we move the customer accounts first?",
+      "speaker": "me"
+    },
+    {
+      "id": "s00005",
+      "start_ms": 48000,
+      "end_ms": 56000,
+      "text": "Yes, accounts can move in the September rehearsal.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00006",
+      "start_ms": 60000,
+      "end_ms": 68000,
+      "text": "The rehearsal needs a masked copy of production data.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00007",
+      "start_ms": 72000,
+      "end_ms": 80000,
+      "text": "Who owns the masking script?",
+      "speaker": "me"
+    },
+    {
+      "id": "s00008",
+      "start_ms": 84000,
+      "end_ms": 92000,
+      "text": "I do, and I can deliver it by August eighth.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00009",
+      "start_ms": 96000,
+      "end_ms": 104000,
+      "text": "The second wave contains billing and document links.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00010",
+      "start_ms": 108000,
+      "end_ms": 116000,
+      "text": "What date can we promise for the complete cutover?",
+      "speaker": "me"
+    },
+    {
+      "id": "s00011",
+      "start_ms": 120000,
+      "end_ms": 128000,
+      "text": "If the October rehearsal passes, the switch is on October thirty-first.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00012",
+      "start_ms": 132000,
+      "end_ms": 140000,
+      "text": "We need two days for rollback validation before that.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00013",
+      "start_ms": 144000,
+      "end_ms": 152000,
+      "text": "So rollback exercises happen October twenty-ninth and thirtieth.",
+      "speaker": "me"
+    },
+    {
+      "id": "s00014",
+      "start_ms": 156000,
+      "end_ms": 164000,
+      "text": "Correct, and the old system remains read-only for two weeks.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00015",
+      "start_ms": 168000,
+      "end_ms": 176000,
+      "text": "The document links are the biggest uncertainty.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00016",
+      "start_ms": 180000,
+      "end_ms": 188000,
+      "text": "Should we reserve a contingency week?",
+      "speaker": "me"
+    },
+    {
+      "id": "s00017",
+      "start_ms": 192000,
+      "end_ms": 200000,
+      "text": "Yes. If checks fail, we defer the switch to November seventh.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00018",
+      "start_ms": 204000,
+      "end_ms": 212000,
+      "text": "I will build a checksum report for each collection.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00019",
+      "start_ms": 216000,
+      "end_ms": 224000,
+      "text": "Can the reporting team work during the switch?",
+      "speaker": "me"
+    },
+    {
+      "id": "s00020",
+      "start_ms": 228000,
+      "end_ms": 236000,
+      "text": "Dashboards will pause for roughly ninety minutes.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00021",
+      "start_ms": 240000,
+      "end_ms": 248000,
+      "text": "I will notify them three business days ahead.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00022",
+      "start_ms": 252000,
+      "end_ms": 260000,
+      "text": "What is the success criterion for the rehearsal?",
+      "speaker": "me"
+    },
+    {
+      "id": "s00023",
+      "start_ms": 264000,
+      "end_ms": 272000,
+      "text": "All account totals must match, and broken links must stay below one tenth of a percent.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00024",
+      "start_ms": 276000,
+      "end_ms": 284000,
+      "text": "We can sample five hundred documents by hand as well.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00025",
+      "start_ms": 288000,
+      "end_ms": 296000,
+      "text": "Please document the sample results in the runbook.",
+      "speaker": "me"
+    },
+    {
+      "id": "s00026",
+      "start_ms": 300000,
+      "end_ms": 308000,
+      "text": "The runbook needs named owners for every rollback step.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00027",
+      "start_ms": 312000,
+      "end_ms": 320000,
+      "text": "I can draft that section next Monday.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00028",
+      "start_ms": 324000,
+      "end_ms": 332000,
+      "text": "We should explain the date to the client without promising zero downtime.",
+      "speaker": "me"
+    },
+    {
+      "id": "s00029",
+      "start_ms": 336000,
+      "end_ms": 344000,
+      "text": "I will say the full migration is planned for October thirty-first.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00030",
+      "start_ms": 348000,
+      "end_ms": 356000,
+      "text": "I will attach the ninety minute maintenance estimate.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00031",
+      "start_ms": 360000,
+      "end_ms": 368000,
+      "text": "Good. We will review readiness at the October twenty-sixth checkpoint.",
+      "speaker": "me"
+    },
+    {
+      "id": "s00032",
+      "start_ms": 372000,
+      "end_ms": 380000,
+      "text": "I will bring the rehearsal metrics then.",
+      "speaker": "remote"
+    }
+  ]
+}

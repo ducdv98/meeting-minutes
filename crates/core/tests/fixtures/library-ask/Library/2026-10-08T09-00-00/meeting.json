@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "title": "Họp ngân sách quý 4",
+  "started_at": "2026-10-08T09:00:00Z",
+  "language": "vi",
+  "duration_ms": 384000,
+  "audio": null,
+  "recordings": [],
+  "markers": [],
+  "participants": {
+    "me": "Mai",
+    "remote": "Lan"
+  },
+  "segment_participants": {
+    "revision": 1,
+    "segments": {
+      "s00003": "Huy",
+      "s00005": "Huy",
+      "s00008": "Huy",
+      "s00012": "Huy",
+      "s00015": "Huy",
+      "s00018": "Huy",
+      "s00022": "Huy",
+      "s00024": "Huy",
+      "s00027": "Huy",
+      "s00030": "Huy"
+    }
+  }
+}

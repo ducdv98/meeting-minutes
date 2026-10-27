@@ -1,0 +1,244 @@
+{
+  "schema_version": 1,
+  "revision": 1,
+  "created_at": "2026-10-24T10:02:11Z",
+  "model": [
+    "fixture"
+  ],
+  "language": "en",
+  "language_detected": false,
+  "duration_ms": 396000,
+  "segments": [
+    {
+      "id": "s00001",
+      "start_ms": 0,
+      "end_ms": 8000,
+      "text": "Let us go through the launch checklist for the website.",
+      "speaker": "me"
+    },
+    {
+      "id": "s00002",
+      "start_ms": 12000,
+      "end_ms": 20000,
+      "text": "The new home page is live on staging, including the hero and feature sections.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00003",
+      "start_ms": 24000,
+      "end_ms": 32000,
+      "text": "The pricing page still has one unresolved point.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00004",
+      "start_ms": 36000,
+      "end_ms": 44000,
+      "text": "Where did we land on the Pro plan?",
+      "speaker": "me"
+    },
+    {
+      "id": "s00005",
+      "start_ms": 48000,
+      "end_ms": 56000,
+      "text": "Free covers local Processing and users' own provider keys without a usage limit.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00006",
+      "start_ms": 60000,
+      "end_ms": 68000,
+      "text": "Pro represents a larger cloud transcription allowance, but we have not measured its cost.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00007",
+      "start_ms": 72000,
+      "end_ms": 80000,
+      "text": "So we should not display a Pro price yet.",
+      "speaker": "me"
+    },
+    {
+      "id": "s00008",
+      "start_ms": 84000,
+      "end_ms": 92000,
+      "text": "Agreed. Mark it as planned until checkout exists.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00009",
+      "start_ms": 96000,
+      "end_ms": 104000,
+      "text": "Could the Pro card link to a GitHub Discussion for interest?",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00010",
+      "start_ms": 108000,
+      "end_ms": 116000,
+      "text": "Yes. People can upvote there without us storing email addresses.",
+      "speaker": "me"
+    },
+    {
+      "id": "s00011",
+      "start_ms": 120000,
+      "end_ms": 128000,
+      "text": "I will replace the signup form mockup with that link.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00012",
+      "start_ms": 132000,
+      "end_ms": 140000,
+      "text": "Next, the screenshots still show placeholder frames.",
+      "speaker": "me"
+    },
+    {
+      "id": "s00013",
+      "start_ms": 144000,
+      "end_ms": 152000,
+      "text": "I can script light and dark captures using demo data.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00014",
+      "start_ms": 156000,
+      "end_ms": 164000,
+      "text": "Make them twelve hundred by eight hundred pixels.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00015",
+      "start_ms": 168000,
+      "end_ms": 176000,
+      "text": "Can they be ready by Thursday?",
+      "speaker": "me"
+    },
+    {
+      "id": "s00016",
+      "start_ms": 180000,
+      "end_ms": 188000,
+      "text": "Yes, I will post the captures on Thursday.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00017",
+      "start_ms": 192000,
+      "end_ms": 200000,
+      "text": "Two users asked how to verify the unsigned installer.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00018",
+      "start_ms": 204000,
+      "end_ms": 212000,
+      "text": "Publish a SHA-256 checksum with every release.",
+      "speaker": "me"
+    },
+    {
+      "id": "s00019",
+      "start_ms": 216000,
+      "end_ms": 224000,
+      "text": "I will add build attestation to the release workflow.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00020",
+      "start_ms": 228000,
+      "end_ms": 236000,
+      "text": "I will explain the SmartScreen warning on the support page.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00021",
+      "start_ms": 240000,
+      "end_ms": 248000,
+      "text": "When can you have that copy ready?",
+      "speaker": "me"
+    },
+    {
+      "id": "s00022",
+      "start_ms": 252000,
+      "end_ms": 260000,
+      "text": "Wednesday afternoon for review.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00023",
+      "start_ms": 264000,
+      "end_ms": 272000,
+      "text": "Spanish and Japanese users asked about transcription quality.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00024",
+      "start_ms": 276000,
+      "end_ms": 284000,
+      "text": "The small local model struggles with Japanese names.",
+      "speaker": "me"
+    },
+    {
+      "id": "s00025",
+      "start_ms": 288000,
+      "end_ms": 296000,
+      "text": "The first-run guide should recommend turbo for non-English Meetings.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00026",
+      "start_ms": 300000,
+      "end_ms": 308000,
+      "text": "I will write that ticket today.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00027",
+      "start_ms": 312000,
+      "end_ms": 320000,
+      "text": "Do we need to mention the Atlas migration on this page?",
+      "speaker": "me"
+    },
+    {
+      "id": "s00028",
+      "start_ms": 324000,
+      "end_ms": 332000,
+      "text": "No, it belongs in the customer update, not the launch copy.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00029",
+      "start_ms": 336000,
+      "end_ms": 344000,
+      "text": "The search accent check is still in progress.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00030",
+      "start_ms": 348000,
+      "end_ms": 356000,
+      "text": "Please test Vietnamese diacritics before release.",
+      "speaker": "me"
+    },
+    {
+      "id": "s00031",
+      "start_ms": 360000,
+      "end_ms": 368000,
+      "text": "I will check the privacy page against the new Discussion link.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00032",
+      "start_ms": 372000,
+      "end_ms": 380000,
+      "text": "I will finish the screenshot script before lunch.",
+      "speaker": "remote"
+    },
+    {
+      "id": "s00033",
+      "start_ms": 384000,
+      "end_ms": 392000,
+      "text": "So the launch work is Discussion link, screenshots, checksum, and language guide.",
+      "speaker": "me"
+    }
+  ]
+}

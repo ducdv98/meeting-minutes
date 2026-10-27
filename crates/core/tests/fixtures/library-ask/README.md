@@ -1,0 +1,7 @@
+# Library Ask evaluation fixture
+
+`Library/` contains ten fictional Meeting folders dated July 9–October 24, 2026. Nine have a published Revision with English or Vietnamese Segments. The October 23 Meeting has only `meeting.json`: the app holds Draft Segments in memory and has no on-disk Draft format, so a processing Meeting is represented here without a published Transcript. Audio is omitted because the Library rebuild accepts transcript-only Meeting folders. Segment IDs, Participants, and dates are fixed.
+
+`questions.json` sets `now` to `2026-10-27T12:00:00Z`. `answerable` questions have `supporting` Meeting and Segment IDs. `paraphrased` uses wording absent from the supporting speech. `cross-language` asks in a different language from the supporting Meeting. `out-of-range-for:7`, `:30`, and `:90` mean the supporting Meeting is older than that many days relative to `now`; the question should get Insufficient evidence when that date filter is selected. `out-of-library` has no supporting Segment and expects Insufficient evidence. `keywords` is a hand-written recall baseline of terms a useful query expansion could produce, including the language of the supporting Meeting.
+
+The ship bar from the Library Ask spec is: evaluate on Ollama with an 8k context and one cloud Language model; require no unsupported Citation, Insufficient evidence for every out-of-Library question, and answers for at least 70% of answerable questions. This fixture records expected evidence but does not run either model.

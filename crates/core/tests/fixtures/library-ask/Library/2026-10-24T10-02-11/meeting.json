@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "title": "Website launch sync",
+  "started_at": "2026-10-24T10:02:11Z",
+  "language": "en",
+  "duration_ms": 396000,
+  "audio": null,
+  "recordings": [],
+  "markers": [],
+  "participants": {
+    "me": "Maya",
+    "remote": "Priya"
+  },
+  "segment_participants": {
+    "revision": 1,
+    "segments": {
+      "s00003": "Sam",
+      "s00006": "Sam",
+      "s00009": "Sam",
+      "s00013": "Sam",
+      "s00016": "Sam",
+      "s00019": "Sam",
+      "s00023": "Sam",
+      "s00026": "Sam",
+      "s00029": "Sam",
+      "s00032": "Sam"
+    }
+  }
+}
