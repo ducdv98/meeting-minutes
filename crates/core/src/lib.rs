@@ -26,6 +26,7 @@ pub mod microphone_usage;
 pub mod model_downloads;
 pub mod models;
 pub mod processing;
+pub mod query_expansion;
 pub mod record_prompt;
 pub mod recorder;
 pub mod recording;
