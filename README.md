@@ -69,6 +69,7 @@ Your Library stays on your PC. This table shows what is sent, and when.
 | Transcription | Local Whisper. Audio stays on your PC. | Audio goes to Groq (`whisper-large-v3`), or to Gemini for fallback transcription. |
 | Correction | Off | Gemini receives Transcript text. |
 | Summary, Action items and Ask | Ollama on your PC | Gemini, OpenAI or Anthropic. The app asks before sending a Meeting. |
+| Library Ask | Ollama on your PC | With a cloud Language model you add, the question is sent first to find Meetings. After you confirm the list (you can untick Meetings), excerpts from those Meetings' Transcripts are sent. Snapshots are never sent. Past Library Asks stay in your Library on this PC. |
 | Managed transcription | Off | Audio only, after you paste a Managed key. The service never holds your Library. |
 | API keys | Windows Credential Manager | Same. |
 | Telemetry | None | None |
