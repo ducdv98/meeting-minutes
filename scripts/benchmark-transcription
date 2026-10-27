@@ -122,6 +122,7 @@ def main():
     parser.add_argument("--model", action="append", metavar="NAME=PATH", help="repeat for each model")
     parser.add_argument("--device", action="append", metavar="cpu|auto|VULKAN_ID", help="repeat for each device")
     parser.add_argument("--vad", type=Path, help="path to ggml-silero-v6.2.0.bin")
+    parser.add_argument("--ct2-model", type=Path, help="CTranslate2 model directory; runs the isolated CT2 spike alongside Whisper")
     args = parser.parse_args()
     cargo = shutil.which("cargo") or str(Path.home() / ".cargo" / "bin" / ("cargo.exe" if os.name == "nt" else "cargo"))
     if args.command == "list-devices":
@@ -136,7 +137,12 @@ def main():
     if args.command == "run":
         if not args.model:
             parser.error("run needs at least one --model NAME=PATH")
-        command = [cargo, "run", "--release", "-p", "meeting_minutes_whisper", "--bin", "benchmark-transcription", "--", "--manifest", str(manifest)]
+        if args.ct2_model and not args.vad:
+            parser.error("--ct2-model requires --vad for a comparable run")
+        if args.ct2_model:
+            command = [cargo, "run", "--release", "--manifest-path", str(ROOT / "spikes" / "ct2" / "Cargo.toml"), "--bin", "benchmark-ct2", "--", "--manifest", str(manifest), "--ct2-model", str(args.ct2_model)]
+        else:
+            command = [cargo, "run", "--release", "-p", "meeting_minutes_whisper", "--bin", "benchmark-transcription", "--", "--manifest", str(manifest)]
         for model in args.model:
             command.extend(["--model", model])
         for device in args.device or ["cpu"]:
