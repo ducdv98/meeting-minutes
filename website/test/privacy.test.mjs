@@ -42,6 +42,21 @@ test('privacy page says Snapshot images stay on the PC', async () => {
   assert.match(policy, /snapshots.*PNG/i);
 });
 
+test('Library Ask privacy copy explains local use and cloud confirmation', async () => {
+  for (const path of [readmePath, policyPath]) {
+    const copy = await readFile(path, 'utf8');
+    const row = copy.split('\n').find(line => line.includes('Library Ask') && (line.includes('|') || line.includes('<tr>')));
+    assert.ok(row, `${path} needs a Library Ask row`);
+    assert.match(row, /Ollama.{0,40}(?:PC|local)/i);
+    assert.match(row, /question.{0,120}(?:first|before)/i);
+    assert.match(row, /confirm/i);
+    assert.match(row, /untick/i);
+    assert.match(row, /Transcript/i);
+    assert.match(row, /Snapshots? (?:are )?never sent/i);
+    assert.match(row, /past Library Asks?.{0,50}Library/i);
+  }
+});
+
 test('privacy page explains local Microphone app checks and session diagnostics counts', async () => {
   const policy = await readFile(policyPath, 'utf8');
   assert.match(policy, /checks locally which apps use the Microphone[\s\S]*?nothing about that check is sent/i);
@@ -70,7 +85,7 @@ test('public copy explains when Meeting content goes to cloud providers', async 
 
 test('privacy page explains key requests and key-based Managed transcription', async () => {
   const policy = await readFile(policyPath, 'utf8');
-  assert.match(policy, /Last updated 22 October 2026/);
+  assert.match(policy, /Last updated 27 October 2026/);
   assert.match(policy, /Request a key[\s\S]*?private Google Sheet[\s\S]*?email draft/i);
   assert.match(policy, /email address and your description of how you will use Managed transcription/i);
   assert.match(policy, /keys are issued by hand[\s\S]*?do not promise a response or turnaround time/i);

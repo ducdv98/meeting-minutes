@@ -26,6 +26,17 @@ it("lists every destination and shows all six off when no cloud option is active
   expect(screen.getByText(CLOUD_NOTICE_TEXT)).toBeTruthy();
 });
 
+it("explains Library Ask cloud sending in the privacy notice", async () => {
+  vi.mocked(managedStatus).mockResolvedValue({ connected: false, revoked: false });
+  render(<PrivacyTab settings={settings} providerStatus={status} />);
+  const notice = screen.getByText(CLOUD_NOTICE_TEXT);
+  expect(notice.textContent).toMatch(/Ollama keeps.{0,80}on this PC/i);
+  expect(notice.textContent).toMatch(/question.{0,80}first/i);
+  expect(notice.textContent).toMatch(/confirm.{0,100}Transcript excerpts/i);
+  expect(notice.textContent).toMatch(/untick/i);
+  expect(notice.textContent).toMatch(/Past Library Asks.{0,40}Library/i);
+});
+
 it("updates key and Correction states from live Settings props", async () => {
   vi.mocked(managedStatus).mockResolvedValue({ connected: true, revoked: false, email: "person@example.com", enabled: true });
   const cloud = { ...status, has_groq_key: true, has_anthropic_key: true };
