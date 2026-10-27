@@ -20,4 +20,4 @@ ADR 0005's rule becomes "every Source on the host clock" instead of "every Sourc
 - A Recording keeps the Mac out of App Nap and idle sleep. Closing the lid still sleeps the Mac.
 - On macOS, the Library is `~/Documents/Meeting Minutes`, and macOS asks once for Documents access.
 - One `vX.Y.Z` tag builds both platforms with the same version and updater key. A failed macOS job never blocks the Windows release.
-- Mac capture and permission work needs real hardware (an M4). CI builds and tests on `macos-14` but cannot test capture.
+- Mac capture and permission work needs real hardware (an M4). CI builds and tests on `macos-15` but cannot test capture.
