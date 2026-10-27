@@ -1,6 +1,6 @@
 # Meeting Minutes
 
-A single-user, local-first Windows app that records calls from any meeting app, turns them into timed transcripts, and answers cited questions about one meeting at a time. A Managed key gives access to experimental Managed transcription; Meetings remain local, without sharing or sync.
+A single-user, local-first desktop app for Windows and macOS that records calls from any meeting app, turns them into timed transcripts, and answers cited questions about one meeting at a time. A Managed key gives access to experimental Managed transcription; Meetings remain local, without sharing or sync.
 
 ## Language
 
@@ -19,7 +19,7 @@ One continuous capture run belonging to a Meeting. Pausing continues the same Re
 _Avoid_: Take, file, clip
 
 **Source**:
-One distinguishable audio input of a Recording: the **Microphone** (the user) or **System audio** (everything the PC plays, including remote participants).
+One distinguishable audio input of a Recording: the **Microphone** (the user) or **System audio** (everything the computer plays, including remote participants, except Meeting Minutes' own playback).
 _Avoid_: Channel, track, device
 
 **Timeline**:
@@ -29,7 +29,7 @@ The single playback time axis of a Meeting: its Recordings joined in order, with
 A point on the Timeline recording an event: a pause, a gap between Recordings, or an audio device switch.
 
 **Snapshot**:
-An image of a region of the user's screen, taken by hand during a Recording and anchored to a position on the Timeline. It is kept as an image file in the Meeting's folder and shown inline in the Transcript at that position, with an optional caption the user adds later. A Snapshot is user content, not an event, so it is not a Marker, and it is never a Citation. Summary and Ask do not read it, and it stays on the user's PC.
+An image of a region of the user's screen, taken by hand during a Recording and anchored to a position on the Timeline. It is kept as an image file in the Meeting's folder and shown inline in the Transcript at that position, with an optional caption the user adds later. A Snapshot is user content, not an event, so it is not a Marker, and it is never a Citation. Summary and Ask do not read it, and it stays on the user's computer.
 _Avoid_: Screenshot, capture, screen grab
 
 **Capture region**:
@@ -43,7 +43,7 @@ _Avoid_: Auto-record, meeting detection
 Whether each Source of a running Recording is actually carrying sound. A Source silent for longer than expected is flagged to the user while the Recording runs, not discovered after Stop.
 
 **Capture bar**:
-The small always-on-top floating bar shown while a Recording runs, with pause, stop, Snapshot and a timer. Starting a Recording stays in the main window. The bar and the region overlay never appear in a Snapshot or in screen sharing.
+The controls for a running Recording: pause, stop, Snapshot and a timer. On Windows it is a small always-on-top floating bar; on macOS it lives in the menu bar. Starting a Recording stays in the main window. The Capture bar and the region overlay never appear in a Snapshot or in screen sharing.
 
 **Chunk**:
 A durably written slice of a Source's audio. Completed Chunks survive a crash and are never discarded by a failed save.

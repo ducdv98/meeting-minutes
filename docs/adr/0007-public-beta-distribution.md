@@ -1,5 +1,7 @@
 # Public Free Beta ships unsigned, with the Tauri updater on GitHub Releases
 
+> For macOS, ADR 0021 applies instead: the macOS Preview ships signed and notarized.
+
 The first public release is a Windows 11 x64 Free Beta, version `0.1.0`. It ships as an **unsigned** per-user NSIS installer from GitHub Releases on the public repo, and the download page explains the SmartScreen warning. Code signing (Azure Artifact Signing or an OV certificate) is deferred to keep the free beta free of signing cost and identity validation, and comes before the app leaves Beta. The Tauri updater is in the first build: its private key is a GitHub Actions secret with a backup in the owner's password manager. A `vX.Y.Z` tag builds a **draft** Release with `latest.json`, and the owner publishes it by hand. The bundle identifier changes from `dev.ducdv.meetingminutes` to `app.meeting-minutes.tech`, matching the public domain, before anyone outside installs the app.
 
 ## Considered Options
