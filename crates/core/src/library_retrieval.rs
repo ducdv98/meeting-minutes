@@ -1,5 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
+use serde::{Deserialize, Serialize};
+
 use crate::{
     citation::evidence_line,
     library::LibraryError,
@@ -8,7 +10,7 @@ use crate::{
     Library,
 };
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EvidenceSegment {
     pub segment_id: String,
     pub revision: u32,
@@ -18,7 +20,7 @@ pub struct EvidenceSegment {
     pub text: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MeetingEvidence {
     pub meeting_id: String,
     pub title: String,
@@ -65,6 +67,9 @@ impl Library {
         let mut selected_chars: usize = 0;
         let mut selected_count: usize = 0;
         for hit in hits {
+            if selected_chars.div_ceil(3) >= budget_tokens {
+                break;
+            }
             if !sources.contains_key(&hit.meeting_id) {
                 let Some(transcript) = self.transcript(&hit.meeting_id)? else {
                     continue;
