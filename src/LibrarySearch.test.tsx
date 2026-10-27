@@ -54,3 +54,19 @@ it("shows No matches and an error for a failed search", async () => {
   await act(async () => { await vi.advanceTimersByTimeAsync(250); });
   expect(screen.getByRole("alert").textContent).toContain("Index unavailable");
 });
+
+it("keeps searching on Enter and opens Library Ask with the box text", async () => {
+  vi.mocked(searchLibrary).mockResolvedValue([]);
+  const onAsk = vi.fn();
+  render(<LibrarySearch onOpen={() => {}} onAsk={onAsk} />);
+  const input = screen.getByRole("searchbox", { name: "Search transcripts" });
+  const button = screen.getByRole("button", { name: "Ask" });
+  expect(button.hasAttribute("disabled")).toBe(true);
+  fireEvent.change(input, { target: { value: "What was decided?" } });
+  expect(button.hasAttribute("disabled")).toBe(false);
+  fireEvent.keyDown(input, { key: "Enter" });
+  expect(searchLibrary).toHaveBeenCalledWith("What was decided?");
+  expect(onAsk).not.toHaveBeenCalled();
+  fireEvent.click(button);
+  expect(onAsk).toHaveBeenCalledWith("What was decided?");
+});

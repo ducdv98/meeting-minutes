@@ -18,6 +18,7 @@ use crate::{
     citation::estimate_tokens,
     library_retrieval::MeetingEvidence,
     query_expansion::expand_question,
+    transcript::Language,
     Library, LibraryError,
 };
 
@@ -127,22 +128,46 @@ pub fn plan_library_ask(
     now_ms: i64,
     cancel: &AtomicBool,
 ) -> Result<LibraryAskPlan, LibraryAskError> {
+    let terms = library_ask_terms(provider, question, &library.meeting_languages()?, cancel)?;
+    gather_library_evidence(library, provider.kind(), question, &terms, range, now_ms)
+}
+
+/// The search terms for a question. Calls the Language model, so callers
+/// should not hold the Library while it runs.
+pub fn library_ask_terms(
+    provider: &dyn TextProvider,
+    question: &str,
+    languages: &[Language],
+    cancel: &AtomicBool,
+) -> Result<Vec<String>, LibraryAskError> {
     let question = validate_question(question)?;
     if cancel.load(Ordering::SeqCst) {
         return Err(LibraryAskError::Cancelled);
     }
-    let terms = expand_question(provider, question, &library.meeting_languages()?, cancel);
+    let terms = expand_question(provider, question, languages, cancel);
     if cancel.load(Ordering::SeqCst) {
         return Err(LibraryAskError::Cancelled);
     }
-    let options = AskOptions::for_provider(provider.kind());
+    Ok(terms)
+}
+
+pub fn gather_library_evidence(
+    library: &Library,
+    kind: ProviderKind,
+    question: &str,
+    terms: &[String],
+    range: DateRange,
+    now_ms: i64,
+) -> Result<LibraryAskPlan, LibraryAskError> {
+    let question = validate_question(question)?;
+    let options = AskOptions::for_provider(kind);
     let budget = options.input_tokens.saturating_sub(
         estimate_tokens(&system())
             + estimate_tokens(question)
             + estimate_tokens("Meeting evidence:\n\nQuestion: ")
             + 512,
     );
-    let evidence = library.library_evidence(&terms, range.since_ms(now_ms), budget)?;
+    let evidence = library.library_evidence(terms, range.since_ms(now_ms), budget)?;
     Ok(LibraryAskPlan {
         question: question.into(),
         range,

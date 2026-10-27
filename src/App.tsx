@@ -15,6 +15,9 @@ import { Loading } from "./components/states/Loading";
 import { MeetingRowMotion } from "./components/ui/MeetingRowMotion";
 import MeetingView from "./MeetingView";
 import LibrarySearch from "./LibrarySearch";
+import LibraryAskPanel from "./LibraryAskPanel";
+import type { LibraryCitation } from "./libraryAsk";
+import { aiStatus, type AiStatus } from "./ai";
 import LibraryTable from "./LibraryTable";
 import ConfirmDelete from "./ConfirmDelete";
 import RecordingBar from "./RecordingBar";
@@ -97,6 +100,9 @@ export default function App() {
   const [guideOpen, setGuideOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<SettingsTabId | undefined>();
   const [showSearch, setShowSearch] = useState(false);
+  const [libraryAskQuestion, setLibraryAskQuestion] = useState<string | null>(null);
+  const [libraryAskAiStatus, setLibraryAskAiStatus] = useState<AiStatus | null>(null);
+  const [libraryAskSettings, setLibraryAskSettings] = useState<AppSettings | null>(null);
   const [query, setQuery] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
   const [recordRequest, setRecordRequest] = useState(0);
@@ -105,6 +111,14 @@ export default function App() {
   const [recorder, setRecorder] = useState<RecorderStatus | null>(null);
   const [imports, setImports] = useState<ImportStatus>({ current: null, queued: 0, errors: [] });
   const [importHover, setImportHover] = useState(false);
+
+  useEffect(() => {
+    if (libraryAskQuestion === null) return;
+    let active = true;
+    void aiStatus().then((status) => { if (active) setLibraryAskAiStatus(status); }, () => {});
+    void getSettings().then((settings) => { if (active) setLibraryAskSettings(settings); }, () => {});
+    return () => { active = false; };
+  }, [libraryAskQuestion]);
 
   useEffect(() => {
     let active = true;
@@ -250,6 +264,7 @@ export default function App() {
     setSelectedId(id);
     setPanel(null);
     setShowSearch(false);
+    setLibraryAskQuestion(null);
     setOpenAt(null);
   }
 
@@ -258,21 +273,32 @@ export default function App() {
     setSelectedId(hit.meeting_id);
     setPanel(null);
     setShowSearch(false);
+    setLibraryAskQuestion(null);
     setOpenAt({ segment_id: hit.segment_id, revision: hit.revision, start_ms: hit.start_ms, end_ms: hit.end_ms });
   }
 
-  function requestRecording() { setSelectedId(null); setShowSearch(false); setPanel(null); setShowRecording(true); setRecordRequest((value) => value + 1); }
+  function openLibraryCitation(citation: LibraryCitation) {
+    setShowRecording(false);
+    setSelectedId(citation.meeting_id);
+    setPanel(null);
+    setShowSearch(false);
+    setLibraryAskQuestion(null);
+    setOpenAt({ segment_id: citation.segment_id, revision: citation.revision, start_ms: citation.start_ms, end_ms: citation.end_ms });
+  }
+
+  function requestRecording() { setSelectedId(null); setShowSearch(false); setLibraryAskQuestion(null); setPanel(null); setShowRecording(true); setRecordRequest((value) => value + 1); }
   const sorted = [...(meetings ?? [])].sort((a, b) => b.started_at.localeCompare(a.started_at));
   let previousGroup = "";
   const busyRecording = recorder?.phase !== "idle" && recorder?.phase != null;
   const notifications = <NotificationArea importing={imports.current} queued={imports.queued} importErrors={imports.errors} deleteError={deleting ? null : deleteError} malformed={malformed}
     onDismissImportErrors={() => void dismissErrors()} onDismissDeleteError={() => setDeleteError(null)} onDismissMalformed={() => setMalformed([])} />;
-  const viewKey = panel ?? (showSearch ? "search" : selectedId ? `meeting:${selectedId}` : showRecording && busyRecording ? "recording" : "library");
+  const viewKey = panel ?? (showSearch ? "search" : libraryAskQuestion !== null ? "library-ask" : selectedId ? `meeting:${selectedId}` : showRecording && busyRecording ? "recording" : "library");
   const pageHeader = panel === "settings" ? null
     : panel === "help" ? <PageHeader title="Help" context="App information, shortcuts and diagnostics." />
     : showSearch ? <PageHeader title="Search" context="Find a Segment across Transcripts in your Library." />
+    : libraryAskQuestion !== null ? <PageHeader title="Library Ask" context="Answers from relevant Meetings in your Library." actions={<Button variant="secondary" onClick={() => setShowSearch(true)}>Back to Library search</Button>} />
     : <PageHeader title="Library" context="Your Meetings, kept on this PC." actions={<Button variant="secondary" onClick={() => void pickFiles()}><Import size={16} strokeWidth={1.5} />Import a file</Button>} />;
-  const view = panel === "settings" ? <SettingsView initialTab={settingsTab} /> : panel === "help" ? <HelpView onOpenGuide={() => void openGuide()} /> : showSearch ? <LibrarySearch query={query} onQueryChange={setQuery} onOpen={openHit} /> : selectedId ? <MeetingView key={selectedId} id={selectedId} recordingMeetingId={busyRecording ? recorder?.meeting_id : null} openAt={openAt} onOpened={() => setOpenAt(null)} onDeleted={() => { setSelectedId(null); setOpenAt(null); setScan((value) => value + 1); }} onRenamed={() => setScan((value) => value + 1)} onOpenSettings={(tab) => { setSettingsTab(tab); setPanel("settings"); }} onBack={() => { setSelectedId(null); setOpenAt(null); setScan((value) => value + 1); }} notifications={notifications} /> : showRecording && busyRecording && recorder ? <RecordingScreen status={recorder} title={meetings?.find((meeting) => meeting.id === recorder.meeting_id)?.title} onRenamed={() => setScan((value) => value + 1)} /> : <section className="flex min-h-0 flex-1 flex-col" aria-label="Library home">
+  const view = panel === "settings" ? <SettingsView initialTab={settingsTab} /> : panel === "help" ? <HelpView onOpenGuide={() => void openGuide()} /> : showSearch ? <LibrarySearch query={query} onQueryChange={setQuery} onOpen={openHit} onAsk={(question) => { setLibraryAskQuestion(question); setShowSearch(false); }} /> : libraryAskQuestion !== null ? <LibraryAskPanel initialQuestion={libraryAskQuestion} meetings={meetings ?? []} aiStatus={libraryAskAiStatus} languageModels={libraryAskSettings?.language_models} onOpenCitation={openLibraryCitation} onOpenSettings={() => { setLibraryAskQuestion(null); setSettingsTab("language-models"); setPanel("settings"); }} /> : selectedId ? <MeetingView key={selectedId} id={selectedId} recordingMeetingId={busyRecording ? recorder?.meeting_id : null} openAt={openAt} onOpened={() => setOpenAt(null)} onDeleted={() => { setSelectedId(null); setOpenAt(null); setScan((value) => value + 1); }} onRenamed={() => setScan((value) => value + 1)} onOpenSettings={(tab) => { setSettingsTab(tab); setPanel("settings"); }} onBack={() => { setSelectedId(null); setOpenAt(null); setScan((value) => value + 1); }} notifications={notifications} /> : showRecording && busyRecording && recorder ? <RecordingScreen status={recorder} title={meetings?.find((meeting) => meeting.id === recorder.meeting_id)?.title} onRenamed={() => setScan((value) => value + 1)} /> : <section className="flex min-h-0 flex-1 flex-col" aria-label="Library home">
     {failed ? <div className="grid flex-1 place-items-center p-10"><ErrorState title="Couldn't load the Library" guidance="Try rescanning the Library." onRetry={() => setScan((value) => value + 1)} /></div> : meetings === null ? <div className="grid flex-1 place-items-center p-10"><Loading message="Loading the Library…" /></div> : meetings.length === 0 ? <div className="grid flex-1 place-items-center p-10"><div className="grid justify-items-center gap-3"><EmptyState title="Your Library is empty" description={<>Record a call from any app, or import an audio file. Meetings are saved to <span className="text-ink">Documents\Meeting Minutes</span>.</>} action={<><Button variant="recordSoft" disabled={!recorder || busyRecording} onClick={requestRecording}><span aria-hidden="true" className="size-2 rounded-full bg-current shadow-[0_0_0_3px_color-mix(in_srgb,currentColor_25%,transparent)]" />Record</Button><Button variant="secondary" onClick={() => void pickFiles()}><Import size={16} strokeWidth={1.5} />Import a file</Button></>} /><p className="m-0 text-center text-xs text-ink-muted">Or press <KeyCombo keys={recordHotkey} className="mx-0.5 align-middle" /> from any app.</p></div></div> : <LibraryTable meetings={meetings} details={details} jobs={jobs} recordingMeetingId={busyRecording ? recorder?.meeting_id ?? null : null} onOpen={openMeeting} onRename={(meeting) => setRenaming({ id: meeting.id, title: meeting.title, saving: false, error: null })} onDelete={(meeting) => { setDeleteError(null); setDeleting(meeting); }} onCancelProcessing={(id) => void cancelJob(id)} />}
   </section>;
 
@@ -280,7 +306,7 @@ export default function App() {
     <aside aria-label="Library sidebar" className="flex min-h-0 flex-col border-r border-line bg-panel">
       <div className="grid gap-3 px-3 pb-2 pt-4">
         <div className="flex min-w-0 items-center gap-2">
-          <button type="button" className="w-fit shrink-0 rounded-sm" aria-label="Library home" onClick={() => { setSelectedId(null); setShowRecording(false); setPanel(null); setShowSearch(false); }}><Wordmark className="h-[22px]" /></button>
+          <button type="button" className="w-fit shrink-0 rounded-sm" aria-label="Library home" onClick={() => { setSelectedId(null); setShowRecording(false); setPanel(null); setShowSearch(false); setLibraryAskQuestion(null); }}><Wordmark className="h-[22px]" /></button>
           {busyRecording && <span className="inline-flex items-center gap-1.5 text-xs font-medium text-record"><span aria-hidden="true" className={`size-2 rounded-full bg-record ${recorder?.phase === "recording" ? "animate-[recording-pulse_2s_ease-in-out_infinite] motion-reduce:animate-none" : ""}`} />{recorder?.phase === "paused" ? "Paused" : "Recording"}</span>}
         </div>
         <div className="grid grid-cols-[1fr_auto] gap-1.5">
@@ -336,7 +362,7 @@ export default function App() {
     </aside>
     <div className="flex min-h-0 min-w-0 flex-col overflow-hidden bg-canvas">
       <RecordingBar recordRequest={recordRequest} hideIdleButton />
-      <MainViewTransition viewKey={viewKey}>{!panel && !showSearch && (selectedId || showRecording && busyRecording) ? view : <>{pageHeader}{notifications}{view}</>}</MainViewTransition>
+      <MainViewTransition viewKey={viewKey}>{!panel && !showSearch && libraryAskQuestion === null && (selectedId || showRecording && busyRecording) ? view : <>{pageHeader}{notifications}{view}</>}</MainViewTransition>
     </div>
     {deleting && <ConfirmDelete title={deleting.title} busy={deleteBusy} onConfirm={() => void confirmDelete()} onCancel={() => setDeleting(null)} error={deleteError} />}
     {setupSettings && setupInfo && (guideOpen || setupSettings.first_run_completed === false && meetings?.length === 0) && <FirstRun settings={setupSettings} discreteGpu={setupInfo.discrete_gpu} libraryLocation={setupInfo.library_location} onFinish={() => finishGuide()} onUseKey={() => finishGuide(true)} />}

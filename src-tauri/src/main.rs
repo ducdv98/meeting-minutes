@@ -6,7 +6,7 @@ mod record_prompt_windows;
 mod snapshot_windows;
 
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     fs,
     path::PathBuf,
     sync::{
@@ -37,6 +37,7 @@ use meeting_minutes_core::{
     },
     import::import_extension,
     language_models::{LanguageModel, LanguageModelSettings},
+    library_ask::{self, DateRange, LibraryAskPlan},
     microphone_usage::{MicrophoneApp, MicrophoneUsage, SystemMicrophoneUsage},
     model_downloads::{ModelDownloadStatus, ModelDownloads},
     models::{self, DEFAULT_MODEL, MODELS},
@@ -336,10 +337,43 @@ struct AskDelta {
 struct AsksChanged {
     meeting_id: String,
 }
+struct StoredLibraryAskPlan {
+    plan: LibraryAskPlan,
+    provider: ai::HttpProvider,
+}
+#[derive(serde::Serialize)]
+struct PlannedLibraryMeeting {
+    meeting_id: String,
+    title: String,
+    started_at: String,
+    excerpts: usize,
+}
+#[derive(serde::Serialize)]
+struct LibraryAskPlanView {
+    plan_id: String,
+    provider: ProviderKind,
+    cloud: bool,
+    meetings: Vec<PlannedLibraryMeeting>,
+}
+#[derive(serde::Serialize)]
+struct LibraryAskView {
+    asks: Vec<library_ask::LibraryAskEntry>,
+    active: Option<ActiveAskView>,
+}
+#[derive(Clone, serde::Serialize)]
+struct LibraryAskDelta {
+    ask_id: String,
+    text: String,
+}
+#[derive(Clone, serde::Serialize)]
+struct LibraryAsksChanged;
 #[derive(Default)]
 struct AiJobsInner {
     summaries: HashMap<String, SummaryJob>,
     asks: HashMap<String, ActiveAsk>,
+    library_ask_plans: HashMap<String, StoredLibraryAskPlan>,
+    next_library_ask_plan: u64,
+    library_ask: Option<ActiveAsk>,
 }
 type AiJobs = Mutex<AiJobsInner>;
 
@@ -1865,6 +1899,199 @@ fn stop_ask(app: AppHandle, meeting_id: String) -> Result<(), String> {
     let state = app.state::<AiJobs>();
     let jobs = state.lock().map_err(|error| error.to_string())?;
     if let Some(active) = jobs.asks.get(&meeting_id) {
+        active.cancel.store(true, Ordering::SeqCst);
+    }
+    Ok(())
+}
+
+fn library_ask_root(app: &AppHandle) -> Result<PathBuf, String> {
+    let state = app.state::<LibraryState>();
+    let guard = state.lock().map_err(|error| error.to_string())?;
+    Ok(guard.as_ref().map_err(Clone::clone)?.root().to_path_buf())
+}
+
+fn library_asks_view(app: &AppHandle) -> Result<LibraryAskView, String> {
+    let root = library_ask_root(app)?;
+    let state = app.state::<AiJobs>();
+    let jobs = state.lock().map_err(|error| error.to_string())?;
+    let active = jobs.library_ask.as_ref().map(|ask| ActiveAskView {
+        ask_id: ask.ask_id.clone(),
+        partial: ask.partial.clone(),
+    });
+    let mut history = library_ask::read_library_asks(&root).map_err(|error| error.to_string())?;
+    if active.is_none() && history.interrupted() {
+        library_ask::write_library_asks(&root, &history).map_err(|error| error.to_string())?;
+    }
+    Ok(LibraryAskView {
+        asks: history.asks,
+        active,
+    })
+}
+
+#[tauri::command]
+fn library_asks(app: AppHandle) -> Result<LibraryAskView, String> {
+    library_asks_view(&app)
+}
+
+#[tauri::command]
+async fn library_ask_plan(
+    app: AppHandle,
+    question: String,
+    range: DateRange,
+    model: Option<LanguageModel>,
+) -> Result<LibraryAskPlanView, String> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<LibraryAskPlanView, String> {
+        let provider = selected_ai(&app, "ask", model.as_ref())?;
+        let kind = provider.kind();
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        let languages = {
+            let state = app.state::<LibraryState>();
+            let guard = state.lock().map_err(|error| error.to_string())?;
+            let library = guard.as_ref().map_err(Clone::clone)?;
+            library
+                .meeting_languages()
+                .map_err(|error| error.to_string())?
+        };
+        // Query expansion calls the Language model, so the Library stays unlocked meanwhile.
+        let terms = library_ask::library_ask_terms(
+            &provider,
+            &question,
+            &languages,
+            &AtomicBool::new(false),
+        )
+        .map_err(|error| error.to_string())?;
+        let plan = {
+            let state = app.state::<LibraryState>();
+            let guard = state.lock().map_err(|error| error.to_string())?;
+            let library = guard.as_ref().map_err(Clone::clone)?;
+            library_ask::gather_library_evidence(library, kind, &question, &terms, range, now_ms)
+                .map_err(|error| error.to_string())?
+        };
+        let meetings = plan
+            .evidence
+            .iter()
+            .map(|meeting| PlannedLibraryMeeting {
+                meeting_id: meeting.meeting_id.clone(),
+                title: meeting.title.clone(),
+                started_at: meeting.started_at.clone(),
+                excerpts: meeting.segments.len(),
+            })
+            .collect();
+        let state = app.state::<AiJobs>();
+        let mut jobs = state.lock().map_err(|error| error.to_string())?;
+        jobs.next_library_ask_plan += 1;
+        let plan_id = format!("lap{}", jobs.next_library_ask_plan);
+        // Only the latest plan can be confirmed; a cancelled one is dropped here.
+        jobs.library_ask_plans.clear();
+        jobs.library_ask_plans
+            .insert(plan_id.clone(), StoredLibraryAskPlan { plan, provider });
+        Ok(LibraryAskPlanView {
+            plan_id,
+            provider: kind,
+            cloud: kind.is_cloud(),
+            meetings,
+        })
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+fn library_ask_start(
+    app: AppHandle,
+    plan_id: String,
+    excluded_meetings: Vec<String>,
+    consent: bool,
+) -> Result<LibraryAskView, String> {
+    let _update_gate = lock_update_start_gate(&app)?;
+    ensure_update_not_active(&app)?;
+    let root = library_ask_root(&app)?;
+    let cancel = Arc::new(AtomicBool::new(false));
+    let (stored, ask_id, view) = {
+        let state = app.state::<AiJobs>();
+        let mut jobs = state.lock().map_err(|error| error.to_string())?;
+        if jobs.library_ask.is_some() {
+            return Err(library_ask::LibraryAskError::Busy.to_string());
+        }
+        let stored = jobs
+            .library_ask_plans
+            .get(&plan_id)
+            .ok_or("This Library Ask plan is no longer available")?;
+        if stored.provider.kind().is_cloud() && !stored.plan.evidence.is_empty() && !consent {
+            return Err("Confirm the Meetings before sending excerpts".into());
+        }
+        let stored = jobs.library_ask_plans.remove(&plan_id).unwrap();
+        let mut history =
+            library_ask::read_library_asks(&root).map_err(|error| error.to_string())?;
+        history.interrupted();
+        let at = chrono::Local::now().to_rfc3339();
+        let ask_id = history
+            .begin(
+                &stored.plan.question,
+                stored.plan.range,
+                stored.provider.kind(),
+                stored.provider.model(),
+                &at,
+            )
+            .map_err(|error| error.to_string())?;
+        library_ask::write_library_asks(&root, &history).map_err(|error| error.to_string())?;
+        jobs.library_ask = Some(ActiveAsk {
+            ask_id: ask_id.clone(),
+            partial: String::new(),
+            cancel: cancel.clone(),
+        });
+        let view = LibraryAskView {
+            asks: history.asks,
+            active: Some(ActiveAskView {
+                ask_id: ask_id.clone(),
+                partial: String::new(),
+            }),
+        };
+        (stored, ask_id, view)
+    };
+    let _ = app.emit("library-asks-changed", LibraryAsksChanged);
+    log_event(LogEvent::AskStarted);
+    let excluded: HashSet<String> = excluded_meetings.into_iter().collect();
+    let app = app.clone();
+    thread::spawn(move || {
+        let outcome = library_ask::run_library_ask(
+            &stored.provider,
+            &stored.plan,
+            &excluded,
+            &mut |text| {
+                if let Ok(mut jobs) = app.state::<AiJobs>().lock() {
+                    if let Some(active) = jobs.library_ask.as_mut() {
+                        active.partial = text.to_owned();
+                    }
+                }
+                let _ = app.emit(
+                    "library-ask-delta",
+                    LibraryAskDelta {
+                        ask_id: ask_id.clone(),
+                        text: text.to_owned(),
+                    },
+                );
+            },
+            &cancel,
+        );
+        log_event(LogEvent::from_answer_state(outcome.state));
+        if let Ok(mut history) = library_ask::read_library_asks(&root) {
+            history.finish(&ask_id, outcome);
+            let _ = library_ask::write_library_asks(&root, &history);
+        }
+        if let Ok(mut jobs) = app.state::<AiJobs>().lock() {
+            jobs.library_ask = None;
+        }
+        let _ = app.emit("library-asks-changed", LibraryAsksChanged);
+    });
+    Ok(view)
+}
+
+#[tauri::command]
+fn stop_library_ask(app: AppHandle) -> Result<(), String> {
+    let state = app.state::<AiJobs>();
+    let jobs = state.lock().map_err(|error| error.to_string())?;
+    if let Some(active) = &jobs.library_ask {
         active.cancel.store(true, Ordering::SeqCst);
     }
     Ok(())
@@ -3905,7 +4132,11 @@ fn main() {
             ask_send_plan,
             ask_meeting,
             retry_ask,
-            stop_ask
+            stop_ask,
+            library_ask_plan,
+            library_ask_start,
+            library_asks,
+            stop_library_ask
         ])
         .run(tauri::generate_context!())
         .expect("error while running Meeting Minutes");

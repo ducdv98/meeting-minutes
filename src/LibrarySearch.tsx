@@ -6,9 +6,11 @@ import { EmptyState } from "./components/states/EmptyState";
 import { ErrorState } from "./components/states/ErrorState";
 import { Loading } from "./components/states/Loading";
 import { Input } from "./components/ui/Input";
+import { Button } from "./components/ui/Button";
 
 interface Props {
   onOpen(hit: SearchHit): void;
+  onAsk?(question: string): void;
   query?: string;
   onQueryChange?(query: string): void;
 }
@@ -17,7 +19,7 @@ function dateLabel(value: string) {
   return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(value));
 }
 
-export default function LibrarySearch({ onOpen, query: controlledQuery, onQueryChange }: Props) {
+export default function LibrarySearch({ onOpen, onAsk, query: controlledQuery, onQueryChange }: Props) {
   const [localQuery, setLocalQuery] = useState("");
   const query = controlledQuery ?? localQuery;
   const [hits, setHits] = useState<SearchHit[]>([]);
@@ -76,6 +78,7 @@ export default function LibrarySearch({ onOpen, query: controlledQuery, onQueryC
       <Input type="search" aria-label={controlledQuery === undefined ? "Search transcripts" : "Search the Library"} value={query} onChange={(event) => changeQuery(event.target.value)}
         onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); runSearch(query); } }}
         className="h-full border-0 bg-transparent px-0 text-read shadow-none focus:border-0 focus:shadow-none" />
+      <Button variant="secondary" disabled={!query.trim()} onClick={() => onAsk?.(query.trim())}>Ask</Button>
     </div>
     {!query.trim() && <div className="grid flex-1 place-items-center p-10"><EmptyState title="Search the Library" description="Find a moment in any Transcript." /></div>}
     {query.trim() && !searched && !error && <div className="px-7"><Loading message="Searching the Library…" rows={2} /></div>}
