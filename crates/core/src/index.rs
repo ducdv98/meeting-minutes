@@ -23,6 +23,12 @@ pub(crate) type IndexedMeeting = (
     Vec<Snapshot>,
 );
 
+pub(crate) struct RankedSegmentHit {
+    pub meeting_id: String,
+    pub revision: u32,
+    pub segment_id: String,
+}
+
 impl Index {
     pub(crate) fn open(path: &Path) -> Result<Self, LibraryError> {
         if let Some(parent) = path.parent() {
@@ -152,6 +158,42 @@ impl Index {
                 end_ms: row.get(5)?,
                 snippet: row.get(6)?,
                 revision: row.get(7)?,
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    pub(crate) fn ranked_segments(
+        &self,
+        terms: &[String],
+        since_ms: Option<i64>,
+    ) -> Result<Vec<RankedSegmentHit>, LibraryError> {
+        let pieces: Vec<_> = terms
+            .iter()
+            .flat_map(|term| {
+                crate::search_folding::fold(term)
+                    .split(|character: char| !character.is_alphanumeric())
+                    .filter(|piece| !piece.is_empty())
+                    .map(|piece| format!("\"{piece}\"*"))
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        if pieces.is_empty() {
+            return Ok(Vec::new());
+        }
+        let query = format!("folded:({})", pieces.join(" OR "));
+        let mut statement = self.connection.prepare(
+            "SELECT s.meeting_id, s.revision, s.segment_id \
+             FROM segments s JOIN meetings m ON m.id = s.meeting_id \
+             WHERE segments MATCH ?1 AND s.participant <> '' \
+             AND (?2 IS NULL OR m.started_at_ms >= ?2) \
+             ORDER BY bm25(segments), m.started_at_ms DESC, s.start_ms, s.rowid",
+        )?;
+        let rows = statement.query_map(params![query, since_ms], |row| {
+            Ok(RankedSegmentHit {
+                meeting_id: row.get(0)?,
+                revision: row.get(1)?,
+                segment_id: row.get(2)?,
             })
         })?;
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
