@@ -1063,28 +1063,6 @@ fn multipart(
     body
 }
 
-#[cfg(test)]
-mod language_tests {
-    use super::*;
-
-    #[test]
-    fn sends_supported_language_codes() {
-        for language in Language::ALL {
-            let body = multipart(
-                "test",
-                b"audio",
-                Uuid::nil(),
-                "microphone",
-                0,
-                1000,
-                Some(language),
-            );
-            let text = String::from_utf8(body).unwrap();
-            assert!(text.contains(&format!("name=\"language\"\r\n\r\n{}\r\n", language.code())));
-        }
-    }
-}
-
 enum UploadFailure {
     Gateway(GatewayError),
     Transport,
@@ -1250,6 +1228,28 @@ fn send_cancellable(
             Err(mpsc::RecvTimeoutError::Disconnected) => {
                 return Err(AiError::Unreachable("Managed request ended".into()))
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod language_tests {
+    use super::*;
+
+    #[test]
+    fn sends_supported_language_codes() {
+        for language in Language::ALL {
+            let body = multipart(
+                "test",
+                b"audio",
+                Uuid::nil(),
+                "microphone",
+                0,
+                1000,
+                Some(language),
+            );
+            let text = String::from_utf8(body).unwrap();
+            assert!(text.contains(&format!("name=\"language\"\r\n\r\n{}\r\n", language.code())));
         }
     }
 }

@@ -397,6 +397,7 @@ fn background_sets_managed_source_for_each_ready_stream() {
 
 struct AllSpeech;
 impl SpeechDetector for AllSpeech {
+    #[allow(clippy::single_range_in_vec_init)] // one speech range covering every sample
     fn speech_ranges(&mut self, samples: &[f32]) -> Result<Vec<std::ops::Range<usize>>, String> {
         Ok(vec![0..samples.len()])
     }
