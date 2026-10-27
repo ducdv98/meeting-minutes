@@ -88,7 +88,7 @@ _Avoid_: Pro tier
 ### Understanding
 
 **Meeting language**:
-The spoken language of a Meeting, one of the app's supported languages, chosen by the user or detected. One language per Meeting; its Summary and Answers are written in it.
+The spoken language of a Meeting, one of the app's supported languages, chosen by the user or detected. One language per Meeting; its Summary and the Answers to its Asks are written in it.
 
 **Processing**:
 Turning a Meeting's audio into a Transcript, then a Summary and Action items. Processing starts automatically after Stop, in the cloud when the user has connected Managed transcription or set up a provider key, and locally otherwise. One Meeting's Transcript may come partly from each.
@@ -169,7 +169,7 @@ _Avoid_: Chat, query, prompt
 The response to an Ask: either supported by Citations, or an explicit **Insufficient evidence** result. An Answer may also be **Incomplete** (stopped or failed mid-stream) or **Unverified** (contains invalid Citations); neither is used as context for later Asks.
 
 **Library Ask**:
-A question the user poses about the whole Library, answered only from the Transcripts of the Meetings found relevant to it. Its Answer follows the same rules as an Ask's, and each Citation names its Meeting. It is not an Ask: an Ask never reaches beyond its one Meeting.
+A question the user poses about the whole Library, or about the Meetings in a chosen date range, answered only from the Transcripts of the Meetings found relevant to it. Its Answer follows the same rules as an Ask's, is written in the language of the question, and each Citation names its Meeting. Library Asks are kept in the Library, not in any one Meeting. It is not an Ask: an Ask never reaches beyond its one Meeting.
 _Avoid_: Global chat, cross-meeting Ask
 
 **Library search**:
