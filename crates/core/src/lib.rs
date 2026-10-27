@@ -1,5 +1,6 @@
 mod index;
 mod library;
+pub mod library_retrieval;
 mod meeting_file;
 mod metadata;
 mod naming;

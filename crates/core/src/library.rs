@@ -132,7 +132,7 @@ fn import_error(error: crate::processing::ProcessingError) -> LibraryError {
 
 pub struct Library {
     root: PathBuf,
-    index: Index,
+    pub(crate) index: Index,
     your_name: Option<String>,
 }
 
