@@ -251,16 +251,6 @@ fn system(language: Language, reduce: bool, user_name: &str) -> String {
     s
 }
 
-#[cfg(test)]
-mod language_tests {
-    use super::*;
-
-    #[test]
-    fn summary_and_reduction_use_the_meeting_language() {
-        assert!(system(Language::Pt, false, "Ana").contains("transcript in Portuguese"));
-        assert!(system(Language::Pt, true, "Ana").contains("transcript in Portuguese"));
-    }
-}
 fn map_request(
     language: Language,
     segments: &[Segment],
@@ -551,4 +541,15 @@ pub fn summarize(
         provider,
         dropped,
     ))
+}
+
+#[cfg(test)]
+mod language_tests {
+    use super::*;
+
+    #[test]
+    fn summary_and_reduction_use_the_meeting_language() {
+        assert!(system(Language::Pt, false, "Ana").contains("transcript in Portuguese"));
+        assert!(system(Language::Pt, true, "Ana").contains("transcript in Portuguese"));
+    }
 }

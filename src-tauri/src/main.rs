@@ -32,8 +32,8 @@ use meeting_minutes_core::{
         CloudEngine,
     },
     diagnostics::{
-        build_diagnostics_with_session_counts, count_source_health_warning, log_event,
-        session_counts, DiagnosticsInput, LogEvent,
+        build_diagnostics_with_session_counts, log_event, session_counts, DiagnosticsInput,
+        LogEvent,
     },
     import::import_extension,
     language_models::{LanguageModel, LanguageModelSettings},
@@ -110,7 +110,7 @@ fn notify_source_health(app: &AppHandle, status: &RecorderStatus) {
         Err(_) => return,
     };
     for source in started {
-        count_source_health_warning();
+        meeting_minutes_core::diagnostics::count_source_health_warning();
         let (title, source_name) = match source {
             Source::Microphone => ("Microphone has no signal", "Microphone"),
             Source::SystemAudio => ("System audio is silent", "System audio"),

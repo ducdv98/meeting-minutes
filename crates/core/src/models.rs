@@ -154,6 +154,55 @@ fn install_from_reader_inner(
     result
 }
 
+pub fn download(
+    models_dir: &Path,
+    info: &ModelInfo,
+    progress: &mut dyn FnMut(u64),
+    cancel: &AtomicBool,
+) -> Result<PathBuf, ProcessingError> {
+    download_from_url(models_dir, info, &model_url(info), progress, cancel)
+}
+
+pub fn download_vad(
+    models_dir: &Path,
+    progress: &mut dyn FnMut(u64),
+    cancel: &AtomicBool,
+) -> Result<PathBuf, ProcessingError> {
+    download_from_url(models_dir, &VAD_MODEL, vad_model_url(), progress, cancel)
+}
+
+fn download_from_url(
+    models_dir: &Path,
+    info: &ModelInfo,
+    url: &str,
+    progress: &mut dyn FnMut(u64),
+    cancel: &AtomicBool,
+) -> Result<PathBuf, ProcessingError> {
+    if is_installed(models_dir, info) {
+        return Ok(model_path(models_dir, info));
+    }
+    let response = ureq::AgentBuilder::new()
+        .timeout_connect(Duration::from_secs(30))
+        .timeout_read(Duration::from_secs(30))
+        .build()
+        .get(url)
+        .call()
+        .map_err(|e| ProcessingError::Download(e.to_string()))?;
+    install_from_reader(models_dir, info, response.into_reader(), progress, cancel).map_err(
+        |error| match error {
+            ProcessingError::Io(io_error)
+                if matches!(
+                    io_error.kind(),
+                    std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+                ) =>
+            {
+                ProcessingError::Download(io_error.to_string())
+            }
+            other => other,
+        },
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -246,53 +295,4 @@ mod tests {
         assert!(!model_path(dir.path(), &TEST_MODEL).exists());
         assert!(!dir.path().join("fixture.bin.part").exists());
     }
-}
-
-pub fn download(
-    models_dir: &Path,
-    info: &ModelInfo,
-    progress: &mut dyn FnMut(u64),
-    cancel: &AtomicBool,
-) -> Result<PathBuf, ProcessingError> {
-    download_from_url(models_dir, info, &model_url(info), progress, cancel)
-}
-
-pub fn download_vad(
-    models_dir: &Path,
-    progress: &mut dyn FnMut(u64),
-    cancel: &AtomicBool,
-) -> Result<PathBuf, ProcessingError> {
-    download_from_url(models_dir, &VAD_MODEL, vad_model_url(), progress, cancel)
-}
-
-fn download_from_url(
-    models_dir: &Path,
-    info: &ModelInfo,
-    url: &str,
-    progress: &mut dyn FnMut(u64),
-    cancel: &AtomicBool,
-) -> Result<PathBuf, ProcessingError> {
-    if is_installed(models_dir, info) {
-        return Ok(model_path(models_dir, info));
-    }
-    let response = ureq::AgentBuilder::new()
-        .timeout_connect(Duration::from_secs(30))
-        .timeout_read(Duration::from_secs(30))
-        .build()
-        .get(url)
-        .call()
-        .map_err(|e| ProcessingError::Download(e.to_string()))?;
-    install_from_reader(models_dir, info, response.into_reader(), progress, cancel).map_err(
-        |error| match error {
-            ProcessingError::Io(io_error)
-                if matches!(
-                    io_error.kind(),
-                    std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
-                ) =>
-            {
-                ProcessingError::Download(io_error.to_string())
-            }
-            other => other,
-        },
-    )
 }
