@@ -405,7 +405,7 @@ fn source_clock_places_packets_and_excludes_pause() {
     let mut clock = SourceClock::new(1_000_000);
     let packet = Packet {
         samples: vec![0.5; 960],
-        qpc_100ns: Some(1_000_000),
+        host_100ns: Some(1_000_000),
         silent: false,
         discontinuity: false,
     };
@@ -423,14 +423,14 @@ fn source_clock_handles_gaps_silence_and_idle_overlap() {
     let mut clock = SourceClock::new(start);
     let first = Packet {
         samples: vec![1.0; 480 * 2],
-        qpc_100ns: Some(start),
+        host_100ns: Some(start),
         silent: false,
         discontinuity: false,
     };
     assert_eq!(clock.packet(&first, start).len(), 960);
     let second = Packet {
         samples: vec![1.0; 480 * 2],
-        qpc_100ns: Some(start + 300_000),
+        host_100ns: Some(start + 300_000),
         silent: true,
         discontinuity: false,
     };
@@ -450,7 +450,7 @@ fn source_clock_pause_pads_and_resume_drops_old_packets() {
     clock.resume(start + 1_100_000);
     let stale = Packet {
         samples: vec![1.0; 480 * 2],
-        qpc_100ns: Some(start + 50_000),
+        host_100ns: Some(start + 50_000),
         silent: false,
         discontinuity: false,
     };

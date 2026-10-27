@@ -258,7 +258,7 @@ fn deliver_source(opener: &PacketOpener, source: Source, samples: Vec<f32>, sile
     };
     packets.lock().unwrap().push_back(Packet {
         samples,
-        qpc_100ns: None,
+        host_100ns: None,
         silent,
         discontinuity: false,
     });
