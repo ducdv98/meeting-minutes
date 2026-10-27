@@ -376,7 +376,7 @@ fn words(input: &str) -> HashSet<String> {
         .map(str::to_owned)
         .collect()
 }
-fn terms(question: &str) -> HashSet<String> {
+pub(crate) fn terms(question: &str) -> HashSet<String> {
     let stops: HashSet<_> = "the and what was did who when is are of to in a an about we they it this that và là của có không gì ai khi nào được cho với này đó những các một".split_whitespace().flat_map(words).collect();
     words(question).difference(&stops).cloned().collect()
 }
