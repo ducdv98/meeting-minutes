@@ -13,8 +13,8 @@ use meeting_minutes_core::{
     ai::{AiError, GenerateRequest, ProviderKind, TextProvider},
     ask::{AnswerState, AskOptions},
     library_ask::{
-        plan_library_ask, read_library_asks, run_library_ask, write_library_asks, DateRange,
-        LibraryAskError, LibraryAskHistory, LibraryAskPlan,
+        gather_library_evidence, library_ask_terms, read_library_asks, run_library_ask,
+        write_library_asks, DateRange, LibraryAskError, LibraryAskHistory, LibraryAskPlan,
     },
     library_retrieval::{EvidenceSegment, MeetingEvidence},
     Library,
@@ -97,7 +97,7 @@ fn plan(range: DateRange) -> LibraryAskPlan {
 }
 
 #[test]
-fn plan_validates_question_before_using_the_provider() {
+fn planning_validates_question_before_using_the_provider() {
     let temp = TempDir::new().unwrap();
     let library = Library::open(
         temp.path().join("Library"),
@@ -107,16 +107,19 @@ fn plan_validates_question_before_using_the_provider() {
     let provider = FakeProvider::new(vec![]);
     let cancel = AtomicBool::new(false);
     assert!(matches!(
-        plan_library_ask(&provider, &library, "  ", DateRange::All, 0, &cancel),
+        library_ask_terms(
+            &provider,
+            "  ",
+            &library.meeting_languages().unwrap(),
+            &cancel
+        ),
         Err(LibraryAskError::EmptyQuestion)
     ));
     assert!(matches!(
-        plan_library_ask(
+        library_ask_terms(
             &provider,
-            &library,
             &"a".repeat(2001),
-            DateRange::All,
-            0,
+            &library.meeting_languages().unwrap(),
             &cancel
         ),
         Err(LibraryAskError::QuestionTooLong)
@@ -142,8 +145,17 @@ fn date_ranges_use_the_meeting_start_boundary() {
     assert_eq!(DateRange::All.since_ms(now), None);
     assert_eq!(
         serde_json::to_string(&DateRange::Last7Days).unwrap(),
-        "\"last7_days\""
+        "\"last_7_days\""
     );
+    assert_eq!(
+        serde_json::to_string(&DateRange::Last30Days).unwrap(),
+        "\"last_30_days\""
+    );
+    assert_eq!(
+        serde_json::to_string(&DateRange::Last90Days).unwrap(),
+        "\"last_90_days\""
+    );
+    assert_eq!(serde_json::to_string(&DateRange::All).unwrap(), "\"all\"");
 }
 
 #[test]
@@ -175,6 +187,9 @@ fn run_maps_cross_meeting_references_and_rejects_unknown_ones() {
         .citations
         .iter()
         .all(|c| c.segment_id == "s00001" && c.revision == 2 && c.start_ms == 1000));
+    assert_eq!(result.citations[0].title, "Title one");
+    assert_eq!(result.citations[0].started_at, "2026-10-20T09:00:00Z");
+    assert_eq!(result.citations[1].title, "Title two");
     assert_eq!(shown.last().unwrap(), "Both approved");
 
     for reference in ["M3-s00001", "M1-s99999"] {
@@ -352,13 +367,20 @@ fn plan_uses_expanded_terms_and_falls_back_to_question_terms() {
         .unwrap()
         .timestamp_millis();
     let expanded = FakeProvider::new(vec![Ok(json!({"terms": ["SmartScreen"]}).to_string())]);
-    let plan = plan_library_ask(
+    let terms = library_ask_terms(
         &expanded,
-        &library,
         "What does the support page explain?",
+        &library.meeting_languages().unwrap(),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    let plan = gather_library_evidence(
+        &library,
+        expanded.kind(),
+        "What does the support page explain?",
+        &terms,
         DateRange::All,
         now,
-        &AtomicBool::new(false),
     )
     .unwrap();
     assert!(plan.evidence.iter().any(|meeting| meeting
@@ -370,24 +392,38 @@ fn plan_uses_expanded_terms_and_falls_back_to_question_terms() {
         .contains("Meeting languages"));
 
     let fallback = FakeProvider::new(vec![Err(AiError::InvalidOutput("rewrite failed".into()))]);
-    let plan = plan_library_ask(
+    let terms = library_ask_terms(
         &fallback,
-        &library,
         "SmartScreen",
+        &library.meeting_languages().unwrap(),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    let plan = gather_library_evidence(
+        &library,
+        fallback.kind(),
+        "SmartScreen",
+        &terms,
         DateRange::All,
         now,
-        &AtomicBool::new(false),
     )
     .unwrap();
     assert!(!plan.evidence.is_empty());
     let recent = FakeProvider::new(vec![Ok(json!({"terms": ["Northwind"]}).to_string())]);
-    let plan = plan_library_ask(
+    let terms = library_ask_terms(
         &recent,
-        &library,
         "Northwind?",
+        &library.meeting_languages().unwrap(),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    let plan = gather_library_evidence(
+        &library,
+        recent.kind(),
+        "Northwind?",
+        &terms,
         DateRange::Last7Days,
         now,
-        &AtomicBool::new(false),
     )
     .unwrap();
     assert!(plan.evidence.is_empty());
@@ -426,8 +462,12 @@ fn retrieval_stops_before_loading_later_meetings_when_budget_is_full() {
     let first = &all[0];
     assert_eq!(first.segments[0].text, "alpha beta gamma");
     let line = format!(
-        "[{}] {}: {}",
-        first.segments[0].segment_id, first.segments[0].participant, first.segments[0].text
+        "M1 Title: {}; date: {}\n[M1-{}] {}: {}",
+        first.title,
+        first.started_at,
+        first.segments[0].segment_id,
+        first.segments[0].participant,
+        first.segments[0].text
     );
     let budget = meeting_minutes_core::citation::estimate_tokens(&line);
     fs::write(

@@ -188,24 +188,23 @@ fn evidence_never_exceeds_the_token_budget() {
         ],
     );
 
+    let budget = meeting_minutes_core::citation::estimate_tokens(
+        "M1 Title: Budget; date: 2026-10-12T09:30:00+00:00\n[M1-s2] Remote: budget approved",
+    );
     let evidence = library
-        .library_evidence(&["budget".into()], None, 10)
+        .library_evidence(&["budget".into()], None, budget)
         .unwrap();
     assert_eq!(evidence.len(), 1);
     assert_eq!(evidence[0].segments.len(), 1);
     assert_eq!(evidence[0].segments[0].segment_id, "s2");
-    let lines = evidence[0]
-        .segments
-        .iter()
-        .map(|segment| {
-            format!(
-                "[{}] {}: {}",
-                segment.segment_id, segment.participant, segment.text
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    assert!(meeting_minutes_core::citation::estimate_tokens(&lines) <= 10);
+    let lines = format!(
+        "M1 Title: {}; date: {}\n[M1-s2] {}: {}",
+        evidence[0].title,
+        evidence[0].started_at,
+        evidence[0].segments[0].participant,
+        evidence[0].segments[0].text
+    );
+    assert!(meeting_minutes_core::citation::estimate_tokens(&lines) <= budget);
     assert!(library
         .library_evidence(&["budget".into()], None, 0)
         .unwrap()
@@ -341,9 +340,49 @@ fn retrieval_has_no_meeting_count_cap() {
 
     assert_eq!(
         library
-            .library_evidence(&["budget".into()], None, 200)
+            .library_evidence(&["budget".into()], None, 1000)
             .unwrap()
             .len(),
         12
     );
+}
+
+#[test]
+fn many_short_meetings_fit_the_evidence_actually_sent() {
+    let temp = TempDir::new().unwrap();
+    let mut library = library(&temp);
+    for day in 1..=30 {
+        add_meeting(
+            &mut library,
+            &format!("Planning {day}"),
+            &format!("2026-10-{day:02}T09:30:00Z"),
+            None,
+            &[("s1", "budget")],
+        );
+    }
+    let budget = 110;
+    let evidence = library
+        .library_evidence(&["budget".into()], None, budget)
+        .unwrap();
+    assert!(!evidence.is_empty());
+    let prompt_evidence = evidence
+        .iter()
+        .enumerate()
+        .map(|(index, meeting)| {
+            let prefix = format!("M{}", index + 1);
+            let mut lines = vec![format!(
+                "{prefix} Title: {}; date: {}",
+                meeting.title, meeting.started_at
+            )];
+            lines.extend(meeting.segments.iter().map(|segment| {
+                format!(
+                    "[{prefix}-{}] {}: {}",
+                    segment.segment_id, segment.participant, segment.text
+                )
+            }));
+            lines.join("\n")
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    assert!(meeting_minutes_core::citation::estimate_tokens(&prompt_evidence) <= budget);
 }

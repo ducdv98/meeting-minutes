@@ -373,6 +373,7 @@ struct AiJobsInner {
     asks: HashMap<String, ActiveAsk>,
     library_ask_plans: HashMap<String, StoredLibraryAskPlan>,
     next_library_ask_plan: u64,
+    library_ask_planning: Option<Arc<AtomicBool>>,
     library_ask: Option<ActiveAsk>,
 }
 type AiJobs = Mutex<AiJobsInner>;
@@ -1941,56 +1942,71 @@ async fn library_ask_plan(
     model: Option<LanguageModel>,
 ) -> Result<LibraryAskPlanView, String> {
     tauri::async_runtime::spawn_blocking(move || -> Result<LibraryAskPlanView, String> {
-        let provider = selected_ai(&app, "ask", model.as_ref())?;
-        let kind = provider.kind();
-        let now_ms = chrono::Utc::now().timestamp_millis();
-        let languages = {
-            let state = app.state::<LibraryState>();
-            let guard = state.lock().map_err(|error| error.to_string())?;
-            let library = guard.as_ref().map_err(Clone::clone)?;
-            library
-                .meeting_languages()
+        let cancel = Arc::new(AtomicBool::new(false));
+        {
+            let state = app.state::<AiJobs>();
+            let mut jobs = state.lock().map_err(|error| error.to_string())?;
+            if jobs.library_ask_planning.is_some() || jobs.library_ask.is_some() {
+                return Err(library_ask::LibraryAskError::Busy.to_string());
+            }
+            jobs.library_ask_planning = Some(cancel.clone());
+        }
+        let result = (|| -> Result<LibraryAskPlanView, String> {
+            let provider = selected_ai(&app, "ask", model.as_ref())?;
+            let kind = provider.kind();
+            let now_ms = chrono::Utc::now().timestamp_millis();
+            let languages = {
+                let state = app.state::<LibraryState>();
+                let guard = state.lock().map_err(|error| error.to_string())?;
+                let library = guard.as_ref().map_err(Clone::clone)?;
+                library
+                    .meeting_languages()
+                    .map_err(|error| error.to_string())?
+            };
+            // Query expansion calls the Language model, so the Library stays unlocked meanwhile.
+            let terms = library_ask::library_ask_terms(&provider, &question, &languages, &cancel)
+                .map_err(|error| error.to_string())?;
+            let plan = {
+                let state = app.state::<LibraryState>();
+                let guard = state.lock().map_err(|error| error.to_string())?;
+                let library = guard.as_ref().map_err(Clone::clone)?;
+                library_ask::gather_library_evidence(
+                    library, kind, &question, &terms, range, now_ms,
+                )
                 .map_err(|error| error.to_string())?
-        };
-        // Query expansion calls the Language model, so the Library stays unlocked meanwhile.
-        let terms = library_ask::library_ask_terms(
-            &provider,
-            &question,
-            &languages,
-            &AtomicBool::new(false),
-        )
-        .map_err(|error| error.to_string())?;
-        let plan = {
-            let state = app.state::<LibraryState>();
-            let guard = state.lock().map_err(|error| error.to_string())?;
-            let library = guard.as_ref().map_err(Clone::clone)?;
-            library_ask::gather_library_evidence(library, kind, &question, &terms, range, now_ms)
-                .map_err(|error| error.to_string())?
-        };
-        let meetings = plan
-            .evidence
-            .iter()
-            .map(|meeting| PlannedLibraryMeeting {
-                meeting_id: meeting.meeting_id.clone(),
-                title: meeting.title.clone(),
-                started_at: meeting.started_at.clone(),
-                excerpts: meeting.segments.len(),
+            };
+            let meetings = plan
+                .evidence
+                .iter()
+                .map(|meeting| PlannedLibraryMeeting {
+                    meeting_id: meeting.meeting_id.clone(),
+                    title: meeting.title.clone(),
+                    started_at: meeting.started_at.clone(),
+                    excerpts: meeting.segments.len(),
+                })
+                .collect();
+            let state = app.state::<AiJobs>();
+            let mut jobs = state.lock().map_err(|error| error.to_string())?;
+            if cancel.load(Ordering::SeqCst) {
+                return Err(library_ask::LibraryAskError::Cancelled.to_string());
+            }
+            jobs.next_library_ask_plan += 1;
+            let plan_id = format!("lap{}", jobs.next_library_ask_plan);
+            // Only the latest plan can be confirmed; a cancelled one is dropped here.
+            jobs.library_ask_plans.clear();
+            jobs.library_ask_plans
+                .insert(plan_id.clone(), StoredLibraryAskPlan { plan, provider });
+            Ok(LibraryAskPlanView {
+                plan_id,
+                provider: kind,
+                cloud: kind.is_cloud(),
+                meetings,
             })
-            .collect();
+        })();
         let state = app.state::<AiJobs>();
         let mut jobs = state.lock().map_err(|error| error.to_string())?;
-        jobs.next_library_ask_plan += 1;
-        let plan_id = format!("lap{}", jobs.next_library_ask_plan);
-        // Only the latest plan can be confirmed; a cancelled one is dropped here.
-        jobs.library_ask_plans.clear();
-        jobs.library_ask_plans
-            .insert(plan_id.clone(), StoredLibraryAskPlan { plan, provider });
-        Ok(LibraryAskPlanView {
-            plan_id,
-            provider: kind,
-            cloud: kind.is_cloud(),
-            meetings,
-        })
+        jobs.library_ask_planning = None;
+        result
     })
     .await
     .map_err(|error| error.to_string())?
@@ -2010,7 +2026,7 @@ fn library_ask_start(
     let (stored, ask_id, view) = {
         let state = app.state::<AiJobs>();
         let mut jobs = state.lock().map_err(|error| error.to_string())?;
-        if jobs.library_ask.is_some() {
+        if jobs.library_ask.is_some() || jobs.library_ask_planning.is_some() {
             return Err(library_ask::LibraryAskError::Busy.to_string());
         }
         let stored = jobs
@@ -2020,7 +2036,6 @@ fn library_ask_start(
         if stored.provider.kind().is_cloud() && !stored.plan.evidence.is_empty() && !consent {
             return Err("Confirm the Meetings before sending excerpts".into());
         }
-        let stored = jobs.library_ask_plans.remove(&plan_id).unwrap();
         let mut history =
             library_ask::read_library_asks(&root).map_err(|error| error.to_string())?;
         history.interrupted();
@@ -2035,6 +2050,7 @@ fn library_ask_start(
             )
             .map_err(|error| error.to_string())?;
         library_ask::write_library_asks(&root, &history).map_err(|error| error.to_string())?;
+        let stored = jobs.library_ask_plans.remove(&plan_id).unwrap();
         jobs.library_ask = Some(ActiveAsk {
             ask_id: ask_id.clone(),
             partial: String::new(),
@@ -2093,6 +2109,9 @@ fn stop_library_ask(app: AppHandle) -> Result<(), String> {
     let jobs = state.lock().map_err(|error| error.to_string())?;
     if let Some(active) = &jobs.library_ask {
         active.cancel.store(true, Ordering::SeqCst);
+    }
+    if let Some(cancel) = &jobs.library_ask_planning {
+        cancel.store(true, Ordering::SeqCst);
     }
     Ok(())
 }

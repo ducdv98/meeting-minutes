@@ -57,6 +57,12 @@ test('Library Ask privacy copy explains local use and cloud confirmation', async
   }
 });
 
+test('Library lists the past Library Ask history file', async () => {
+  const policy = await readFile(policyPath, 'utf8');
+  const libraryRow = policy.split('\n').find(line => line.includes('Documents\\Meeting Minutes'));
+  assert.match(libraryRow, /library-asks\.json/);
+});
+
 test('privacy page explains local Microphone app checks and session diagnostics counts', async () => {
   const policy = await readFile(policyPath, 'utf8');
   assert.match(policy, /checks locally which apps use the Microphone[\s\S]*?nothing about that check is sent/i);

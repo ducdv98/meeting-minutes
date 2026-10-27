@@ -16,7 +16,7 @@ use crate::{
     },
     ask::{partial_answer, AnswerState, AskOptions},
     citation::estimate_tokens,
-    library_retrieval::MeetingEvidence,
+    library_retrieval::{evidence_header, evidence_segment_line, MeetingEvidence},
     query_expansion::expand_question,
     transcript::Language,
     Library, LibraryError,
@@ -27,11 +27,14 @@ pub const INSUFFICIENT_EVIDENCE_RANGE_TEXT: &str =
     "Your Library doesn't cover this in the selected range.";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
 pub enum DateRange {
+    #[serde(rename = "last_7_days")]
     Last7Days,
+    #[serde(rename = "last_30_days")]
     Last30Days,
+    #[serde(rename = "last_90_days")]
     Last90Days,
+    #[serde(rename = "all")]
     All,
 }
 impl DateRange {
@@ -120,18 +123,6 @@ fn schema() -> OutputSchema {
     }
 }
 
-pub fn plan_library_ask(
-    provider: &dyn TextProvider,
-    library: &Library,
-    question: &str,
-    range: DateRange,
-    now_ms: i64,
-    cancel: &AtomicBool,
-) -> Result<LibraryAskPlan, LibraryAskError> {
-    let terms = library_ask_terms(provider, question, &library.meeting_languages()?, cancel)?;
-    gather_library_evidence(library, provider.kind(), question, &terms, range, now_ms)
-}
-
 /// The search terms for a question. Calls the Language model, so callers
 /// should not hold the Library while it runs.
 pub fn library_ask_terms(
@@ -178,6 +169,10 @@ pub fn gather_library_evidence(
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LibraryCitation {
     pub meeting_id: String,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub started_at: String,
     pub segment_id: String,
     pub revision: u32,
     pub start_ms: u64,
@@ -242,20 +237,16 @@ pub fn run_library_ask(
     let mut sections = Vec::new();
     for (index, meeting) in evidence.iter().enumerate() {
         let prefix = format!("M{}", index + 1);
-        let mut lines = vec![format!(
-            "{prefix} Title: {}; date: {}",
-            meeting.title, meeting.started_at
-        )];
+        let mut lines = vec![evidence_header(&prefix, meeting)];
         for segment in &meeting.segments {
             let reference = format!("{prefix}-{}", segment.segment_id);
-            lines.push(format!(
-                "[{reference}] {}: {}",
-                segment.participant, segment.text
-            ));
+            lines.push(evidence_segment_line(&prefix, segment));
             references.insert(
                 reference,
                 LibraryCitation {
                     meeting_id: meeting.meeting_id.clone(),
+                    title: meeting.title.clone(),
+                    started_at: meeting.started_at.clone(),
                     segment_id: segment.segment_id.clone(),
                     revision: segment.revision,
                     start_ms: segment.start_ms,

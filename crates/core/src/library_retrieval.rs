@@ -3,7 +3,6 @@ use std::collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    citation::evidence_line,
     library::LibraryError,
     participant::Participants,
     transcript::{Language, Transcript},
@@ -27,6 +26,20 @@ pub struct MeetingEvidence {
     pub started_at: String,
     pub language: Option<Language>,
     pub segments: Vec<EvidenceSegment>,
+}
+
+pub(crate) fn evidence_header(prefix: &str, meeting: &MeetingEvidence) -> String {
+    format!(
+        "{prefix} Title: {}; date: {}",
+        meeting.title, meeting.started_at
+    )
+}
+
+pub(crate) fn evidence_segment_line(prefix: &str, segment: &EvidenceSegment) -> String {
+    format!(
+        "[{prefix}-{}] {}: {}",
+        segment.segment_id, segment.participant, segment.text
+    )
 }
 
 struct MeetingSource {
@@ -129,22 +142,31 @@ impl Library {
                 if selected.contains(&segment.id) {
                     continue;
                 }
-                let line_chars = evidence_line(segment, participants, transcript.revision)
-                    .chars()
-                    .count();
-                let trial_chars = selected_chars + line_chars + usize::from(selected_count > 0);
-                if trial_chars.div_ceil(3) > budget_tokens {
-                    continue;
-                }
-                selected.insert(segment.id.clone());
-                meeting.segments.push(EvidenceSegment {
+                let evidence_segment = EvidenceSegment {
                     segment_id: segment.id.clone(),
                     revision: transcript.revision,
                     start_ms: segment.start_ms,
                     end_ms: segment.end_ms,
                     participant: participants.name(segment, transcript.revision),
                     text: segment.text.clone(),
-                });
+                };
+                let prefix = format!("M{}", group_index + 1);
+                let line_chars = evidence_segment_line(&prefix, &evidence_segment)
+                    .chars()
+                    .count();
+                let extra_chars = if meeting.segments.is_empty() {
+                    evidence_header(&prefix, meeting).chars().count()
+                        + 1
+                        + usize::from(selected_count > 0) * 2
+                } else {
+                    1
+                };
+                let trial_chars = selected_chars + line_chars + extra_chars;
+                if trial_chars.div_ceil(3) > budget_tokens {
+                    continue;
+                }
+                selected.insert(segment.id.clone());
+                meeting.segments.push(evidence_segment);
                 selected_chars = trial_chars;
                 selected_count += 1;
             }

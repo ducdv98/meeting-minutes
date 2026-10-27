@@ -11,13 +11,17 @@ const meetings = [{ id: "m1", title: "Planning", started_at: "2026-10-12T09:00:0
 const empty = { asks: [], active: null };
 const localPlan = { plan_id: "p1", provider: "ollama" as const, cloud: false, meetings: [{ meeting_id: "m1", title: "Planning", started_at: meetings[0].started_at, excerpts: 2 }] };
 const cloudPlan = { ...localPlan, provider: "openai" as const, cloud: true, meetings: [...localPlan.meetings, { meeting_id: "m2", title: "Review", started_at: meetings[1].started_at, excerpts: 3 }] };
-const props = { meetings, aiStatus: status, languageModels: models, onOpenCitation: vi.fn(), onOpenSettings: vi.fn() };
+const props = { aiStatus: status, languageModels: models, onOpenCitation: vi.fn(), onOpenSettings: vi.fn() };
 
 beforeEach(() => { vi.mocked(libraryAsks).mockResolvedValue(empty); vi.mocked(libraryAskPlan).mockResolvedValue(localPlan); vi.mocked(libraryAskStart).mockResolvedValue(empty); vi.mocked(stopLibraryAsk).mockResolvedValue(); });
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
 
-it("plans the search question and starts a local Library Ask without a dialog", async () => {
+it("opens with the search question without planning until submitted", async () => {
   render(<LibraryAskPanel {...props} initialQuestion="What was decided?" />);
+  expect(screen.getByRole("textbox", { name: "Question" })).toHaveProperty("value", "What was decided?");
+  await screen.findByRole("button", { name: "Library Ask" });
+  expect(libraryAskPlan).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Library Ask" }));
   await waitFor(() => expect(libraryAskPlan).toHaveBeenCalledWith("What was decided?", "all", { provider: "ollama", model: "llama" }));
   await waitFor(() => expect(libraryAskStart).toHaveBeenCalledWith("p1", [], false));
   expect(screen.queryByRole("dialog")).toBeNull();
@@ -27,7 +31,7 @@ it("passes the selected date range to planning", async () => {
   render(<LibraryAskPanel {...props} />);
   fireEvent.click(await screen.findByRole("button", { name: "Last 30 days" }));
   fireEvent.change(screen.getByRole("textbox", { name: "Question" }), { target: { value: "What changed?" } });
-  fireEvent.click(screen.getByRole("button", { name: "Ask" }));
+  fireEvent.click(screen.getByRole("button", { name: "Library Ask" }));
   await waitFor(() => expect(libraryAskPlan).toHaveBeenCalledWith("What changed?", "last_30_days", { provider: "ollama", model: "llama" }));
 });
 
@@ -38,15 +42,27 @@ it("uses another Language model for one Library Ask and shows planning progress"
   fireEvent.pointerDown(await screen.findByRole("button", { name: "Choose Language model" }), { button: 0, ctrlKey: false });
   fireEvent.click(screen.getByRole("menuitem", { name: "OpenAI · gpt-4o" }));
   fireEvent.change(screen.getByRole("textbox", { name: "Question" }), { target: { value: "What changed?" } });
-  fireEvent.click(screen.getByRole("button", { name: "Ask" }));
+  fireEvent.click(screen.getByRole("button", { name: "Library Ask" }));
   expect(screen.getByText("Finding relevant Meetings…")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+  expect(stopLibraryAsk).toHaveBeenCalled();
   expect(libraryAskPlan).toHaveBeenCalledWith("What changed?", "all", { provider: "openai", model: "gpt-4o" });
   await act(async () => finishPlan(cloudPlan));
+});
+
+it("silently ends a cancelled plan", async () => {
+  vi.mocked(libraryAskPlan).mockRejectedValue("Cancelled");
+  render(<LibraryAskPanel {...props} initialQuestion="What changed?" />);
+  fireEvent.click(screen.getByRole("button", { name: "Library Ask" }));
+  await waitFor(() => expect(libraryAskPlan).toHaveBeenCalled());
+  await waitFor(() => expect(screen.queryByText("Finding relevant Meetings…")).toBeNull());
+  expect(screen.queryByRole("alert")).toBeNull();
 });
 
 it("shows cloud Meetings and excludes unticked Meetings only after Send", async () => {
   vi.mocked(libraryAskPlan).mockResolvedValue(cloudPlan);
   render(<LibraryAskPanel {...props} initialQuestion="What was decided?" />);
+  fireEvent.click(screen.getByRole("button", { name: "Library Ask" }));
   const dialog = await screen.findByRole("dialog", { name: "Send to OpenAI?" });
   expect(dialog.textContent).toContain("Your question was sent to OpenAI to find relevant Meetings. Excerpts from the ticked Meetings will be sent next.");
   expect(dialog.textContent).toContain("Planning");
@@ -62,6 +78,7 @@ it("shows cloud Meetings and excludes unticked Meetings only after Send", async 
 it("disables Send when all Meetings are unticked, and Cancel starts no Answer", async () => {
   vi.mocked(libraryAskPlan).mockResolvedValue(cloudPlan);
   render(<LibraryAskPanel {...props} initialQuestion="What was decided?" />);
+  fireEvent.click(screen.getByRole("button", { name: "Library Ask" }));
   await screen.findByRole("dialog");
   fireEvent.click(screen.getByRole("checkbox", { name: /Planning/ }));
   fireEvent.click(screen.getByRole("checkbox", { name: /Review/ }));
@@ -73,6 +90,7 @@ it("disables Send when all Meetings are unticked, and Cancel starts no Answer", 
 it("starts a zero Meeting plan without a cloud dialog", async () => {
   vi.mocked(libraryAskPlan).mockResolvedValue({ ...cloudPlan, meetings: [] });
   render(<LibraryAskPanel {...props} initialQuestion="Unknown?" />);
+  fireEvent.click(screen.getByRole("button", { name: "Library Ask" }));
   await waitFor(() => expect(libraryAskStart).toHaveBeenCalledWith("p1", [], false));
   expect(screen.queryByRole("dialog")).toBeNull();
 });
@@ -90,7 +108,7 @@ it("streams deltas and stops the active Library Ask", async () => {
 it("shows recent history, Answer states, Citations, and Meeting navigation", async () => {
   const base: Omit<LibraryAskEntry, "id" | "question" | "state" | "answer" | "citations"> = { range: "all", asked_at: "2026-10-12T09:00:00Z", provider: "ollama", model: "llama", invalid_citations: [], error: null, meetings_read: ["m1"] };
   vi.mocked(libraryAsks).mockResolvedValue({ asks: [
-    { ...base, id: "la0001", question: "Old question", state: "answered", answer: "An older Answer", citations: [{ meeting_id: "m1", segment_id: "s1", revision: 2, start_ms: 1000, end_ms: 2000 }] },
+    { ...base, id: "la0001", question: "Old question", state: "answered", answer: "An older Answer", citations: [{ meeting_id: "m1", title: "Original Planning", started_at: "2026-10-11T09:00:00Z", segment_id: "s1", revision: 2, start_ms: 1000, end_ms: 2000 }] },
     { ...base, id: "la0002", question: "New question", state: "insufficient_evidence", answer: "Your Library doesn't cover this.", citations: [] },
     { ...base, id: "la0003", question: "Third question", state: "unverified", answer: "Maybe", citations: [] },
     { ...base, id: "la0004", question: "Fourth question", state: "incomplete", answer: "Partial", citations: [] },
@@ -104,13 +122,13 @@ it("shows recent history, Answer states, Citations, and Meeting navigation", asy
   expect(screen.getByText("Unverified")).toBeTruthy();
   expect(screen.getByText("Incomplete")).toBeTruthy();
   expect(screen.getAllByText("Read 1 Meeting").length).toBeGreaterThan(0);
-  fireEvent.click(screen.getByRole("button", { name: /Planning.*Segment/ }));
-  expect(onOpenCitation).toHaveBeenCalledWith({ meeting_id: "m1", segment_id: "s1", revision: 2, start_ms: 1000, end_ms: 2000 });
+  fireEvent.click(screen.getByRole("button", { name: /Original Planning.*Segment/ }));
+  expect(onOpenCitation).toHaveBeenCalledWith({ meeting_id: "m1", title: "Original Planning", started_at: "2026-10-11T09:00:00Z", segment_id: "s1", revision: 2, start_ms: 1000, end_ms: 2000 });
 });
 
-it("shows Ask setup guidance when no Language model is available", async () => {
+it("shows Library Ask setup guidance when no Language model is available", async () => {
   render(<LibraryAskPanel {...props} aiStatus={null} languageModels={{ ...models, models: [], ask: null }} />);
-  expect(await screen.findByText(/No Language model is set up for Ask/)).toBeTruthy();
+  expect(await screen.findByText(/No Language model is set up for Library Ask/)).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Set one up →" }));
   expect(props.onOpenSettings).toHaveBeenCalled();
 });

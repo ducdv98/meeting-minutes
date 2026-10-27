@@ -60,8 +60,11 @@ it("keeps searching on Enter and opens Library Ask with the box text", async () 
   const onAsk = vi.fn();
   render(<LibrarySearch onOpen={() => {}} onAsk={onAsk} />);
   const input = screen.getByRole("searchbox", { name: "Search transcripts" });
-  const button = screen.getByRole("button", { name: "Ask" });
-  expect(button.hasAttribute("disabled")).toBe(true);
+  const button = screen.getByRole("button", { name: "Library Ask" });
+  expect(button.hasAttribute("disabled")).toBe(false);
+  fireEvent.click(button);
+  expect(onAsk).toHaveBeenCalledWith("");
+  onAsk.mockClear();
   fireEvent.change(input, { target: { value: "What was decided?" } });
   expect(button.hasAttribute("disabled")).toBe(false);
   fireEvent.keyDown(input, { key: "Enter" });

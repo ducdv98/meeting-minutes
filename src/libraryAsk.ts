@@ -6,7 +6,7 @@ import type { AnswerState } from "./ask";
 export type DateRange = "last_7_days" | "last_30_days" | "last_90_days" | "all";
 export interface PlannedMeeting { meeting_id: string; title: string; started_at: string; excerpts: number }
 export interface LibraryAskPlan { plan_id: string; provider: ProviderKind; cloud: boolean; meetings: PlannedMeeting[] }
-export interface LibraryCitation { meeting_id: string; segment_id: string; revision: number; start_ms: number; end_ms: number }
+export interface LibraryCitation { meeting_id: string; title: string; started_at: string; segment_id: string; revision: number; start_ms: number; end_ms: number }
 export interface LibraryAskEntry { id: string; question: string; range: DateRange; asked_at: string; provider: ProviderKind; model: string; state: AnswerState; answer: string; citations: LibraryCitation[]; invalid_citations: string[]; error: string | null; meetings_read: string[] }
 export interface LibraryAskView { asks: LibraryAskEntry[]; active: { ask_id: string; partial: string } | null }
 export interface LibraryAskDelta { ask_id: string; text: string }
