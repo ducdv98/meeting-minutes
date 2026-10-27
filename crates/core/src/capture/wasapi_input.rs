@@ -11,6 +11,14 @@ use super::{
     SAMPLE_RATE,
 };
 
+pub type PlatformOpener = WasapiOpener;
+pub type PlatformClock = QpcClock;
+
+/// Selects the Windows capture adapter and its host clock.
+pub fn platform_capture() -> Result<(PlatformOpener, PlatformClock), String> {
+    Ok((WasapiOpener, QpcClock::new()?))
+}
+
 /// List active capture and render endpoints for diagnostics. A failed lookup is distinct from
 /// an empty collection so diagnostics can report that device information is unavailable.
 pub fn audio_devices() -> Result<Vec<String>, String> {
@@ -175,7 +183,7 @@ impl InputDevice for WasapiDevice {
         };
         Ok(Some(Packet {
             samples,
-            qpc_100ns: (!info.flags.timestamp_error).then_some(info.timestamp),
+            host_100ns: (!info.flags.timestamp_error).then_some(info.timestamp),
             silent: info.flags.silent,
             discontinuity: info.flags.data_discontinuity,
         }))

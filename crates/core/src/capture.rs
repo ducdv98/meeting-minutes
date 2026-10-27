@@ -3,7 +3,14 @@ use serde::{Deserialize, Serialize};
 #[cfg(windows)]
 mod wasapi_input;
 #[cfg(windows)]
-pub use self::wasapi_input::{audio_devices, QpcClock, WasapiDevice, WasapiOpener};
+pub use self::wasapi_input::{audio_devices, platform_capture, PlatformClock, PlatformOpener};
+
+#[cfg(not(windows))]
+mod unsupported_input;
+#[cfg(not(windows))]
+pub use self::unsupported_input::{
+    platform_capture, HostClock, PlatformClock, PlatformOpener, UnsupportedOpener,
+};
 
 #[cfg(not(windows))]
 pub fn audio_devices() -> Result<Vec<String>, String> {
@@ -55,7 +62,7 @@ impl Source {
 
 pub struct Packet {
     pub samples: Vec<f32>,
-    pub qpc_100ns: Option<u64>,
+    pub host_100ns: Option<u64>,
     pub silent: bool,
     pub discontinuity: bool,
 }
@@ -85,7 +92,7 @@ pub struct SourceClock {
     paused_at: Option<u64>,
     resume_at: u64,
     frames_written: u64,
-    previous_packet_qpc: Option<u64>,
+    previous_packet_host: Option<u64>,
 }
 
 impl SourceClock {
@@ -96,7 +103,7 @@ impl SourceClock {
             paused_at: None,
             resume_at: start_100ns,
             frames_written: 0,
-            previous_packet_qpc: None,
+            previous_packet_host: None,
         }
     }
     pub fn frames_written(&self) -> u64 {
@@ -118,17 +125,19 @@ impl SourceClock {
         assert_eq!(packet.samples.len() % CAPTURE_CHANNELS, 0);
         if self.paused_at.is_some()
             || arrival_100ns < self.resume_at
-            || packet.qpc_100ns.is_some_and(|t| t < self.resume_at)
+            || packet.host_100ns.is_some_and(|t| t < self.resume_at)
         {
             return Vec::new();
         }
-        let usable = packet.qpc_100ns.filter(|&t| {
+        let usable = packet.host_100ns.filter(|&t| {
             t >= self.start_100ns
                 && t.abs_diff(arrival_100ns) <= 2 * HNS_PER_SECOND
-                && self.previous_packet_qpc.is_none_or(|previous| t > previous)
+                && self
+                    .previous_packet_host
+                    .is_none_or(|previous| t > previous)
         });
         if let Some(t) = usable {
-            self.previous_packet_qpc = Some(t);
+            self.previous_packet_host = Some(t);
         }
         let packet_start = self.frame_at(usable.unwrap_or(arrival_100ns));
         let packet_frames = (packet.samples.len() / CAPTURE_CHANNELS) as u64;
@@ -177,7 +186,7 @@ impl SourceClock {
         if let Some(paused_at) = self.paused_at.take() {
             self.paused_total += at_100ns.saturating_sub(paused_at);
             self.resume_at = at_100ns;
-            self.previous_packet_qpc = None;
+            self.previous_packet_host = None;
         }
     }
 }

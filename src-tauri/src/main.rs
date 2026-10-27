@@ -24,7 +24,7 @@ use meeting_minutes_core::{
     },
     ask::{self, AskOptions},
     background,
-    capture::{audio_devices, QpcClock, Source, WasapiOpener},
+    capture::{audio_devices, platform_capture, PlatformClock, PlatformOpener, Source},
     cloud::{
         gemini::GeminiEngine,
         groq::GroqEngine,
@@ -66,7 +66,7 @@ use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_updater::UpdaterExt;
 
 type LibraryState = Mutex<Result<Library, String>>;
-type RecorderState = Mutex<Recorder<WasapiOpener, QpcClock>>;
+type RecorderState = Mutex<Recorder<PlatformOpener, PlatformClock>>;
 type ProcessorState = Mutex<Processor>;
 
 #[cfg(windows)]
@@ -3195,7 +3195,7 @@ fn acknowledge_recording_notice(
 
 fn lock_recorder(
     app: &AppHandle,
-) -> Result<std::sync::MutexGuard<'_, Recorder<WasapiOpener, QpcClock>>, String> {
+) -> Result<std::sync::MutexGuard<'_, Recorder<PlatformOpener, PlatformClock>>, String> {
     app.state::<RecorderState>()
         .inner()
         .lock()
@@ -3222,7 +3222,7 @@ fn publish(app: &AppHandle) -> Result<RecorderStatus, String> {
 
 fn with_recorder(
     app: &AppHandle,
-    action: impl FnOnce(&mut Recorder<WasapiOpener, QpcClock>) -> Result<(), RecorderError>,
+    action: impl FnOnce(&mut Recorder<PlatformOpener, PlatformClock>) -> Result<(), RecorderError>,
 ) -> Result<RecorderStatus, String> {
     let result = (|| {
         {
@@ -3253,7 +3253,7 @@ fn start(app: &AppHandle) -> Result<RecorderStatus, String> {
 fn start_with(
     app: &AppHandle,
     action: impl FnOnce(
-        &mut Recorder<WasapiOpener, QpcClock>,
+        &mut Recorder<PlatformOpener, PlatformClock>,
         &mut Library,
         chrono::DateTime<chrono::FixedOffset>,
     ) -> Result<(), RecorderError>,
@@ -3917,9 +3917,10 @@ fn main() {
             app.manage(DraftStore::default());
             app.manage(Mutex::new(ImportState::default()));
             app.manage(ImportCancel(AtomicBool::new(false)));
+            let (opener, clock) = platform_capture()?;
             app.manage(Mutex::new(Recorder::new(
-                WasapiOpener,
-                QpcClock::new()?,
+                opener,
+                clock,
                 settings.recording_notice_acknowledged,
             )));
             #[cfg(windows)]
