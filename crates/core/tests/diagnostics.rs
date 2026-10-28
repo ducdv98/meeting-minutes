@@ -653,3 +653,17 @@ fn provider_error_event_never_formats_server_content_or_api_key() {
         assert!(!event.to_string().contains(secret));
     }
 }
+
+#[test]
+fn transcription_on_metal_keeps_its_backend_name() {
+    let event = LogEvent::transcription_completed(
+        "small",
+        "Metal",
+        8,
+        960_000,
+        None,
+        Duration::from_millis(1_200),
+        Duration::from_secs(96),
+    );
+    assert!(event.to_string().contains("backend=Metal"));
+}
