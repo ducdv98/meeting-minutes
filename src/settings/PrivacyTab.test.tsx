@@ -7,7 +7,7 @@ import { PrivacyTab } from "./PrivacyTab";
 import { usePlatformCapabilities } from "../platform-capabilities";
 
 vi.mock("../ai", async (importOriginal) => ({ ...(await importOriginal<typeof import("../ai")>()), managedStatus: vi.fn() }));
-vi.mock("../platform-capabilities", () => ({ usePlatformCapabilities: vi.fn() }));
+vi.mock("../platform-capabilities", async (importOriginal) => ({ ...(await importOriginal<typeof import("../platform-capabilities")>()), usePlatformCapabilities: vi.fn() }));
 beforeEach(() => { vi.mocked(usePlatformCapabilities).mockReturnValue({ recordPrompt: true, backgroundTranscription: true, snapshots: true }); });
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
 
@@ -33,9 +33,19 @@ it("omits Snapshot privacy copy when Snapshots are unavailable", () => {
   vi.mocked(usePlatformCapabilities).mockReturnValue({ recordPrompt: false, backgroundTranscription: false, snapshots: false });
   vi.mocked(managedStatus).mockResolvedValue({ connected: false, revoked: false });
   render(<PrivacyTab settings={settings} providerStatus={status} />);
-  expect(screen.getByText("Your Library stays on this PC. Nothing is sent unless one of these is on.")).toBeTruthy();
+  expect(screen.getByText("Your Library stays on this computer. Nothing is sent unless one of these is on.")).toBeTruthy();
   expect(screen.queryByText(/Snapshots are never sent/)).toBeNull();
   expect(screen.queryByText(/Snapshots never leave this PC/)).toBeNull();
+});
+
+it("names macOS Keychain in provider details", () => {
+  vi.mocked(usePlatformCapabilities).mockReturnValue({ recordPrompt: false, backgroundTranscription: false, snapshots: false });
+  vi.mocked(managedStatus).mockResolvedValue({ connected: false, revoked: false });
+  render(<PrivacyTab settings={settings} providerStatus={status} />);
+  const groq = screen.getByRole("region", { name: "Groq" });
+  fireEvent.click(within(groq).getByRole("button", { name: "Details" }));
+  expect(within(groq).getByText(/The key stays in macOS Keychain/)).toBeTruthy();
+  expect(within(groq).queryByText(/Windows Credential Manager/)).toBeNull();
 });
 
 it("explains Library Ask cloud sending in the privacy notice", async () => {

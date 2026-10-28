@@ -7,7 +7,7 @@ import { usePlatformCapabilities } from "./platform-capabilities";
 
 vi.mock("./recording", async (original) => ({ ...(await original<typeof import("./recording")>()), acknowledgeRecordingNotice: vi.fn() }));
 vi.mock("./processing", async (original) => ({ ...(await original<typeof import("./processing")>()), modelDownloadStatus: vi.fn(), onModelDownloadStatus: vi.fn(), openLibraryFolder: vi.fn(), startModelDownload: vi.fn(), updateSettings: vi.fn() }));
-vi.mock("./platform-capabilities", () => ({ usePlatformCapabilities: vi.fn() }));
+vi.mock("./platform-capabilities", async (importOriginal) => ({ ...(await importOriginal<typeof import("./platform-capabilities")>()), usePlatformCapabilities: vi.fn() }));
 
 const settings: Settings = { first_run_completed: false, recording_notice_acknowledged: false, cloud_notice_acknowledged: false, auto_process: true, model: "small", vocabulary: [], language: null, your_name: null, ai: { provider: null, ollama_model: null, openai_model: null, anthropic_model: null, gemini_model: null } };
 let emitDownload: (status: { model_id: string; state: "downloading"; progress: number; error: null }) => void;

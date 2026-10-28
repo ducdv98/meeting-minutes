@@ -40,7 +40,7 @@ vi.mock("./recording", async (importOriginal) => {
     onRecordingNoticeRequested: vi.fn(),
   };
 });
-vi.mock("./platform-capabilities", () => ({ usePlatformCapabilities: vi.fn() }));
+vi.mock("./platform-capabilities", async (importOriginal) => ({ ...(await importOriginal<typeof import("./platform-capabilities")>()), usePlatformCapabilities: vi.fn() }));
 
 const idle: RecorderStatus = {
   phase: "idle",

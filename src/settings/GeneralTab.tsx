@@ -4,7 +4,7 @@ import { Input } from "../components/ui/Input";
 import { Switch } from "../components/ui/Switch";
 import { FormSection } from "../components/FormSection";
 import { pauseHotkey, recordHotkey } from "../recording";
-import type { PlatformCapabilities } from "../platform-capabilities";
+import { platformWording, type PlatformCapabilities } from "../platform-capabilities";
 
 const selectClass = "h-[34px] w-full rounded-sm border border-line-strong bg-raised px-2.5 text-base outline-none focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-soft)] disabled:opacity-50";
 
@@ -48,7 +48,7 @@ export function GeneralTab({ settings, save, libraryLocation, capabilities, chan
       <div className="flex items-center justify-between gap-4 rounded-md border border-line bg-raised px-3.5 py-3">
         <div className="grid gap-0.5">
           <span id="record-prompt" className="text-base font-medium">Record prompt</span>
-          <span id="record-prompt-note" className="text-xs text-ink-muted">Offer to record when another app starts using your Microphone. Checked on this PC only.</span>
+          <span id="record-prompt-note" className="text-xs text-ink-muted">{platformWording("Offer to record when another app starts using your Microphone. Checked on this PC only.", capabilities)}</span>
         </div>
         <Switch aria-labelledby="record-prompt" aria-describedby="record-prompt-note" checked={promptEnabled} onCheckedChange={setRecordPromptEnabled} />
       </div>

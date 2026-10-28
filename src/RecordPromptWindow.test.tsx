@@ -11,7 +11,7 @@ vi.mock("./record-prompt", () => ({
 vi.mock("./recording", async (original) => ({
   ...await original<typeof import("./recording")>(), recordingStatus: vi.fn(), startRecording: vi.fn(),
 }));
-vi.mock("./platform-capabilities", () => ({ usePlatformCapabilities: vi.fn() }));
+vi.mock("./platform-capabilities", async (importOriginal) => ({ ...(await importOriginal<typeof import("./platform-capabilities")>()), usePlatformCapabilities: vi.fn() }));
 
 const idle: RecorderStatus = {
   phase: "idle", meeting_id: null, elapsed_ms: 0, notice_acknowledged: true,

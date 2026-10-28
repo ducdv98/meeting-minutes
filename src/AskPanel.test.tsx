@@ -45,7 +45,7 @@ it("distinguishes answered, insufficient, incomplete, and off-topic Answers", as
   expect(screen.getByText("Off-topic")).toBeTruthy();
   expect(screen.getByText("Ask something about this Meeting.")).toBeTruthy();
   expect(screen.getByText("Ask something about this Meeting.").closest(".text-ink-muted")).toBeTruthy();
-  expect(screen.getByText(/Answers come from this Meeting only, using Ollama on this PC/)).toBeTruthy();
+  expect(screen.getByText(/Answers come from this Meeting only, using Ollama on this computer/)).toBeTruthy();
 });
 it("shows streaming text and Stop", async () => {
   vi.mocked(meetingAsks).mockResolvedValue({ asks: [], active: { ask_id: "a0001", partial: "The plan" }, retryable_id: null });

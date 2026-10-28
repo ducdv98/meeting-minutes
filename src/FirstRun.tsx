@@ -5,7 +5,7 @@ import { MEETING_LANGUAGES, type Language } from "./languages";
 import { MODELS, modelSizeLabel, openLibraryFolder, startModelDownload, updateSettings, type Settings } from "./processing";
 import { acknowledgeRecordingNotice } from "./recording";
 import { recordingNotice } from "./recording-notice";
-import { usePlatformCapabilities } from "./platform-capabilities";
+import { platformWording, usePlatformCapabilities } from "./platform-capabilities";
 import { useModelDownloads } from "./settings/useModelDownloads";
 
 export function recommendedModel(settings: Settings, discreteGpu: boolean) {
@@ -71,7 +71,7 @@ export default function FirstRun({ settings, discreteGpu, libraryLocation, onFin
       {step === 0 ? <DialogDescription id="first-run-description">{recordingNotice(capabilities)}</DialogDescription>
         : step === 1 ? <div id="first-run-description" className="mt-2 grid gap-4 text-sm text-ink-muted">
           <div className="grid gap-1.5"><label htmlFor="first-run-language" className="font-medium text-ink">Meetings are mostly in</label><select id="first-run-language" className="rounded-sm border border-line-strong bg-raised px-2.5 py-1.5 text-sm text-ink" value={language ?? ""} disabled={busy} onChange={(event) => void chooseLanguage((event.target.value || null) as Language | null)}><option value="">Auto-detect</option>{MEETING_LANGUAGES.map((entry) => <option key={entry.code} value={entry.code}>{entry.label}</option>)}</select></div>
-          <p className="m-0">Recommended for this PC and your default Meeting language: <strong className="text-ink">{model.label}</strong> · {modelSizeLabel(model.size_mb)}.</p>
+          <p className="m-0">{platformWording("Recommended for this PC and your default Meeting language:", capabilities)} <strong className="text-ink">{model.label}</strong> · {modelSizeLabel(model.size_mb)}.</p>
           <p className="m-0">You can record while it downloads. Processing will wait for the model.</p>
           {download?.state === "downloading" && <p role="status" className="m-0 text-ink">Downloading {model.label}: {download.progress}%</p>}
           {download?.state === "downloaded" && <p role="status" className="m-0 text-ink">{model.label} is ready.</p>}

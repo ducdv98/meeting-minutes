@@ -12,7 +12,7 @@ it("groups ready models and keeps an unready cloud model disabled", async () => 
   const onSetup = vi.fn();
   render(<ModelPicker options={options} value="local" onChange={onChange} onSetup={onSetup} label="Choose model" />);
   fireEvent.pointerDown(screen.getByRole("button", { name: "Choose model" }), { button: 0, ctrlKey: false });
-  expect(await screen.findByText("On this PC")).toBeTruthy();
+  expect(await screen.findByText("On this computer")).toBeTruthy();
   expect(screen.getByText("Cloud")).toBeTruthy();
   expect(screen.getByText("sends to OpenAI")).toBeTruthy();
   expect(screen.getByRole("menuitem", { name: "OpenAI · gpt, set up in Settings" }).hasAttribute("data-disabled")).toBe(true);

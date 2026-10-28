@@ -10,6 +10,7 @@ import { Skeleton } from "./components/ui/Skeleton";
 import { ErrorState } from "./components/states/ErrorState";
 import { Loading } from "./components/states/Loading";
 import { FormSection } from "./components/FormSection";
+import { platformWording, usePlatformCapabilities } from "./platform-capabilities";
 
 const SHORTCUTS = [
   { action: "Start or stop recording, from any app", keys: recordHotkey },
@@ -18,6 +19,8 @@ const SHORTCUTS = [
 ];
 
 export default function HelpView({ onOpenGuide }: { onOpenGuide?: () => void }) {
+  const capabilities = usePlatformCapabilities();
+  const { recordPrompt } = capabilities;
   const [info, setInfo] = useState<AppInfo | null>(null);
   const [infoFailed, setInfoFailed] = useState(false);
   const [preview, setPreview] = useState<string | null>(null);
@@ -43,7 +46,7 @@ export default function HelpView({ onOpenGuide }: { onOpenGuide?: () => void }) 
     return () => { active = false; };
   }, [previewLoad]);
   useEffect(() => {
-    if (!showMicrophoneUsage) return;
+    if (!recordPrompt || !showMicrophoneUsage) return;
     let active = true;
     const read = () => {
       getMicrophoneUsage().then(
@@ -54,7 +57,7 @@ export default function HelpView({ onOpenGuide }: { onOpenGuide?: () => void }) 
     read();
     const interval = window.setInterval(read, 2000);
     return () => { active = false; window.clearInterval(interval); };
-  }, [showMicrophoneUsage, microphoneUsageLoad]);
+  }, [recordPrompt, showMicrophoneUsage, microphoneUsageLoad]);
   async function copyDiagnostics() {
     setCopyError(null);
     setCopied(false);
@@ -104,14 +107,14 @@ export default function HelpView({ onOpenGuide }: { onOpenGuide?: () => void }) 
         </div>
         {copied && <p role="status" className="m-0 text-sm text-ink-muted">Diagnostics copied. Paste them into the GitHub issue or your message.</p>}
         {copyError && <ErrorState title="Couldn't copy diagnostics" guidance={`${copyError}. Select the text above and press Ctrl+C instead.`} onRetry={() => void copyDiagnostics()} />}
-        <div className="grid gap-2 border-t border-line pt-3 text-xs text-ink-muted">
+        {recordPrompt && <div className="grid gap-2 border-t border-line pt-3 text-xs text-ink-muted">
           <button type="button" className="w-fit text-left underline-offset-2 hover:underline" aria-expanded={showMicrophoneUsage} onClick={() => setShowMicrophoneUsage((value) => !value)}>Microphone usage diagnostic</button>
           {showMicrophoneUsage && <div className="grid gap-2">
-            <p className="m-0">Current apps using the Microphone. This list stays on this PC and is separate from copied diagnostics.</p>
+            <p className="m-0">{platformWording("Current apps using the Microphone. This list stays on this PC and is separate from copied diagnostics.", capabilities)}</p>
             <pre aria-label="Apps using the Microphone" className="m-0 max-h-[170px] overflow-auto whitespace-pre-wrap rounded-md border border-line bg-panel p-3 font-mono">{microphoneUsageError ? `Could not read Microphone usage: ${microphoneUsageError}` : microphoneUsage === null ? "Reading…" : microphoneUsage.length === 0 ? "No other apps are using the Microphone." : microphoneUsage.map((app) => `${app.display_name} (${app.id})`).join("\n")}</pre>
             <button type="button" className="w-fit underline-offset-2 hover:underline" onClick={() => setMicrophoneUsageLoad((value) => value + 1)}>Refresh Microphone usage</button>
           </div>}
-        </div>
+        </div>}
       </FormSection>
     </div>
   </section>;

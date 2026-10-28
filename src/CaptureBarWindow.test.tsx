@@ -34,7 +34,7 @@ vi.mock("@tauri-apps/api/window", () => ({
     constructor(public width: number, public height: number) {}
   },
 }));
-vi.mock("./platform-capabilities", () => ({ usePlatformCapabilities: vi.fn() }));
+vi.mock("./platform-capabilities", async (importOriginal) => ({ ...(await importOriginal<typeof import("./platform-capabilities")>()), usePlatformCapabilities: vi.fn() }));
 
 const recording: RecorderStatus = {
   phase: "recording", meeting_id: "m1", elapsed_ms: 65_000,

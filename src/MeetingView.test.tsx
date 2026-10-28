@@ -19,7 +19,7 @@ vi.mock("./processing", async (importOriginal) => ({ ...(await importOriginal<ty
 vi.mock("./recording", async (importOriginal) => ({ ...(await importOriginal<typeof import("./recording")>()), onLibraryChanged: vi.fn(() => Promise.resolve(() => {})) }));
 vi.mock("./transcript", async (importOriginal) => ({ ...(await importOriginal<typeof import("./transcript")>()), editSegment: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ convertFileSrc: vi.fn((path: string) => `asset:${path}`), invoke: vi.fn() }));
-vi.mock("./platform-capabilities", () => ({ usePlatformCapabilities: vi.fn() }));
+vi.mock("./platform-capabilities", async (importOriginal) => ({ ...(await importOriginal<typeof import("./platform-capabilities")>()), usePlatformCapabilities: vi.fn() }));
 
 const detail: MeetingDetail = {
   id: "old", title: "Planning", started_at: "2026-10-12T09:30:00Z",
