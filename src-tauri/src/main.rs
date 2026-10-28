@@ -3207,9 +3207,17 @@ fn open_sound_settings() -> Result<(), String> {
             .map_err(|error| format!("Couldn't open Windows Sound settings: {error}"))?;
         Ok(())
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
     {
-        Err("Sound settings are available on Windows".into())
+        std::process::Command::new("open")
+            .arg("x-apple.systempreferences:com.apple.Sound-Settings.extension")
+            .spawn()
+            .map_err(|error| format!("Couldn't open Sound settings: {error}"))?;
+        Ok(())
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        Err("Sound settings are available on Windows and macOS".into())
     }
 }
 
