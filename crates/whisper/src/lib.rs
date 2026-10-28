@@ -205,6 +205,45 @@ fn requested_plan(
     }
 }
 
+#[cfg(any(target_os = "macos", test))]
+fn requested_metal(setting: Option<&str>, available: bool) -> Result<bool, String> {
+    match setting {
+        None | Some("auto") => Ok(available),
+        Some("cpu") => Ok(false),
+        Some(value) => Err(format!("Invalid MM_WHISPER_DEVICE: {value}")),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn metal_device_description() -> Option<String> {
+    use std::ffi::CStr;
+
+    // ggml registers Metal before CPU. Match the backend name instead of assuming its index.
+    unsafe {
+        for index in 0..whisper_rs_sys::ggml_backend_dev_count() {
+            let device = whisper_rs_sys::ggml_backend_dev_get(index);
+            if device.is_null() {
+                continue;
+            }
+            let name = whisper_rs_sys::ggml_backend_dev_name(device);
+            if name.is_null() || CStr::from_ptr(name).to_bytes() != b"Metal" {
+                continue;
+            }
+            let description = whisper_rs_sys::ggml_backend_dev_description(device);
+            let name = if description.is_null() {
+                None
+            } else {
+                CStr::from_ptr(description)
+                    .to_str()
+                    .ok()
+                    .and_then(meeting_minutes_core::diagnostics::safe_device_name)
+            };
+            return Some(name.unwrap_or("Metal").to_owned());
+        }
+    }
+    None
+}
+
 // whisper.cpp#3750: in static MSVC builds the Vulkan backend can fail to register during
 // static initialization, so ggml silently loads on CPU. After list_devices() has set up
 // the Vulkan instance, registering it again succeeds.
@@ -241,7 +280,10 @@ fn load_context(
                     let name = devices
                         .iter()
                         .find(|device| device.id == id)
-                        .and_then(|device| meeting_minutes_core::diagnostics::safe_device_name(&device.name).map(str::to_owned));
+                        .and_then(|device| {
+                            meeting_minutes_core::diagnostics::safe_device_name(&device.name)
+                                .map(str::to_owned)
+                        });
                     return Ok((context, "Vulkan", name, power));
                 }
                 log_event(LogEvent::GpuLoadFailed);
@@ -250,7 +292,23 @@ fn load_context(
         }
     }
 
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        let device = metal_device_description();
+        let setting = std::env::var("MM_WHISPER_DEVICE").ok();
+        if requested_metal(setting.as_deref(), device.is_some())? {
+            let mut params = WhisperContextParameters::default();
+            params.use_gpu(true).flash_attn(true);
+            if let Ok(context) = WhisperContext::new_with_params(model_path, params) {
+                return Ok((context, "Metal", device, power));
+            }
+            log_event(LogEvent::GpuLoadFailed);
+        } else {
+            log_event(LogEvent::GpuUnavailable);
+        }
+    }
+
+    #[cfg(not(any(windows, target_os = "macos")))]
     if let Ok(value) = std::env::var("MM_WHISPER_DEVICE") {
         if value != "auto" && value != "cpu" {
             return Err("Vulkan device selection needs a Windows Vulkan build".into());
@@ -398,7 +456,13 @@ impl WhisperEngine {
                 .map(|device| format!("{}: {}", device.id, device.name))
                 .collect();
         }
-        #[cfg(not(windows))]
+        #[cfg(target_os = "macos")]
+        {
+            metal_device_description()
+                .map(|name| vec![format!("Metal: {name}")])
+                .unwrap_or_default()
+        }
+        #[cfg(not(any(windows, target_os = "macos")))]
         Vec::new()
     }
 
@@ -424,13 +488,24 @@ impl WhisperEngine {
             let devices = available_devices();
             let setting = std::env::var("MM_WHISPER_DEVICE").ok();
             let ids = devices.iter().map(|device| device.id).collect::<Vec<_>>();
-            let selected = requested_plan(setting.as_deref(), &ids, selected_device(&devices, power));
+            let selected =
+                requested_plan(setting.as_deref(), &ids, selected_device(&devices, power));
             if let Ok(BackendPlan::Vulkan(id)) = selected {
                 if let Some(device) = devices.iter().find(|device| device.id == id) {
-                    let name =
-                        meeting_minutes_core::diagnostics::safe_device_name(&device.name).map(str::to_owned).unwrap_or_else(|| "none".to_owned());
+                    let name = meeting_minutes_core::diagnostics::safe_device_name(&device.name)
+                        .map(str::to_owned)
+                        .unwrap_or_else(|| "none".to_owned());
                     return format!("Vulkan device=\"{name}\" power={}", power.label());
                 }
+            }
+        }
+        #[cfg(target_os = "macos")]
+        {
+            let device = metal_device_description();
+            let setting = std::env::var("MM_WHISPER_DEVICE").ok();
+            if requested_metal(setting.as_deref(), device.is_some()) == Ok(true) {
+                let name = device.as_deref().unwrap_or("Metal");
+                return format!("Metal device=\"{name}\" power={}", power.label());
             }
         }
         format!("CPU device=\"none\" power={}", power.label())
@@ -456,7 +531,10 @@ impl WhisperEngine {
                 device.as_deref().unwrap_or("none"),
                 power.label()
             );
-            *LAST_BACKEND.get_or_init(|| Mutex::new(String::new())).lock().unwrap() = description;
+            *LAST_BACKEND
+                .get_or_init(|| Mutex::new(String::new()))
+                .lock()
+                .unwrap() = description;
             Self {
                 context,
                 backend,
@@ -1055,10 +1133,19 @@ mod tests {
             (0, DeviceType::Integrated, 16),
             (1, DeviceType::Discrete, 6),
         ];
-        assert!(runs_on_discrete_gpu(&plan_backend(&devices, PowerState::Ac), &devices));
-        assert!(!runs_on_discrete_gpu(&plan_backend(&devices, PowerState::Battery), &devices));
+        assert!(runs_on_discrete_gpu(
+            &plan_backend(&devices, PowerState::Ac),
+            &devices
+        ));
+        assert!(!runs_on_discrete_gpu(
+            &plan_backend(&devices, PowerState::Battery),
+            &devices
+        ));
         let integrated_only = [(0, DeviceType::Integrated, 16)];
-        assert!(!runs_on_discrete_gpu(&plan_backend(&integrated_only, PowerState::Ac), &integrated_only));
+        assert!(!runs_on_discrete_gpu(
+            &plan_backend(&integrated_only, PowerState::Ac),
+            &integrated_only
+        ));
     }
 
     #[test]
@@ -1089,7 +1176,10 @@ mod tests {
     #[test]
     fn battery_uses_cpu_without_integrated_gpu() {
         assert_eq!(
-            plan_backend(&[(0, DeviceType::Discrete, 6), (1, DeviceType::Cpu, 32)], PowerState::Battery),
+            plan_backend(
+                &[(0, DeviceType::Discrete, 6), (1, DeviceType::Cpu, 32)],
+                PowerState::Battery
+            ),
             BackendPlan::Cpu
         );
     }
@@ -1105,6 +1195,16 @@ mod tests {
             BackendPlan::Vulkan(0)
         );
         assert!(requested_plan(Some("2"), &[0, 1], BackendPlan::Vulkan(1)).is_err());
+    }
+
+    #[test]
+    fn macos_device_override_selects_metal_or_cpu() {
+        assert!(requested_metal(None, true).unwrap());
+        assert!(!requested_metal(Some("auto"), false).unwrap());
+        assert!(!requested_metal(Some("cpu"), true).unwrap());
+        assert!(!requested_metal(Some("cpu"), false).unwrap());
+        assert!(requested_metal(Some("0"), true).is_err());
+        assert!(requested_metal(Some("metal"), true).is_err());
     }
 
     #[test]

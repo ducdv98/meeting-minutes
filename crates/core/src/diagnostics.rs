@@ -126,7 +126,7 @@ pub enum LogEvent {
 }
 
 /// Backends a `transcription_completed` line may name; anything else logs as `unknown`.
-pub const TRANSCRIPTION_BACKENDS: &[&str] = &["CPU", "Vulkan", "unknown"];
+pub const TRANSCRIPTION_BACKENDS: &[&str] = &["CPU", "Vulkan", "Metal", "unknown"];
 
 pub struct TranscriptionEnvironment<'a> {
     pub backend: &'a str,
