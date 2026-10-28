@@ -458,9 +458,9 @@ impl WhisperEngine {
         }
         #[cfg(target_os = "macos")]
         {
-            return metal_device_description()
+            metal_device_description()
                 .map(|name| vec![format!("Metal: {name}")])
-                .unwrap_or_default();
+                .unwrap_or_default()
         }
         #[cfg(not(any(windows, target_os = "macos")))]
         Vec::new()
