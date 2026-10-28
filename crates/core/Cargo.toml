@@ -24,6 +24,9 @@ png = "0.17"
 wasapi = "0.26"
 windows = { version = "0.62", features = ["Win32_System_Performance", "Win32_System_Power", "Win32_System_Registry", "Win32_Storage_Packaging_Appx", "Win32_UI_Shell", "Win32_Foundation"] }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+trash = "=5.2.9"
+
 [dev-dependencies]
 tempfile = "3"
 minimp3 = "0.5"

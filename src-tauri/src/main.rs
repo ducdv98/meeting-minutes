@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod keep_awake;
 #[cfg(windows)]
 mod record_prompt_windows;
 #[cfg(windows)]
@@ -378,9 +379,9 @@ struct AiJobsInner {
 }
 type AiJobs = Mutex<AiJobsInner>;
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 struct KeyringStore;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 impl KeyringStore {
     fn entry(kind: ProviderKind) -> Result<keyring::Entry, String> {
         let user = match kind {
@@ -397,7 +398,7 @@ impl KeyringStore {
         keyring::Entry::new("Meeting Minutes", "managed-key").map_err(|error| error.to_string())
     }
 }
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 impl SecretStore for KeyringStore {
     fn get(&self, kind: ProviderKind) -> Result<Option<ApiKey>, String> {
         if kind == ProviderKind::Ollama {
@@ -422,7 +423,7 @@ impl SecretStore for KeyringStore {
     }
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 impl ManagedKeyStore for KeyringStore {
     fn get(&self) -> Result<Option<ManagedKey>, String> {
         match Self::managed_entry()?.get_password() {
@@ -2752,10 +2753,18 @@ fn open_meeting_folder(state: State<'_, LibraryState>, meeting_id: String) -> Re
             .map_err(|error| format!("Couldn't open the Meeting folder: {error}"))?;
         Ok(())
     }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(folder)
+            .spawn()
+            .map_err(|error| format!("Couldn't open the Meeting folder: {error}"))?;
+        Ok(())
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         let _ = folder;
-        Err("Opening the Meeting folder is available on Windows".into())
+        Err("Opening the Meeting folder is available on Windows and macOS".into())
     }
 }
 
@@ -2928,10 +2937,19 @@ fn reveal_snapshot_folder(
             .map_err(|error| format!("Couldn't reveal the Snapshot: {error}"))?;
         Ok(())
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg("-R")
+            .arg(path)
+            .spawn()
+            .map_err(|error| format!("Couldn't reveal the Snapshot: {error}"))?;
+        Ok(())
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         let _ = path;
-        Err("Revealing a Snapshot is available on Windows".into())
+        Err("Revealing a Snapshot is available on Windows and macOS".into())
     }
 }
 
@@ -2949,10 +2967,18 @@ fn open_library_folder(state: State<'_, LibraryState>) -> Result<(), String> {
             .map_err(|error| format!("Couldn't open the Library folder: {error}"))?;
         Ok(())
     }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(folder)
+            .spawn()
+            .map_err(|error| format!("Couldn't open the Library folder: {error}"))?;
+        Ok(())
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         let _ = folder;
-        Err("Opening the Library folder is available on Windows".into())
+        Err("Opening the Library folder is available on Windows and macOS".into())
     }
 }
 
@@ -2986,9 +3012,17 @@ fn open_link(link: OutsideLink) -> Result<(), String> {
             .map_err(|error| format!("Couldn't open {url}: {error}"))?;
         Ok(())
     }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "macos")]
     {
-        Err(format!("Opening {url} is available on Windows"))
+        std::process::Command::new("open")
+            .arg(url)
+            .spawn()
+            .map_err(|error| format!("Couldn't open {url}: {error}"))?;
+        Ok(())
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        Err(format!("Opening {url} is available on Windows and macOS"))
     }
 }
 
@@ -3208,7 +3242,12 @@ fn status(app: &AppHandle) -> Result<RecorderStatus, String> {
 
 /// Sends the current state to the window and the tray.
 fn publish(app: &AppHandle) -> Result<RecorderStatus, String> {
-    let status = status(app)?;
+    let status = {
+        let recorder = lock_recorder(app)?;
+        let status = recorder.status();
+        keep_awake::recording_changed(app, &status);
+        status
+    };
     #[cfg(windows)]
     notify_source_health(app, &status);
     #[cfg(windows)]
@@ -3439,6 +3478,7 @@ fn quit(app: &AppHandle) {
         {
             thread::sleep(Duration::from_millis(100));
         }
+        keep_awake::release(&app);
         app.exit(0);
     });
 }
@@ -3889,14 +3929,14 @@ fn main() {
             })();
             app.manage(Mutex::new(library));
             app.manage(SettingsPath(settings_path));
-            #[cfg(windows)]
+            #[cfg(any(windows, target_os = "macos"))]
             app.manage(Secrets(Box::new(KeyringStore)));
-            #[cfg(not(windows))]
+            #[cfg(not(any(windows, target_os = "macos")))]
             app.manage(Secrets(Box::new(ai::MemorySecretStore::default())));
             let http: Arc<dyn HttpClient> = Arc::new(UreqClient);
-            #[cfg(windows)]
+            #[cfg(any(windows, target_os = "macos"))]
             let managed_store: Arc<dyn ManagedKeyStore> = Arc::new(KeyringStore);
-            #[cfg(not(windows))]
+            #[cfg(not(any(windows, target_os = "macos")))]
             let managed_store: Arc<dyn ManagedKeyStore> =
                 Arc::new(managed::MemoryManagedKeyStore::default());
             app.manage(Managed {
@@ -3909,6 +3949,7 @@ fn main() {
                 app.path().app_data_dir()?.join("models"),
             ));
             app.manage(Quitting(AtomicBool::new(false)));
+            app.manage(keep_awake::KeepAwake::default());
             app.manage(PromptingUpdate(AtomicBool::new(false)));
             app.manage(InstallingUpdate(AtomicBool::new(false)));
             app.manage(UpdateStartGate(Mutex::new(())));

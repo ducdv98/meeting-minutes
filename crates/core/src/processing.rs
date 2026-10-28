@@ -848,6 +848,59 @@ impl PowerState {
                 };
             }
         }
+        #[cfg(target_os = "macos")]
+        {
+            use std::{ffi::c_void, ffi::CStr, os::raw::c_char};
+
+            #[link(name = "IOKit", kind = "framework")]
+            extern "C" {
+                #[link_name = "IOPSCopyPowerSourcesInfo"]
+                fn copy_power_sources_info() -> *const c_void;
+                #[link_name = "IOPSGetProvidingPowerSourceType"]
+                fn get_providing_power_source_type(info: *const c_void) -> *const c_void;
+            }
+            #[link(name = "CoreFoundation", kind = "framework")]
+            extern "C" {
+                #[link_name = "CFStringGetCString"]
+                fn cf_string_get_c_string(
+                    string: *const c_void,
+                    buffer: *mut c_char,
+                    buffer_size: isize,
+                    encoding: u32,
+                ) -> u8;
+                #[link_name = "CFRelease"]
+                fn cf_release(value: *const c_void);
+            }
+
+            // IOPSCopyPowerSourcesInfo follows the Create rule; the source type is borrowed.
+            let info = unsafe { copy_power_sources_info() };
+            if info.is_null() {
+                return Self::Unknown;
+            }
+            let source = unsafe { get_providing_power_source_type(info) };
+            let mut name = [0 as c_char; 64];
+            let copied = !source.is_null()
+                && unsafe {
+                    cf_string_get_c_string(
+                        source,
+                        name.as_mut_ptr(),
+                        name.len() as isize,
+                        0x0800_0100,
+                    )
+                } != 0;
+            let state = if copied {
+                match unsafe { CStr::from_ptr(name.as_ptr()) }.to_bytes() {
+                    b"AC Power" => Self::Ac,
+                    b"Battery Power" => Self::Battery,
+                    _ => Self::Unknown,
+                }
+            } else {
+                Self::Unknown
+            };
+            unsafe { cf_release(info) };
+            return state;
+        }
+        #[cfg(not(any(windows, target_os = "macos")))]
         Self::Unknown
     }
 }
