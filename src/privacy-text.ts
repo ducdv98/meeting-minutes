@@ -1,3 +1,5 @@
+import { platformWording, type PlatformCapabilities } from "./platform-capabilities";
+
 export const MANAGED_PRIVACY_SUMMARY = "Sends Meeting audio to the Meeting Minutes service. Audio isn't stored; text is deleted within 10 minutes after processing.";
 const LIBRARY_LOCAL_TEXT = "Your Library stays on this PC.";
 const GEMINI_TRAINING_NOTICE = "Gemini's free tier may use content for training.";
@@ -7,6 +9,8 @@ export const CLOUD_NOTICE_SUMMARY = "A saved key can send Meeting audio or Trans
 export const correctionConfirmationText = (provider: string) => `Transcripts will be sent to ${provider} after every transcription.`;
 
 export const PRIVACY_INTRO = `${LIBRARY_LOCAL_TEXT} Snapshots never leave this PC. Nothing is sent unless one of these is on.`;
+export const cloudNoticeText = (capabilities: PlatformCapabilities) => platformWording(capabilities.snapshots ? CLOUD_NOTICE_TEXT : CLOUD_NOTICE_TEXT.replace(" Snapshots are never sent.", ""), capabilities);
+export const privacyIntro = (capabilities: PlatformCapabilities) => platformWording(capabilities.snapshots ? PRIVACY_INTRO : `${LIBRARY_LOCAL_TEXT} Nothing is sent unless one of these is on.`, capabilities);
 export const PRIVACY_DESTINATIONS = {
   managed: {
     sent: "Meeting audio",

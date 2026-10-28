@@ -3,12 +3,15 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import HelpView from "./HelpView";
 import { appInfo, openLink } from "./app-info";
 import { getDiagnostics, getMicrophoneUsage } from "./diagnostics";
+import { usePlatformCapabilities } from "./platform-capabilities";
 
 vi.mock("./app-info", () => ({ appInfo: vi.fn(), openLink: vi.fn() }));
 vi.mock("./diagnostics", () => ({ getDiagnostics: vi.fn(), getMicrophoneUsage: vi.fn() }));
+vi.mock("./platform-capabilities", () => ({ usePlatformCapabilities: vi.fn(), platformWording: (text: string) => text }));
 
 const writeText = vi.fn();
 beforeEach(() => {
+  vi.mocked(usePlatformCapabilities).mockReturnValue({ recordPrompt: true, backgroundTranscription: true, snapshots: true });
   vi.mocked(appInfo).mockResolvedValue({ version: "0.1.7" });
   vi.mocked(getDiagnostics).mockResolvedValue("Meeting Minutes 0.1.7\n--- recent log ---");
   vi.mocked(getMicrophoneUsage).mockResolvedValue([]);
@@ -110,4 +113,16 @@ it("updates the open Microphone diagnostic when an app stops using it", async ()
   fireEvent.click(screen.getByRole("button", { name: "Microphone usage diagnostic" }));
   expect((await screen.findByLabelText("Apps using the Microphone")).textContent).toContain("Zoom");
   await waitFor(() => expect(screen.getByLabelText("Apps using the Microphone").textContent).toContain("No other apps"), { timeout: 3500 });
+});
+
+it("hides Microphone usage and stops polling when Record prompt is unavailable", async () => {
+  const { rerender } = render(<HelpView />);
+  fireEvent.click(screen.getByRole("button", { name: "Microphone usage diagnostic" }));
+  await waitFor(() => expect(getMicrophoneUsage).toHaveBeenCalledTimes(1));
+  vi.mocked(usePlatformCapabilities).mockReturnValue({ recordPrompt: false, backgroundTranscription: false, snapshots: false });
+  rerender(<HelpView />);
+  expect(screen.queryByRole("button", { name: "Microphone usage diagnostic" })).toBeNull();
+  const calls = vi.mocked(getMicrophoneUsage).mock.calls.length;
+  await new Promise((resolve) => window.setTimeout(resolve, 2200));
+  expect(getMicrophoneUsage).toHaveBeenCalledTimes(calls);
 });

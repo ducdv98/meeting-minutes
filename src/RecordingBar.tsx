@@ -5,7 +5,8 @@ import { LevelMeter } from "./components/ui/LevelMeter";
 import { ErrorState } from "./components/states/ErrorState";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "./components/ui/Dialog";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./components/ui/Tooltip";
-import { RECORDING_NOTICE } from "./recording-notice";
+import { recordingNotice } from "./recording-notice";
+import { usePlatformCapabilities } from "./platform-capabilities";
 import SourceHealthNotice from "./SourceHealthNotice";
 import {
   acknowledgeRecordingNotice,
@@ -40,6 +41,7 @@ function RecordingControl({ label, hotkey, variant, onClick, children }: {
 }
 
 export default function RecordingBar({ recordRequest = 0, hideIdleButton = false }: { recordRequest?: number; hideIdleButton?: boolean }) {
+  const capabilities = usePlatformCapabilities();
   const [status, setStatus] = useState<RecorderStatus | null>(null);
   const [noticeAction, setNoticeAction] = useState<(() => Promise<RecorderStatus>) | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -57,7 +59,6 @@ export default function RecordingBar({ recordRequest = 0, hideIdleButton = false
     const unlisten = [
       onRecordingStatus((next) => { if (active) { eventArrived = true; setStatus(next); } }),
       onRecordingNoticeRequested(() => { if (active) setNoticeAction(() => startRecording); }),
-      onSnapshotError((reason) => { if (active) setSnapshotError(reason); }),
     ];
     recordingStatus().then(
       (next) => { if (active && !eventArrived) setStatus(next); },
@@ -68,6 +69,13 @@ export default function RecordingBar({ recordRequest = 0, hideIdleButton = false
       unlisten.forEach((promise) => promise.then((stop) => stop(), () => {}));
     };
   }, []);
+
+  useEffect(() => {
+    if (!capabilities.snapshots) return;
+    let active = true;
+    const unlisten = onSnapshotError((reason) => { if (active) setSnapshotError(reason); });
+    return () => { active = false; void unlisten.then((stop) => stop(), () => {}); };
+  }, [capabilities.snapshots]);
 
   function run(action: () => Promise<RecorderStatus>) {
     setError(null);
@@ -134,7 +142,7 @@ export default function RecordingBar({ recordRequest = 0, hideIdleButton = false
     </div>}
     {!capturing && !hideIdleButton && <div className="px-5 py-3"><Button variant="recordSoft" title={`Record (${recordHotkey})`} onClick={() => record(startRecording)}><span aria-hidden="true" className="size-2 rounded-full bg-current shadow-[0_0_0_3px_color-mix(in_srgb,currentColor_25%,transparent)]" />Record</Button></div>}
     {error && <div className="mx-5 my-3"><ErrorState title="Couldn't update the Recording" guidance={`${error}. Try again.`} /></div>}
-    {snapshotError && <div className="mx-5 my-3"><ErrorState title="Snapshot issue" guidance={snapshotError} /><Button variant="ghost" onClick={() => setSnapshotError(null)}>Dismiss</Button></div>}
+    {capabilities.snapshots && snapshotError && <div className="mx-5 my-3"><ErrorState title="Snapshot issue" guidance={snapshotError} /><Button variant="ghost" onClick={() => setSnapshotError(null)}>Dismiss</Button></div>}
     {status.saves.map((save) => <div key={save.meeting_id} className="mx-5 my-3 rounded-md border border-line bg-raised px-3 py-2 text-sm" aria-live="polite">
       {save.state === "saving" ? <>{save.recovered ? "Recovering" : "Saving"} {save.meeting_id}…</> : <>
         <ErrorState title="Couldn't save the Recording" guidance={`The audio for ${save.meeting_id} is kept. ${save.error ?? "Try again."}`} onRetry={() => run(() => retrySave(save.meeting_id))} />
@@ -144,7 +152,7 @@ export default function RecordingBar({ recordRequest = 0, hideIdleButton = false
       Recovered {meetingId} after the app closed unexpectedly. Continue it with a new Recording? <span className="inline-flex gap-2"><Button variant="secondary" onClick={() => record(() => continueMeeting(meetingId))}>Continue meeting</Button><Button variant="ghost" onClick={() => run(() => dismissContinue(meetingId))}>Dismiss</Button></span>
     </div>)}
     <Dialog open={!!noticeAction} onOpenChange={(open) => { if (!open) setNoticeAction(null); }}>
-      <DialogContent><DialogTitle>Before you record</DialogTitle><DialogDescription>{RECORDING_NOTICE}</DialogDescription><div className="mt-6 flex justify-end gap-2"><Button variant="secondary" onClick={() => setNoticeAction(null)}>Cancel</Button><Button variant="record" onClick={confirmNotice}>Start recording</Button></div></DialogContent>
+      <DialogContent><DialogTitle>Before you record</DialogTitle><DialogDescription>{recordingNotice(capabilities)}</DialogDescription><div className="mt-6 flex justify-end gap-2"><Button variant="secondary" onClick={() => setNoticeAction(null)}>Cancel</Button><Button variant="record" onClick={confirmNotice}>Start recording</Button></div></DialogContent>
     </Dialog>
   </section>;
 }

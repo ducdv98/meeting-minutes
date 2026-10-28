@@ -15,6 +15,7 @@ import { EmptyState } from "./components/states/EmptyState";
 import { ErrorState } from "./components/states/ErrorState";
 import type { Citation } from "./summary";
 import ModelPicker, { languageModelOptions, modelId } from "./components/ModelPicker";
+import { platformWording } from "./platform-capabilities";
 
 export default function SummaryPanel({ meetingId, transcript, player, aiStatus, languageModels, onOpenSettings = () => {}, onCitationPlay, transcriptLoaded = true }: { meetingId: string; transcript: Transcript | null; transcriptLoaded?: boolean; player: TimelinePlayer | null; aiStatus: AiStatus | null; languageModels?: LanguageModelSettings; onOpenSettings?: () => void; onCitationPlay?: (citation: Citation) => void }) {
   const [summary, setSummary] = useState<Summary | null>(null);
@@ -82,7 +83,7 @@ export default function SummaryPanel({ meetingId, transcript, player, aiStatus, 
       <section className="mb-5 grid gap-2"><h3 className="m-0 text-xs font-medium text-ink-faint">Action items</h3>{summary.action_items.length ? <ul className="m-0 grid list-none gap-2 p-0">{summary.action_items.map((item, index) => <li key={index} className="grid grid-cols-[18px_1fr] items-start gap-2 text-base leading-[23px]"><span aria-hidden="true" className="mt-1 size-4 rounded-[4px] border-[1.5px] border-line-strong" /><div><Markdown text={item.text} trailing={item.citations.map(cite)} />{(item.owner || item.due) && <div className="text-xs text-ink-muted">{[item.owner, item.due].filter(Boolean).join(" · ")}</div>}</div></li>)}</ul> : <p className="m-0 text-sm text-ink-muted">None</p>}</section>
       {transcript && summary.revision !== transcript.revision && <p className="text-xs text-warn">This Summary is from an earlier Transcript revision.</p>}
       {participantsChanged && <div className="mb-4 flex items-center gap-2 text-xs text-warn"><span>Participants changed: regenerate Summary?</span>{transcript && configured && !job && <Button variant="ghost" disabled={busy} onClick={() => void begin()}>Regenerate</Button>}</div>}
-      <div className="flex items-center gap-2 border-t border-line pt-3 text-xs text-ink-muted"><LockKeyhole size={16} strokeWidth={1.5} aria-hidden="true" /><span className="min-w-0 flex-1">Made {summary.provider === "ollama" ? "on this PC with Ollama" : `with ${PROVIDER_NAMES[summary.provider]}`} · {summary.model}</span>{transcript && hasModels && !job && action("Redo")}</div>
+      <div className="flex items-center gap-2 border-t border-line pt-3 text-xs text-ink-muted"><LockKeyhole size={16} strokeWidth={1.5} aria-hidden="true" /><span className="min-w-0 flex-1">Made {summary.provider === "ollama" ? platformWording("on this PC with Ollama") : `with ${PROVIDER_NAMES[summary.provider]}`} · {summary.model}</span>{transcript && hasModels && !job && action("Redo")}</div>
     </>}
     {loaded && !error && transcript && !summary && !job && hasModels && <EmptyState title="No Summary yet" description="Make a cited Summary from this Meeting's Transcript." action={action("Generate")} />}
     {plan?.disclosure && <CloudDisclosure disclosure={plan.disclosure} onSend={() => void send()} onCancel={() => { setPlan(null); setPendingModel(null); }} />}

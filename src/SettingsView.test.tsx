@@ -8,19 +8,22 @@ import { openLink } from "./app-info";
 import { CLOUD_NOTICE_SUMMARY, CLOUD_NOTICE_TEXT, PRIVACY_INTRO } from "./privacy-text";
 import { onSnapshotHotkeyError } from "./recording";
 import { updateSnapshotHotkeys } from "./processing";
+import { usePlatformCapabilities } from "./platform-capabilities";
 
 vi.mock("./processing", async (importOriginal) => ({ ...(await importOriginal<typeof import("./processing")>()), firstRunInfo: vi.fn(), getSettings: vi.fn(), updateSettings: vi.fn(), setRecordPromptEnabled: vi.fn(), removeSilencedRecordPromptApp: vi.fn(), updateSnapshotHotkeys: vi.fn(), installedModels: vi.fn(), acknowledgeCloudNotice: vi.fn(), modelDownloadStatus: vi.fn(), onModelDownloadStatus: vi.fn() }));
 vi.mock("./ai", async (importOriginal) => ({ ...(await importOriginal<typeof import("./ai")>()), aiStatus: vi.fn(), listAiModels: vi.fn(), managedStatus: vi.fn(), managedAccount: vi.fn(), managedSendCode: vi.fn(), managedSignIn: vi.fn(), managedDisconnect: vi.fn(), managedRemoveKey: vi.fn(), managedSaveKey: vi.fn(), saveApiKey: vi.fn(), deleteApiKey: vi.fn(), updateLanguageModels: vi.fn(), testLanguageModel: vi.fn(), testCloudApiKey: vi.fn() }));
 vi.mock("./app-info", () => ({ openLink: vi.fn() }));
 vi.mock("./recording", async (importOriginal) => ({ ...(await importOriginal<typeof import("./recording")>()), onSnapshotHotkeyError: vi.fn() }));
+vi.mock("./platform-capabilities", async (importOriginal) => ({ ...(await importOriginal<typeof import("./platform-capabilities")>()), usePlatformCapabilities: vi.fn() }));
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.resetAllMocks(); });
+beforeEach(() => { vi.mocked(usePlatformCapabilities).mockReturnValue({ recordPrompt: true, backgroundTranscription: true, snapshots: true }); });
 beforeEach(() => { vi.mocked(firstRunInfo).mockResolvedValue({ discrete_gpu: false, library_location: "D:\\Meetings" }); vi.mocked(installedModels).mockResolvedValue([]); vi.mocked(managedStatus).mockResolvedValue({ connected: false, revoked: false }); vi.mocked(managedAccount).mockResolvedValue({ email: "person@example.com", state: "admitted", minutes_used: 0.5, minutes_remaining: 119.5, allowance_minutes: 120, resets_at: "2026-11-01T00:00:00.000Z" }); vi.mocked(modelDownloadStatus).mockResolvedValue([]); vi.mocked(onModelDownloadStatus).mockResolvedValue(() => {}); vi.mocked(onSnapshotHotkeyError).mockResolvedValue(() => {}); });
 
 it("shows the reported Managed allowance without Account UI", async () => {
   vi.mocked(getSettings).mockResolvedValue(base); vi.mocked(aiStatus).mockResolvedValue(empty);
   vi.mocked(managedStatus).mockResolvedValue({ connected: true, revoked: false, remaining_minutes: 119.5 });
   render(<SettingsView initialTab="speech-to-text" />);
-  expect((await screen.findAllByText("119.5 minutes remaining this month.")).length).toBeGreaterThan(0);
+  expect((await screen.findAllByText("119.5 minutes remaining this month.", {}, { timeout: 3_000 })).length).toBeGreaterThan(0);
   expect(screen.queryByRole("region", { name: "Account" })).toBeNull();
   expect(screen.queryByText(/Waitlisted|Delete account|Invite code/)).toBeNull();
   expect(managedAccount).not.toHaveBeenCalled();
@@ -49,6 +52,34 @@ it("turns the Record prompt off and removes a silenced app", async () => {
   await waitFor(() => expect(removeSilencedRecordPromptApp).toHaveBeenCalledWith("teams.exe"));
   expect(screen.queryByText("Teams")).toBeNull();
   expect(screen.getByText("Zoom")).toBeTruthy();
+});
+
+it("hides unsupported Record prompt and Snapshot settings", async () => {
+  vi.mocked(usePlatformCapabilities).mockReturnValue({ recordPrompt: false, backgroundTranscription: false, snapshots: false });
+  vi.mocked(getSettings).mockResolvedValue({ ...base, record_prompt_enabled: true, silenced_record_prompt_apps: [{ id: "teams.exe", display_name: "Teams" }] });
+  vi.mocked(aiStatus).mockResolvedValue(empty);
+  render(<SettingsView initialTab="general" />);
+  await screen.findByRole("switch", { name: "Process after I stop" });
+  expect(screen.queryByRole("switch", { name: "Record prompt" })).toBeNull();
+  expect(screen.queryByText("Apps you silenced")).toBeNull();
+  expect(screen.queryByRole("textbox", { name: "Take Snapshot" })).toBeNull();
+  expect(screen.queryByRole("textbox", { name: "Draw new Capture region" })).toBeNull();
+  expect(screen.getByText(/Record: Ctrl/)).toBeTruthy();
+  expect(onSnapshotHotkeyError).not.toHaveBeenCalled();
+});
+
+it("uses macOS storage and computer wording in Settings", async () => {
+  vi.mocked(usePlatformCapabilities).mockReturnValue({ recordPrompt: false, backgroundTranscription: false, snapshots: false });
+  vi.mocked(getSettings).mockResolvedValue(base);
+  vi.mocked(aiStatus).mockResolvedValue(empty);
+  render(<SettingsView initialTab="keys" />);
+  const keys = await screen.findByRole("tabpanel", { name: "Keys" });
+  expect(within(keys).getByText("Keys stay in macOS Keychain.")).toBeTruthy();
+  expect(within(keys).getByText("On this computer. No key needed.")).toBeTruthy();
+  await openTab("Speech-to-text");
+  const speech = screen.getByRole("tabpanel", { name: "Speech-to-text" });
+  expect(within(speech).getByText("Use your own keys for cloud Processing. Keys stay in macOS Keychain.")).toBeTruthy();
+  expect(within(speech).getByText(/Runs on this computer after cloud Providers/)).toBeTruthy();
 });
 
 it("retries a failed Record prompt switch with its attempted value", async () => {

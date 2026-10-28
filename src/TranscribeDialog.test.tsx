@@ -19,7 +19,7 @@ it("defaults to the Transcription order and groups local and cloud choices", asy
   render(<TranscribeDialog again={false} onClose={() => {}} onTranscribe={onTranscribe} onOpenSettings={() => {}} />);
   expect(screen.getByRole("button", { name: "Automatic (Transcription order)" }).getAttribute("aria-pressed")).toBe("true");
   fireEvent.pointerDown(await screen.findByRole("button", { name: "Choose Speech-to-text model" }), { button: 0, ctrlKey: false });
-  expect(await screen.findByText("On this PC")).toBeTruthy();
+  expect(await screen.findByText("On this computer")).toBeTruthy();
   expect(screen.getByText("Cloud")).toBeTruthy();
   expect(within(screen.getByRole("menuitem", { name: "Local Whisper · Small" })).getByText("Downloaded")).toBeTruthy();
   const gemini = screen.getByRole("menuitem", { name: "Gemini · gemini-2.5-flash, set up in Settings" });

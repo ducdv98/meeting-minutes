@@ -3,14 +3,17 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import FirstRun from "./FirstRun";
 import { acknowledgeRecordingNotice } from "./recording";
 import { modelDownloadStatus, onModelDownloadStatus, openLibraryFolder, startModelDownload, updateSettings, type Settings } from "./processing";
+import { usePlatformCapabilities } from "./platform-capabilities";
 
 vi.mock("./recording", async (original) => ({ ...(await original<typeof import("./recording")>()), acknowledgeRecordingNotice: vi.fn() }));
 vi.mock("./processing", async (original) => ({ ...(await original<typeof import("./processing")>()), modelDownloadStatus: vi.fn(), onModelDownloadStatus: vi.fn(), openLibraryFolder: vi.fn(), startModelDownload: vi.fn(), updateSettings: vi.fn() }));
+vi.mock("./platform-capabilities", async (importOriginal) => ({ ...(await importOriginal<typeof import("./platform-capabilities")>()), usePlatformCapabilities: vi.fn() }));
 
 const settings: Settings = { first_run_completed: false, recording_notice_acknowledged: false, cloud_notice_acknowledged: false, auto_process: true, model: "small", vocabulary: [], language: null, your_name: null, ai: { provider: null, ollama_model: null, openai_model: null, anthropic_model: null, gemini_model: null } };
 let emitDownload: (status: { model_id: string; state: "downloading"; progress: number; error: null }) => void;
 
 beforeEach(() => {
+  vi.mocked(usePlatformCapabilities).mockReturnValue({ recordPrompt: true, backgroundTranscription: true, snapshots: true });
   vi.mocked(modelDownloadStatus).mockResolvedValue([]);
   vi.mocked(onModelDownloadStatus).mockImplementation(async (handler) => { emitDownload = handler; return () => {}; });
   vi.mocked(startModelDownload).mockResolvedValue([{ model_id: "small", state: "downloading", progress: 0, error: null }]);
@@ -32,6 +35,13 @@ it("lets every step be skipped without acknowledging the Recording notice", asyn
   fireEvent.click(screen.getByRole("button", { name: "Skip" }));
   await waitFor(() => expect(finish).toHaveBeenCalledOnce());
   expect(acknowledgeRecordingNotice).not.toHaveBeenCalled();
+});
+
+it("shows only the supported Recording notice on macOS", () => {
+  vi.mocked(usePlatformCapabilities).mockReturnValue({ recordPrompt: false, backgroundTranscription: false, snapshots: false });
+  render(<FirstRun settings={settings} discreteGpu={false} libraryLocation="/Users/test/Documents/Meeting Minutes" onFinish={vi.fn()} onUseKey={vi.fn()} />);
+  const notice = screen.getByText(/Other people on the call/).textContent;
+  expect(notice).not.toMatch(/Snapshots|offer a Recording|checks locally/);
 });
 
 it("recommends turbo for a discrete GPU or non-English language and shows download progress", async () => {

@@ -4,6 +4,7 @@ import { Input } from "../components/ui/Input";
 import { Switch } from "../components/ui/Switch";
 import { FormSection } from "../components/FormSection";
 import { pauseHotkey, recordHotkey } from "../recording";
+import { platformWording, type PlatformCapabilities } from "../platform-capabilities";
 
 const selectClass = "h-[34px] w-full rounded-sm border border-line-strong bg-raised px-2.5 text-base outline-none focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-soft)] disabled:opacity-50";
 
@@ -15,7 +16,7 @@ function pressedHotkey(event: React.KeyboardEvent<HTMLInputElement>): string | n
   return [event.ctrlKey && "Ctrl", event.altKey && "Alt", event.shiftKey && "Shift", key].filter(Boolean).join("+");
 }
 
-export function GeneralTab({ settings, save, libraryLocation, changeSnapshotHotkey, setRecordPromptEnabled, removeSilencedRecordPromptApp, hotkeyError }: { settings: Settings; save: (next: Settings) => void; libraryLocation: string | null; changeSnapshotHotkey: (snapshotHotkey: string, drawSnapshotHotkey: string) => void; setRecordPromptEnabled: (enabled: boolean) => void; removeSilencedRecordPromptApp: (id: string) => void; hotkeyError: string | null }) {
+export function GeneralTab({ settings, save, libraryLocation, capabilities, changeSnapshotHotkey, setRecordPromptEnabled, removeSilencedRecordPromptApp, hotkeyError }: { settings: Settings; save: (next: Settings) => void; libraryLocation: string | null; capabilities: PlatformCapabilities; changeSnapshotHotkey: (snapshotHotkey: string, drawSnapshotHotkey: string) => void; setRecordPromptEnabled: (enabled: boolean) => void; removeSilencedRecordPromptApp: (id: string) => void; hotkeyError: string | null }) {
   const promptEnabled = settings.record_prompt_enabled ?? true;
   const silencedApps = settings.silenced_record_prompt_apps ?? [];
   const snapshotHotkey = settings.snapshot_hotkey ?? "Ctrl+Alt+S";
@@ -43,11 +44,11 @@ export function GeneralTab({ settings, save, libraryLocation, changeSnapshotHotk
       <Switch aria-labelledby="auto-process" aria-describedby="auto-process-note" checked={settings.auto_process} onCheckedChange={(auto_process) => save({ ...settings, auto_process })} />
     </div>
   </FormSection>
-    <FormSection title="Recording">
+    {capabilities.recordPrompt && <FormSection title="Recording">
       <div className="flex items-center justify-between gap-4 rounded-md border border-line bg-raised px-3.5 py-3">
         <div className="grid gap-0.5">
           <span id="record-prompt" className="text-base font-medium">Record prompt</span>
-          <span id="record-prompt-note" className="text-xs text-ink-muted">Offer to record when another app starts using your Microphone. Checked on this PC only.</span>
+          <span id="record-prompt-note" className="text-xs text-ink-muted">{platformWording("Offer to record when another app starts using your Microphone. Checked on this PC only.", capabilities)}</span>
         </div>
         <Switch aria-labelledby="record-prompt" aria-describedby="record-prompt-note" checked={promptEnabled} onCheckedChange={setRecordPromptEnabled} />
       </div>
@@ -57,13 +58,15 @@ export function GeneralTab({ settings, save, libraryLocation, changeSnapshotHotk
           {silencedApps.map((silenced) => <li key={silenced.id} className="flex items-center justify-between gap-3 rounded-md border border-line bg-raised px-3 py-2 text-sm"><span>{silenced.display_name}</span><button type="button" className="text-sm text-accent hover:underline" aria-label={`Remove ${silenced.display_name}`} onClick={() => removeSilencedRecordPromptApp(silenced.id)}>Remove</button></li>)}
         </ul>
       </div>}
-    </FormSection>
+    </FormSection>}
     <FormSection title="Hotkeys">
-      <p className="m-0 text-xs text-ink-muted">Press a new combination in a Snapshot field. Changes apply to the next Recording.</p>
+      {capabilities.snapshots && <p className="m-0 text-xs text-ink-muted">Press a new combination in a Snapshot field. Changes apply to the next Recording.</p>}
       <div className="grid gap-1 text-sm text-ink-muted"><span>Record: {recordHotkey}</span><span>Pause or resume: {pauseHotkey}</span></div>
-      <div className="grid gap-1.5"><label htmlFor="snapshot-hotkey" className="text-sm font-medium">Take Snapshot</label><Input id="snapshot-hotkey" readOnly value={snapshotHotkey} onKeyDown={(event) => { const key = pressedHotkey(event); if (key) { event.preventDefault(); changeSnapshotHotkey(key, drawSnapshotHotkey); } }} /></div>
-      <div className="grid gap-1.5"><label htmlFor="draw-snapshot-hotkey" className="text-sm font-medium">Draw new Capture region</label><Input id="draw-snapshot-hotkey" readOnly value={drawSnapshotHotkey} onKeyDown={(event) => { const key = pressedHotkey(event); if (key) { event.preventDefault(); changeSnapshotHotkey(snapshotHotkey, key); } }} /></div>
-      {hotkeyError && <p role="alert" className="m-0 text-sm text-record">{hotkeyError}</p>}
+      {capabilities.snapshots && <>
+        <div className="grid gap-1.5"><label htmlFor="snapshot-hotkey" className="text-sm font-medium">Take Snapshot</label><Input id="snapshot-hotkey" readOnly value={snapshotHotkey} onKeyDown={(event) => { const key = pressedHotkey(event); if (key) { event.preventDefault(); changeSnapshotHotkey(key, drawSnapshotHotkey); } }} /></div>
+        <div className="grid gap-1.5"><label htmlFor="draw-snapshot-hotkey" className="text-sm font-medium">Draw new Capture region</label><Input id="draw-snapshot-hotkey" readOnly value={drawSnapshotHotkey} onKeyDown={(event) => { const key = pressedHotkey(event); if (key) { event.preventDefault(); changeSnapshotHotkey(snapshotHotkey, key); } }} /></div>
+        {hotkeyError && <p role="alert" className="m-0 text-sm text-record">{hotkeyError}</p>}
+      </>}
     </FormSection>
   </>;
 }

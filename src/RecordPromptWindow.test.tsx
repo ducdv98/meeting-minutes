@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import RecordPromptWindow from "./RecordPromptWindow";
 import { dismissRecordPrompt, getRecordPrompt, showRecordingNotice, silenceRecordPromptApp } from "./record-prompt";
 import { recordingStatus, startRecording, type RecorderStatus } from "./recording";
+import { usePlatformCapabilities } from "./platform-capabilities";
 
 vi.mock("./record-prompt", () => ({
   dismissRecordPrompt: vi.fn(), getRecordPrompt: vi.fn(), showRecordingNotice: vi.fn(), silenceRecordPromptApp: vi.fn(),
@@ -10,6 +11,7 @@ vi.mock("./record-prompt", () => ({
 vi.mock("./recording", async (original) => ({
   ...await original<typeof import("./recording")>(), recordingStatus: vi.fn(), startRecording: vi.fn(),
 }));
+vi.mock("./platform-capabilities", async (importOriginal) => ({ ...(await importOriginal<typeof import("./platform-capabilities")>()), usePlatformCapabilities: vi.fn() }));
 
 const idle: RecorderStatus = {
   phase: "idle", meeting_id: null, elapsed_ms: 0, notice_acknowledged: true,
@@ -17,6 +19,7 @@ const idle: RecorderStatus = {
 };
 
 beforeEach(() => {
+  vi.mocked(usePlatformCapabilities).mockReturnValue({ recordPrompt: true, backgroundTranscription: true, snapshots: true });
   vi.mocked(getRecordPrompt).mockResolvedValue({ id: "teams", display_name: "Teams" });
   vi.mocked(recordingStatus).mockResolvedValue(idle);
   vi.mocked(startRecording).mockResolvedValue({ ...idle, phase: "recording", meeting_id: "m1" });
@@ -34,6 +37,13 @@ it("names the app and offers Record and Not now", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Not now" }));
   await waitFor(() => expect(dismissRecordPrompt).toHaveBeenCalledOnce());
   expect(startRecording).not.toHaveBeenCalled();
+});
+
+it("does not query or show Record prompt on an unsupported platform", () => {
+  vi.mocked(usePlatformCapabilities).mockReturnValue({ recordPrompt: false, backgroundTranscription: false, snapshots: false });
+  render(<RecordPromptWindow />);
+  expect(screen.queryByRole("region", { name: "Record prompt" })).toBeNull();
+  expect(getRecordPrompt).not.toHaveBeenCalled();
 });
 
 it("Record uses the usual start command", async () => {

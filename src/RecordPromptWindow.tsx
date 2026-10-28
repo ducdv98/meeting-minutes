@@ -1,20 +1,23 @@
 import { useEffect, useState } from "react";
 import { dismissRecordPrompt, getRecordPrompt, showRecordingNotice, silenceRecordPromptApp, type PromptApp } from "./record-prompt";
 import { recordingStatus, startRecording } from "./recording";
+import { usePlatformCapabilities } from "./platform-capabilities";
 
 export default function RecordPromptWindow() {
+  const { recordPrompt } = usePlatformCapabilities();
   const [app, setApp] = useState<PromptApp | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!recordPrompt) return;
     let active = true;
     getRecordPrompt().then(
       (prompt) => { if (active) setApp(prompt); },
       (reason) => { if (active) setError(String(reason)); },
     );
     return () => { active = false; };
-  }, []);
+  }, [recordPrompt]);
 
   useEffect(() => {
     if (!app) return;
@@ -50,6 +53,7 @@ export default function RecordPromptWindow() {
     }
   }
 
+  if (!recordPrompt) return null;
   if (!app) return error ? <p role="alert">{error}</p> : null;
   return <section aria-label="Record prompt" className="box-border flex h-screen w-screen flex-col justify-between rounded-xl border border-white/25 bg-[#172234] px-5 py-4 text-white shadow-xl">
     <div>

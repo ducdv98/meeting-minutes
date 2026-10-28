@@ -5,11 +5,14 @@ import { managedAccount, managedDeleteAccount, managedDisconnect, managedSendCod
 import { cancelModelDownload, deleteModelDownload, modelDownloadStatus, onModelDownloadStatus, startModelDownload, testSpeechModel, type ModelDownloadStatus } from "../processing";
 import { MANAGED_PRIVACY_STATEMENT, MANAGED_PRIVACY_SUMMARY } from "../privacy-text";
 import type { Settings } from "../processing";
+import { usePlatformCapabilities } from "../platform-capabilities";
 
 vi.mock("../ai", async (importOriginal) => ({ ...(await importOriginal<typeof import("../ai")>()), managedStatus: vi.fn(), managedAccount: vi.fn(), managedSendCode: vi.fn(), managedSignIn: vi.fn(), managedDisconnect: vi.fn(), managedSetEnabled: vi.fn(), managedDeleteAccount: vi.fn() }));
 vi.mock("../processing", async (importOriginal) => ({ ...(await importOriginal<typeof import("../processing")>()), testSpeechModel: vi.fn(), modelDownloadStatus: vi.fn(), onModelDownloadStatus: vi.fn(), startModelDownload: vi.fn(), cancelModelDownload: vi.fn(), deleteModelDownload: vi.fn() }));
+vi.mock("../platform-capabilities", async (importOriginal) => ({ ...(await importOriginal<typeof import("../platform-capabilities")>()), usePlatformCapabilities: vi.fn() }));
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
 beforeEach(() => {
+  vi.mocked(usePlatformCapabilities).mockReturnValue({ recordPrompt: true, backgroundTranscription: true, snapshots: true });
   vi.mocked(managedAccount).mockResolvedValue({ email: "person@example.com", state: "admitted", minutes_used: 0, minutes_remaining: 120, allowance_minutes: 120, resets_at: "2026-11-01T00:00:00.000Z" });
   vi.mocked(modelDownloadStatus).mockResolvedValue([]);
   vi.mocked(onModelDownloadStatus).mockResolvedValue(() => {});

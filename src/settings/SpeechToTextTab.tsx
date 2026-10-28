@@ -11,6 +11,7 @@ import { Textarea } from "../components/ui/Textarea";
 import { FormSection } from "../components/FormSection";
 import { Details } from "../components/Details";
 import { MANAGED_PRIVACY_STATEMENT, MANAGED_PRIVACY_SUMMARY } from "../privacy-text";
+import { platformWording, usePlatformCapabilities } from "../platform-capabilities";
 import { useModelDownloads } from "./useModelDownloads";
 
 type Props = {
@@ -29,6 +30,7 @@ type Props = {
 const ACCOUNT_UI_ENABLED = false;
 
 export function SpeechToTextTab({ settings, save, installed, vocabulary, setVocabulary, saveVocabulary, providerStatus, onManageKeys, active = true }: Props) {
+  const capabilities = usePlatformCapabilities();
   const speech: SpeechSettings = settings.speech ?? { models: [{ provider: "groq", model: "whisper-large-v3" }, { provider: "gemini", model: settings.ai.gemini_model ?? "gemini-2.5-flash" }], automatic_groq: "whisper-large-v3", automatic_gemini: settings.ai.gemini_model ?? "gemini-2.5-flash", automatic_whisper: settings.model };
   const [managed, setManaged] = useState<ManagedStatus | null>(null);
   const [account, setAccount] = useState<ManagedAccount | null>(null);
@@ -154,19 +156,19 @@ export function SpeechToTextTab({ settings, save, installed, vocabulary, setVoca
         </div>}
       </>}
       {managedError && !confirmDelete && <p role="alert" className="m-0 text-sm text-record">{managedError}</p>}
-      {confirmDelete && <Dialog open onOpenChange={(open) => { if (!open && !managedBusy) setConfirmDelete(false); }}><DialogContent onEscapeKeyDown={(event) => { if (managedBusy) event.preventDefault(); }} onPointerDownOutside={(event) => { if (managedBusy) event.preventDefault(); }}><DialogTitle>Delete account?</DialogTitle><DialogDescription>We will delete your email address and Managed transcription usage history, and sign you out on every PC. All Meetings and Transcripts on this PC stay here. Local Processing and Processing with your own keys will keep working.</DialogDescription>{managedError && <p role="alert" className="mt-3 text-sm text-record">{managedError}</p>}<div className="mt-6 flex justify-end gap-2"><Button variant="secondary" disabled={managedBusy} onClick={() => setConfirmDelete(false)}>Cancel</Button><Button variant="record" disabled={managedBusy} onClick={() => void deleteAccount()}>Delete account</Button></div></DialogContent></Dialog>}
+      {confirmDelete && <Dialog open onOpenChange={(open) => { if (!open && !managedBusy) setConfirmDelete(false); }}><DialogContent onEscapeKeyDown={(event) => { if (managedBusy) event.preventDefault(); }} onPointerDownOutside={(event) => { if (managedBusy) event.preventDefault(); }}><DialogTitle>Delete account?</DialogTitle><DialogDescription>{platformWording("We will delete your email address and Managed transcription usage history, and sign you out on every PC. All Meetings and Transcripts on this PC stay here. Local Processing and Processing with your own keys will keep working.", capabilities)}</DialogDescription>{managedError && <p role="alert" className="mt-3 text-sm text-record">{managedError}</p>}<div className="mt-6 flex justify-end gap-2"><Button variant="secondary" disabled={managedBusy} onClick={() => setConfirmDelete(false)}>Cancel</Button><Button variant="record" disabled={managedBusy} onClick={() => void deleteAccount()}>Delete account</Button></div></DialogContent></Dialog>}
     </FormSection>}
     {ACCOUNT_UI_ENABLED && <FormSection title="Managed transcription">
       <div className="flex items-center gap-3"><Switch aria-label="Enable Managed transcription" checked={managedReady} disabled={!managed?.email || managedBusy} onCheckedChange={(enabled) => void setManagedConsent(enabled)} /><span className="text-sm">{managedReady ? "On" : "Off"}</span></div>
       <p className="m-0 text-sm text-ink-muted">Turning this on allows Meeting audio to be sent to Managed transcription. Signing in alone does not send audio.</p>
-      <div className="grid gap-1"><p className="m-0 text-xs text-ink-muted">{MANAGED_PRIVACY_SUMMARY}</p><Details><p className="m-0">{MANAGED_PRIVACY_STATEMENT}</p></Details></div>
+      <div className="grid gap-1"><p className="m-0 text-xs text-ink-muted">{MANAGED_PRIVACY_SUMMARY}</p><Details><p className="m-0">{platformWording(MANAGED_PRIVACY_STATEMENT, capabilities)}</p></Details></div>
     </FormSection>}
     <FormSection title="Managed transcription" hint="Save a Managed key in Keys to use cloud transcription automatically.">
       <p className="m-0 text-sm">mm-transcription-internal · {managedLabel} <button type="button" className="ml-2 text-accent hover:underline" onClick={onManageKeys}>Manage key</button></p>
       {managedReady && managed?.remaining_minutes != null && <p className="m-0 text-sm">{managed.remaining_minutes.toLocaleString(undefined, { maximumFractionDigits: 1 })} minutes remaining this month.</p>}
       {managedError && <p role="alert" className="m-0 text-sm text-record">Couldn't check Managed transcription: {managedError}</p>}
     </FormSection>
-    <FormSection title="Cloud transcription" hint="Use your own keys for cloud Processing. Keys stay in Windows Credential Manager.">
+    <FormSection title="Cloud transcription" hint={platformWording("Use your own keys for cloud Processing. Keys stay in Windows Credential Manager.", capabilities)}>
       {(["groq", "gemini"] as const).map((kind) => {
         const label = PROVIDER_NAMES[kind];
         const stored = kind === "groq" ? providerStatus?.has_groq_key : providerStatus?.has_gemini_key;
@@ -184,7 +186,7 @@ export function SpeechToTextTab({ settings, save, installed, vocabulary, setVoca
         {tested && <p role="status" className="m-0 text-sm text-ok">Model ready</p>}{modelError && <p role="alert" className="m-0 text-sm text-record">{modelError}</p>}
       </div>}
     </FormSection>
-    <FormSection title="Local Whisper" hint="Runs on this PC after cloud Providers, or when no cloud Provider is ready. Larger models are more accurate and slower.">
+    <FormSection title="Local Whisper" hint={platformWording("Runs on this PC after cloud Providers, or when no cloud Provider is ready. Larger models are more accurate and slower.", capabilities)}>
       <RadioGroup aria-label="Transcription model" value={speech.automatic_whisper} onValueChange={(model) => save({ ...settings, model, ...(settings.speech ? { speech: { ...speech, automatic_whisper: model } } : {}) })}>
         {MODELS.map((model) => { const status = localStatus(model.name); return <div key={model.name} className="border-b border-line last:border-b-0"><RadioGroupItem value={model.name} description={model.description} className="border-b-0" sideNote={<span className="grid justify-items-end tabular-nums"><span>{modelSizeLabel(model.size_mb)}</span><span>{status.state === "downloaded" ? "Downloaded" : status.state === "downloading" ? `${status.progress}%` : "Download required"}</span></span>}>
           <span className="inline-flex flex-wrap items-center gap-2">{model.label}{model.name === "small" && <Badge variant="beta">Default</Badge>}</span>
