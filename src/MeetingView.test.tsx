@@ -9,6 +9,7 @@ import { editSegment } from "./transcript";
 import { aiStatus, managedStatus } from "./ai";
 import { meetingSummary, summaryStatus } from "./summary";
 import { meetingAsks } from "./ask";
+import { usePlatformCapabilities } from "./platform-capabilities";
 
 vi.mock("./ai", async (original) => ({ ...(await original<typeof import("./ai")>()), aiStatus: vi.fn(), managedStatus: vi.fn() }));
 vi.mock("./summary", () => ({ meetingSummary: vi.fn(), summaryParticipantsChanged: vi.fn(() => Promise.resolve(false)), summaryStatus: vi.fn(), onSummaryStatus: vi.fn(() => Promise.resolve(() => {})) }));
@@ -18,6 +19,7 @@ vi.mock("./processing", async (importOriginal) => ({ ...(await importOriginal<ty
 vi.mock("./recording", async (importOriginal) => ({ ...(await importOriginal<typeof import("./recording")>()), onLibraryChanged: vi.fn(() => Promise.resolve(() => {})) }));
 vi.mock("./transcript", async (importOriginal) => ({ ...(await importOriginal<typeof import("./transcript")>()), editSegment: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ convertFileSrc: vi.fn((path: string) => `asset:${path}`), invoke: vi.fn() }));
+vi.mock("./platform-capabilities", () => ({ usePlatformCapabilities: vi.fn() }));
 
 const detail: MeetingDetail = {
   id: "old", title: "Planning", started_at: "2026-10-12T09:30:00Z",
@@ -33,6 +35,7 @@ const detail: MeetingDetail = {
 };
 
 beforeEach(() => {
+  vi.mocked(usePlatformCapabilities).mockReturnValue({ recordPrompt: true, backgroundTranscription: true, snapshots: true });
   vi.mocked(invoke).mockImplementation(async (command) => {
     if (command === "list_snapshots") return { snapshots: [], total_size_bytes: 0 };
     throw new Error(`Unexpected IPC: ${command}`);
@@ -83,6 +86,16 @@ it("shows Snapshot size and opens an inline image with a folder action", async (
   expect(within(viewer).getByRole("img", { name: "Shared slide" }).getAttribute("src")).toBe("data:image/png;base64,iVBORw==");
   fireEvent.click(within(viewer).getByRole("button", { name: "Open folder" }));
   await waitFor(() => expect(invoke).toHaveBeenCalledWith("reveal_snapshot_folder", { meetingId: "old", order: 7 }));
+});
+
+it("does not load or show Snapshots when unavailable", async () => {
+  vi.mocked(usePlatformCapabilities).mockReturnValue({ recordPrompt: false, backgroundTranscription: false, snapshots: false });
+  vi.mocked(meetingTranscript).mockResolvedValue({ schema_version: 1, revision: 1, created_at: "now", model: ["small"], language: "en", language_detected: false, duration_ms: 3000, segments: [{ id: "s00001", start_ms: 100, end_ms: 900, text: "Before", speaker: "me" }] });
+  render(<MeetingView id="old" onBack={() => {}} onOpenSettings={() => {}} onRenamed={() => {}} />);
+  await screen.findByText("Before");
+  expect(screen.queryByText(/Snapshots ·/)).toBeNull();
+  expect(screen.queryByRole("button", { name: /Open Snapshot/ })).toBeNull();
+  expect(invoke).not.toHaveBeenCalledWith("list_snapshots", expect.anything());
 });
 
 it("adds and edits a Snapshot caption in the viewer", async () => {

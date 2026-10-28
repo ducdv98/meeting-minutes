@@ -6,7 +6,8 @@ import { Button } from "../components/ui/Button";
 import { Input } from "../components/ui/Input";
 import { FormSection } from "../components/FormSection";
 import { Details } from "../components/Details";
-import { CLOUD_NOTICE_SUMMARY, CLOUD_NOTICE_TEXT, MANAGED_PRIVACY_STATEMENT, MANAGED_PRIVACY_SUMMARY } from "../privacy-text";
+import { CLOUD_NOTICE_SUMMARY, cloudNoticeText, MANAGED_PRIVACY_STATEMENT, MANAGED_PRIVACY_SUMMARY } from "../privacy-text";
+import { usePlatformCapabilities } from "../platform-capabilities";
 
 type CloudProvider = Exclude<ProviderKind, "ollama">;
 const providers: { kind: CloudProvider; use: string }[] = [
@@ -17,6 +18,7 @@ const providers: { kind: CloudProvider; use: string }[] = [
 ];
 
 export function KeysTab({ settings, setSettings, providerStatus, setProviderStatus, active = true }: { settings: Settings; setSettings: Dispatch<SetStateAction<Settings | null>>; providerStatus: AiStatus | null; setProviderStatus: Dispatch<SetStateAction<AiStatus | null>>; active?: boolean }) {
+  const capabilities = usePlatformCapabilities();
   const [managed, setManaged] = useState<ManagedStatus | null>(null);
   const [managedKey, setManagedKey] = useState("");
   const [managedBusy, setManagedBusy] = useState(false);
@@ -78,7 +80,7 @@ export function KeysTab({ settings, setSettings, providerStatus, setProviderStat
         </div>;
       })}
     </FormSection>
-    {noticeVisible && <div role="alert" className="grid gap-2 rounded-md border border-line bg-raised p-3.5 text-sm"><p className="m-0">{CLOUD_NOTICE_SUMMARY}</p><Details>{CLOUD_NOTICE_TEXT}</Details><Button variant="secondary" onClick={() => void acknowledgeCloudNotice().then((next) => { setSettings(next); setNoticeError(null); }, (reason) => setNoticeError(String(reason)))}>Got it</Button>{noticeError && <p role="status" className="m-0">{noticeError}</p>}</div>}
+    {noticeVisible && <div role="alert" className="grid gap-2 rounded-md border border-line bg-raised p-3.5 text-sm"><p className="m-0">{CLOUD_NOTICE_SUMMARY}</p><Details>{cloudNoticeText(capabilities)}</Details><Button variant="secondary" onClick={() => void acknowledgeCloudNotice().then((next) => { setSettings(next); setNoticeError(null); }, (reason) => setNoticeError(String(reason)))}>Got it</Button>{noticeError && <p role="status" className="m-0">{noticeError}</p>}</div>}
     <FormSection title="Ollama" hint="On this PC. No key needed."><div className="grid gap-1.5 text-sm"><span className="font-medium">Address</span><span>http://localhost:11434</span><span className="text-ink-muted">This address is fixed in the app.</span></div></FormSection>
   </div>;
 }

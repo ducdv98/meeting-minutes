@@ -12,6 +12,7 @@ import { SpeechToTextTab } from "./settings/SpeechToTextTab";
 import { LanguageModelsTab } from "./settings/LanguageModelsTab";
 import { KeysTab } from "./settings/KeysTab";
 import { PrivacyTab } from "./settings/PrivacyTab";
+import { usePlatformCapabilities } from "./platform-capabilities";
 import "./settings/settings.css";
 
 export type SettingsTabId = "general" | "speech-to-text" | "language-models" | "keys" | "privacy";
@@ -25,6 +26,7 @@ function withVocabulary(settings: Settings | null, text: string): Settings | nul
 }
 
 export default function SettingsView({ initialTab }: { initialTab?: SettingsTabId }) {
+  const capabilities = usePlatformCapabilities();
   const [tab, setTab] = useState<SettingsTabId>(() => initialTab ?? lastSettingsTab);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
@@ -64,11 +66,12 @@ export default function SettingsView({ initialTab }: { initialTab?: SettingsTabI
     return () => { active = false; };
   }, []);
   useEffect(() => {
+    if (!capabilities.snapshots) return;
     let active = true;
     let unlisten: (() => void) | undefined;
     void onSnapshotHotkeyError((message) => { if (active) setHotkeyError(message); }).then((stop) => { if (active) unlisten = stop; else stop(); }, () => {});
     return () => { active = false; unlisten?.(); };
-  }, []);
+  }, [capabilities.snapshots]);
   useEffect(() => {
     if (!saved) return;
     const fade = window.setTimeout(() => setSavedLeaving(true), 2000);
@@ -157,7 +160,7 @@ export default function SettingsView({ initialTab }: { initialTab?: SettingsTabI
       {error && <ErrorState title="Couldn't save Settings" guidance={`${error.reason}. The change shown below isn't saved yet.`} onRetry={error.retry} />}
       {loadFailed ? <ErrorState title="Couldn't load Settings" guidance="Try again in a moment." onRetry={() => setLoad((value) => value + 1)} /> : !settings ? <Loading message="Loading Settings…" /> : <Tabs value={tab} onValueChange={(value) => setTab(value as SettingsTabId)} className="motion-content-enter min-w-0">
         <TabsList aria-label="Settings tabs" className="flex-wrap px-0"><TabsTrigger value="general">General</TabsTrigger><TabsTrigger value="speech-to-text">Speech-to-text</TabsTrigger><TabsTrigger value="language-models">Language models</TabsTrigger><TabsTrigger value="keys">Keys</TabsTrigger><TabsTrigger value="privacy">Privacy</TabsTrigger></TabsList>
-        <TabsContent forceMount hidden={tab !== "general"} value="general" className="settings-tab pt-7"><GeneralTab settings={settings} save={save} libraryLocation={libraryLocation} changeSnapshotHotkey={changeSnapshotHotkey} setRecordPromptEnabled={(enabled) => changeRecordPrompt({ enabled })} removeSilencedRecordPromptApp={(removeId) => changeRecordPrompt({ removeId })} hotkeyError={hotkeyError} /></TabsContent>
+        <TabsContent forceMount hidden={tab !== "general"} value="general" className="settings-tab pt-7"><GeneralTab settings={settings} save={save} libraryLocation={libraryLocation} capabilities={capabilities} changeSnapshotHotkey={changeSnapshotHotkey} setRecordPromptEnabled={(enabled) => changeRecordPrompt({ enabled })} removeSilencedRecordPromptApp={(removeId) => changeRecordPrompt({ removeId })} hotkeyError={hotkeyError} /></TabsContent>
         <TabsContent forceMount hidden={tab !== "speech-to-text"} value="speech-to-text" className="settings-tab pt-7"><SpeechToTextTab settings={settings} save={save} installed={installed} vocabulary={vocabulary} setVocabulary={setVocabulary} saveVocabulary={saveVocabulary} providerStatus={providerStatus} onManageKeys={() => setTab("keys")} active={tab === "speech-to-text"} /></TabsContent>
         <TabsContent forceMount hidden={tab !== "language-models"} value="language-models" className="settings-tab pt-7"><LanguageModelsTab settings={settings} setSettings={setSettings} providerStatus={providerStatus} setProviderStatus={setProviderStatus} aiError={aiError} setAiError={setAiError} onManageKeys={() => setTab("keys")} /></TabsContent>
         <TabsContent forceMount hidden={tab !== "keys"} value="keys" className="settings-tab pt-7"><KeysTab settings={settings} setSettings={setSettings} providerStatus={providerStatus} setProviderStatus={setProviderStatus} active={tab === "keys"} /></TabsContent>

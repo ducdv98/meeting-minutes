@@ -212,6 +212,24 @@ struct AppInfo {
     version: String,
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PlatformCapabilities {
+    record_prompt: bool,
+    background_transcription: bool,
+    snapshots: bool,
+}
+
+#[tauri::command]
+fn platform_capabilities() -> PlatformCapabilities {
+    let supported = cfg!(windows);
+    PlatformCapabilities {
+        record_prompt: supported,
+        background_transcription: supported,
+        snapshots: supported,
+    }
+}
+
 #[tauri::command]
 fn app_info(app: AppHandle) -> AppInfo {
     AppInfo {
@@ -2280,6 +2298,9 @@ fn with_cloud_vad<'a>(
 /// Starts transcribing the new Recording's Chunks in the background when cloud is configured or
 /// local Whisper can run on a discrete GPU. The cache remains in memory until Stop.
 fn start_background(app: &AppHandle) {
+    if !platform_capabilities().background_transcription {
+        return;
+    }
     let managed = app.state::<Managed>();
     let has_cloud_engine = matches!(managed.keys.key(), Ok(Some(_)))
         || matches!(
@@ -4049,6 +4070,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             app_info,
+            platform_capabilities,
             get_diagnostics,
             get_microphone_usage,
             #[cfg(windows)]

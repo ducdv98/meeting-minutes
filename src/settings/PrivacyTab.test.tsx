@@ -1,11 +1,14 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { managedStatus, type AiStatus } from "../ai";
 import { CLOUD_NOTICE_TEXT, MANAGED_PRIVACY_STATEMENT, PRIVACY_DESTINATIONS, PRIVACY_INTRO } from "../privacy-text";
 import type { Settings } from "../processing";
 import { PrivacyTab } from "./PrivacyTab";
+import { usePlatformCapabilities } from "../platform-capabilities";
 
 vi.mock("../ai", async (importOriginal) => ({ ...(await importOriginal<typeof import("../ai")>()), managedStatus: vi.fn() }));
+vi.mock("../platform-capabilities", () => ({ usePlatformCapabilities: vi.fn() }));
+beforeEach(() => { vi.mocked(usePlatformCapabilities).mockReturnValue({ recordPrompt: true, backgroundTranscription: true, snapshots: true }); });
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
 
 const status: AiStatus = { provider: null, model: null, configured: false, has_openai_key: false, has_anthropic_key: false, has_groq_key: false, has_gemini_key: false };
@@ -24,6 +27,15 @@ it("lists every destination and shows all six off when no cloud option is active
   expect(await within(screen.getByRole("region", { name: "Managed transcription" })).findByText("Off · No key")).toBeTruthy();
   for (const name of ["Managed transcription", "Groq", "Gemini", "OpenAI", "Anthropic", "Correction model"]) expect(within(screen.getByRole("region", { name })).getByText(/^Off/)).toBeTruthy();
   expect(screen.getByText(CLOUD_NOTICE_TEXT)).toBeTruthy();
+});
+
+it("omits Snapshot privacy copy when Snapshots are unavailable", () => {
+  vi.mocked(usePlatformCapabilities).mockReturnValue({ recordPrompt: false, backgroundTranscription: false, snapshots: false });
+  vi.mocked(managedStatus).mockResolvedValue({ connected: false, revoked: false });
+  render(<PrivacyTab settings={settings} providerStatus={status} />);
+  expect(screen.getByText("Your Library stays on this PC. Nothing is sent unless one of these is on.")).toBeTruthy();
+  expect(screen.queryByText(/Snapshots are never sent/)).toBeNull();
+  expect(screen.queryByText(/Snapshots never leave this PC/)).toBeNull();
 });
 
 it("explains Library Ask cloud sending in the privacy notice", async () => {

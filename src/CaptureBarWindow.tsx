@@ -13,12 +13,14 @@ import {
   type RecorderStatus,
 } from "./recording";
 import SourceHealthNotice from "./SourceHealthNotice";
+import { usePlatformCapabilities } from "./platform-capabilities";
 
 const expandedSize = new LogicalSize(354, 58);
 const collapsedSize = new LogicalSize(174, 58);
 const warningHeight = 76;
 
 export default function CaptureBarWindow() {
+  const capabilities = usePlatformCapabilities();
   const [status, setStatus] = useState<RecorderStatus | null>(null);
   const [collapsed, setCollapsed] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -45,7 +47,6 @@ export default function CaptureBarWindow() {
       onRecordingStatus((next) => {
         if (active) { eventArrived = true; setStatus(next); }
       }),
-      onSnapshotError((reason) => { if (active) setError(reason); }),
     ];
     recordingStatus().then(
       (next) => { if (active && !eventArrived) setStatus(next); },
@@ -56,6 +57,13 @@ export default function CaptureBarWindow() {
       subscriptions.forEach((subscription) => void subscription.then((stop) => stop(), () => {}));
     };
   }, []);
+
+  useEffect(() => {
+    if (!capabilities.snapshots) return;
+    let active = true;
+    const unlisten = onSnapshotError((reason) => { if (active) setError(reason); });
+    return () => { active = false; void unlisten.then((stop) => stop(), () => {}); };
+  }, [capabilities.snapshots]);
 
   async function changeRecording(action: () => Promise<RecorderStatus>) {
     setBusy(true);
@@ -94,7 +102,7 @@ export default function CaptureBarWindow() {
     </div>
     {!collapsed && <div className="ml-auto flex items-center gap-0.5">
       <button type="button" aria-label={status.phase === "paused" ? "Resume" : "Pause"} title={status.phase === "paused" ? "Resume" : "Pause"} disabled={busy} className={control} onClick={() => void changeRecording(status.phase === "paused" ? resumeRecording : pauseRecording)}>{status.phase === "paused" ? <Play size={17} aria-hidden="true" /> : <Pause size={17} aria-hidden="true" />}</button>
-      <button type="button" aria-label="Take Snapshot" title="Take Snapshot" disabled={busy} className={control} onClick={() => void snapshot()}><Camera size={17} aria-hidden="true" /></button>
+      {capabilities.snapshots && <button type="button" aria-label="Take Snapshot" title="Take Snapshot" disabled={busy} className={control} onClick={() => void snapshot()}><Camera size={17} aria-hidden="true" /></button>}
       <button type="button" aria-label="Stop" title="Stop" disabled={busy} className={control} onClick={() => void changeRecording(stopRecording)}><Square size={15} fill="currentColor" aria-hidden="true" /></button>
     </div>}
     <button type="button" aria-label={collapsed ? "Expand Capture bar" : "Collapse Capture bar"} title={collapsed ? "Expand Capture bar" : "Collapse Capture bar"} disabled={hasWarning} className={control} onClick={() => void toggleCollapsed()}>{collapsed ? <ChevronRight size={17} aria-hidden="true" /> : <ChevronLeft size={17} aria-hidden="true" />}</button>

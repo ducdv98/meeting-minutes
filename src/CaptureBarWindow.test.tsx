@@ -14,6 +14,7 @@ import {
   type RecorderStatus,
 } from "./recording";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { usePlatformCapabilities } from "./platform-capabilities";
 
 vi.mock("./recording", async (importOriginal) => ({
   ...await importOriginal<typeof import("./recording")>(),
@@ -33,6 +34,7 @@ vi.mock("@tauri-apps/api/window", () => ({
     constructor(public width: number, public height: number) {}
   },
 }));
+vi.mock("./platform-capabilities", () => ({ usePlatformCapabilities: vi.fn() }));
 
 const recording: RecorderStatus = {
   phase: "recording", meeting_id: "m1", elapsed_ms: 65_000,
@@ -42,6 +44,7 @@ let pushStatus: (status: RecorderStatus) => void = () => {};
 const windowApi = { startDragging: vi.fn(), setSize: vi.fn() };
 
 beforeEach(() => {
+  vi.mocked(usePlatformCapabilities).mockReturnValue({ recordPrompt: true, backgroundTranscription: true, snapshots: true });
   vi.mocked(getCurrentWindow).mockReturnValue(windowApi as unknown as ReturnType<typeof getCurrentWindow>);
   windowApi.startDragging.mockResolvedValue(undefined);
   windowApi.setSize.mockResolvedValue(undefined);
@@ -74,6 +77,15 @@ it("follows the Recording and uses its pause, resume, stop and repeat Snapshot c
   fireEvent.click(screen.getByRole("button", { name: "Stop" }));
   await waitFor(() => expect(stopRecording).toHaveBeenCalledTimes(1));
   expect(screen.queryByRole("button", { name: "Stop" })).toBeNull();
+});
+
+it("hides the Snapshot control when unavailable", async () => {
+  vi.mocked(usePlatformCapabilities).mockReturnValue({ recordPrompt: false, backgroundTranscription: false, snapshots: false });
+  render(<CaptureBarWindow />);
+  await screen.findByRole("status");
+  expect(screen.queryByRole("button", { name: "Take Snapshot" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Pause" })).toBeTruthy();
+  expect(onSnapshotError).not.toHaveBeenCalled();
 });
 
 it("collapses to a draggable timer and expands back to the controls", async () => {

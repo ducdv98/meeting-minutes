@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import RecordingBar from "./RecordingBar";
+import { usePlatformCapabilities } from "./platform-capabilities";
 import {
   acknowledgeRecordingNotice,
   continueMeeting,
@@ -39,6 +40,7 @@ vi.mock("./recording", async (importOriginal) => {
     onRecordingNoticeRequested: vi.fn(),
   };
 });
+vi.mock("./platform-capabilities", () => ({ usePlatformCapabilities: vi.fn() }));
 
 const idle: RecorderStatus = {
   phase: "idle",
@@ -73,6 +75,7 @@ let requestNotice: () => void = () => {};
 let reportSnapshotError: (error: string) => void = () => {};
 
 beforeEach(() => {
+  vi.mocked(usePlatformCapabilities).mockReturnValue({ recordPrompt: true, backgroundTranscription: true, snapshots: true });
   vi.mocked(onRecordingStatus).mockImplementation((handler) => {
     pushStatus = handler;
     return Promise.resolve(() => {});
@@ -138,6 +141,17 @@ it("shows the Recording notice before the first Recording ever", async () => {
   expect(await screen.findByText(/Recording/, { selector: "p" })).toBeTruthy();
   expect(acknowledgeRecordingNotice).toHaveBeenCalledTimes(1);
   expect(startRecording).toHaveBeenCalledTimes(1);
+});
+
+it("omits unsupported feature copy from the Recording notice", async () => {
+  vi.mocked(usePlatformCapabilities).mockReturnValue({ recordPrompt: false, backgroundTranscription: false, snapshots: false });
+  vi.mocked(recordingStatus).mockResolvedValue({ ...idle, notice_acknowledged: false });
+  render(<RecordingBar />);
+  fireEvent.click(await screen.findByRole("button", { name: "Record" }));
+  const notice = screen.getByRole("dialog").textContent;
+  expect(notice).toContain("Other people on the call");
+  expect(notice).not.toMatch(/Snapshots|offer a Recording|checks locally/);
+  expect(onSnapshotError).not.toHaveBeenCalled();
 });
 
 it("cancelling the Recording notice does not record", async () => {

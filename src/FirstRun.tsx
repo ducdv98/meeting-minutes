@@ -4,7 +4,8 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from "./compone
 import { MEETING_LANGUAGES, type Language } from "./languages";
 import { MODELS, modelSizeLabel, openLibraryFolder, startModelDownload, updateSettings, type Settings } from "./processing";
 import { acknowledgeRecordingNotice } from "./recording";
-import { RECORDING_NOTICE } from "./recording-notice";
+import { recordingNotice } from "./recording-notice";
+import { usePlatformCapabilities } from "./platform-capabilities";
 import { useModelDownloads } from "./settings/useModelDownloads";
 
 export function recommendedModel(settings: Settings, discreteGpu: boolean) {
@@ -18,6 +19,7 @@ export default function FirstRun({ settings, discreteGpu, libraryLocation, onFin
   onFinish: () => void | Promise<void>;
   onUseKey: () => void | Promise<void>;
 }) {
+  const capabilities = usePlatformCapabilities();
   const [step, setStep] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -66,7 +68,7 @@ export default function FirstRun({ settings, discreteGpu, libraryLocation, onFin
     <DialogContent aria-describedby="first-run-description">
       <p className="m-0 text-xs font-medium uppercase tracking-wide text-ink-muted">Setup · {step + 1} of 3</p>
       <DialogTitle>{step === 0 ? "Before you record" : step === 1 ? "Set up a local model" : "Library location"}</DialogTitle>
-      {step === 0 ? <DialogDescription id="first-run-description">{RECORDING_NOTICE}</DialogDescription>
+      {step === 0 ? <DialogDescription id="first-run-description">{recordingNotice(capabilities)}</DialogDescription>
         : step === 1 ? <div id="first-run-description" className="mt-2 grid gap-4 text-sm text-ink-muted">
           <div className="grid gap-1.5"><label htmlFor="first-run-language" className="font-medium text-ink">Meetings are mostly in</label><select id="first-run-language" className="rounded-sm border border-line-strong bg-raised px-2.5 py-1.5 text-sm text-ink" value={language ?? ""} disabled={busy} onChange={(event) => void chooseLanguage((event.target.value || null) as Language | null)}><option value="">Auto-detect</option>{MEETING_LANGUAGES.map((entry) => <option key={entry.code} value={entry.code}>{entry.label}</option>)}</select></div>
           <p className="m-0">Recommended for this PC and your default Meeting language: <strong className="text-ink">{model.label}</strong> · {modelSizeLabel(model.size_mb)}.</p>
