@@ -16,3 +16,7 @@ tempfile = "3"
 ash = { version = "=0.38.0", default-features = false, features = ["loaded", "std"] }
 whisper-rs = { version = "=0.16.0", features = ["vulkan"] }
 whisper-rs-sys = "=0.15.0"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+whisper-rs = { version = "=0.16.0", features = ["metal"] }
+whisper-rs-sys = "=0.15.0"
