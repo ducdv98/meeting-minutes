@@ -898,9 +898,9 @@ impl PowerState {
                 Self::Unknown
             };
             unsafe { cf_release(info) };
-            return state;
+            state
         }
-        #[cfg(not(any(windows, target_os = "macos")))]
+        #[cfg(not(target_os = "macos"))]
         Self::Unknown
     }
 }
