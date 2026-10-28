@@ -1,6 +1,6 @@
 use std::{io, path::Path};
 
-/// Moves a file or folder to the Windows Recycle Bin so it can be restored.
+/// Moves a file or folder to the OS trash so it can be restored.
 #[cfg(windows)]
 pub fn move_to_recycle_bin(path: &Path) -> io::Result<()> {
     use std::os::windows::ffi::OsStrExt;
@@ -30,10 +30,15 @@ pub fn move_to_recycle_bin(path: &Path) -> io::Result<()> {
     Ok(())
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+pub fn move_to_recycle_bin(path: &Path) -> io::Result<()> {
+    trash::delete(path).map_err(io::Error::other)
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn move_to_recycle_bin(_path: &Path) -> io::Result<()> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
-        "The Recycle Bin is only available on Windows",
+        "The Recycle Bin is unavailable on this platform",
     ))
 }
