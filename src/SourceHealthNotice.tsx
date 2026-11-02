@@ -12,7 +12,7 @@ export default function SourceHealthNotice({ status, onStatus, compact = false }
   return <>{warnings.map(({ source, warning }) => {
     const name = source === "microphone" ? "Microphone" : "System audio";
     const device = status.source_devices?.find((item) => item.source === source)?.device ?? "current device";
-    return <div key={source} role="alert" className={compact ? "px-3 py-2 text-xs text-amber-100" : "mx-5 mt-3 rounded-md border border-warn bg-raised px-3 py-2.5 text-sm text-ink"}>
+    return <div key={source} role="alert" className={compact ? "border-t border-line border-l-2 border-l-warn bg-panel px-3 py-2 text-xs text-ink" : "mx-5 mt-3 rounded-md border border-warn bg-raised px-3 py-2.5 text-sm text-ink"}>
       <div className="font-medium">{warning === "no_signal" ? `${name} has no signal` : "System audio is silent; the other side may not be captured"} · {device}</div>
       <div className="mt-1 flex items-center gap-3">
         <button type="button" className="underline" onClick={() => void openSoundSettings().catch((reason) => setError(String(reason)))}>Open sound settings</button>
