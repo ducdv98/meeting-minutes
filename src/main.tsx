@@ -12,6 +12,8 @@ if (window.location.hash === "#capture-region" || window.location.hash === "#sna
   document.body.style.background = "transparent";
   document.documentElement.style.background = "transparent";
 }
+// The Capture bar sizes its window to fit; scrollbars would hide the overflow it measures.
+if (window.location.hash === "#capture-bar") document.documentElement.style.overflow = "hidden";
 
 const content = window.location.hash === "#capture-region"
   ? <CaptureRegionWindow />

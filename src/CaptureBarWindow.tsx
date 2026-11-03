@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { getCurrentWindow, PhysicalPosition, PhysicalSize } from "@tauri-apps/api/window";
 import { Camera, ChevronLeft, ChevronRight, GripVertical, Pause, Play, Square } from "lucide-react";
 import {
   formatElapsed,
@@ -15,9 +15,8 @@ import {
 import SourceHealthNotice from "./SourceHealthNotice";
 import { usePlatformCapabilities } from "./platform-capabilities";
 
-const expandedSize = new LogicalSize(354, 58);
-const collapsedSize = new LogicalSize(174, 58);
-const warningHeight = 76;
+// Wide enough for Source health warnings to wrap to a readable line length.
+const warningWidth = 354;
 
 export default function CaptureBarWindow() {
   const capabilities = usePlatformCapabilities();
@@ -25,20 +24,46 @@ export default function CaptureBarWindow() {
   const [collapsed, setCollapsed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const previousWarningCount = useRef(0);
-  const warningCount = status?.phase === "recording" ? status.source_health?.filter((health) => health.warning !== null).length ?? 0 : 0;
-  const hasWarning = warningCount > 0;
+  const bar = useRef<HTMLDivElement>(null);
+  const visible = status !== null && status.phase !== "idle";
+  const hasWarning = status?.phase === "recording" && (status.source_health?.some((health) => health.warning !== null) ?? false);
 
   useEffect(() => {
-    if (warningCount === previousWarningCount.current) return;
-    previousWarningCount.current = warningCount;
-    if (hasWarning) {
-      setCollapsed(false);
-      void getCurrentWindow().setSize(new LogicalSize(354, expandedSize.height + warningHeight * warningCount)).catch((reason) => setError(String(reason)));
-    } else {
-      void getCurrentWindow().setSize(expandedSize).catch((reason) => setError(String(reason)));
+    if (hasWarning) setCollapsed(false);
+  }, [hasWarning]);
+
+  // The window follows the bar's measured size rather than fixed numbers, so display scaling,
+  // text size and fonts can never clip the controls. The right edge stays put, like a toolbar.
+  useLayoutEffect(() => {
+    const element = bar.current;
+    if (!visible || !element) return;
+    const appWindow = getCurrentWindow();
+    let running = false;
+    let again = false;
+    async function fit() {
+      if (running) { again = true; return; }
+      running = true;
+      try {
+        do {
+          again = false;
+          const rect = element!.getBoundingClientRect();
+          const current = await appWindow.innerSize();
+          const pixelsPerCss = current.width / window.innerWidth;
+          const width = Math.ceil(rect.width * pixelsPerCss);
+          const height = Math.ceil(rect.height * pixelsPerCss);
+          if (Math.abs(width - current.width) <= 1 && Math.abs(height - current.height) <= 1) continue;
+          const position = await appWindow.outerPosition();
+          await appWindow.setSize(new PhysicalSize(width, height));
+          await appWindow.setPosition(new PhysicalPosition(position.x + current.width - width, position.y));
+        } while (again);
+      } catch (reason) { setError(String(reason)); }
+      finally { running = false; }
     }
-  }, [hasWarning, warningCount]);
+    const observer = new ResizeObserver(() => void fit());
+    observer.observe(element);
+    window.addEventListener("resize", fit);
+    return () => { observer.disconnect(); window.removeEventListener("resize", fit); };
+  }, [visible]);
 
   useEffect(() => {
     let active = true;
@@ -81,20 +106,15 @@ export default function CaptureBarWindow() {
     finally { setBusy(false); }
   }
 
-  async function toggleCollapsed() {
-    if (hasWarning) return;
-    const next = !collapsed;
-    try {
-      await getCurrentWindow().setSize(next ? collapsedSize : expandedSize);
-      setCollapsed(next);
-    } catch (reason) { setError(String(reason)); }
+  function toggleCollapsed() {
+    if (!hasWarning) setCollapsed(!collapsed);
   }
 
   if (!status || status.phase === "idle") return null;
 
   const control = "flex size-9 shrink-0 items-center justify-center rounded-md text-ink-muted transition-colors hover:bg-hover hover:text-ink focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent disabled:opacity-50";
-  return <div aria-label="Capture bar" className="box-border flex h-screen w-screen flex-col overflow-hidden rounded-lg border border-line-strong bg-raised text-ink select-none">
-    <div className="flex min-h-[56px] w-full items-center gap-1 px-2">
+  return <div ref={bar} aria-label="Capture bar" style={{ width: hasWarning ? warningWidth : "max-content" }} className="box-border flex flex-col overflow-hidden rounded-lg border border-line-strong bg-raised text-ink select-none">
+    <div className="flex min-h-14 w-full items-center gap-1 px-2">
     <button type="button" aria-label="Drag Capture bar" title="Drag Capture bar" className="flex h-9 w-5 shrink-0 cursor-move items-center justify-center text-ink-faint hover:text-ink-muted" onPointerDown={() => void getCurrentWindow().startDragging().catch((reason) => setError(String(reason)))}><GripVertical size={17} aria-hidden="true" /></button>
     <div role="status" aria-live="polite" title={error ?? undefined} className={`min-w-0 shrink-0 whitespace-nowrap text-sm font-medium tabular-nums ${error ? "text-record" : "text-ink"}`}>
       <span aria-hidden="true" className={`mr-2 inline-block size-2 rounded-full ${status.phase === "paused" ? "bg-warn" : "bg-record"}`} />
@@ -105,7 +125,7 @@ export default function CaptureBarWindow() {
       {capabilities.snapshots && <button type="button" aria-label="Take Snapshot" title="Take Snapshot" disabled={busy} className={control} onClick={() => void snapshot()}><Camera size={17} aria-hidden="true" /></button>}
       <button type="button" aria-label="Stop" title="Stop" disabled={busy} className={`${control} text-record hover:text-record`} onClick={() => void changeRecording(stopRecording)}><Square size={15} fill="currentColor" aria-hidden="true" /></button>
     </div>}
-    <button type="button" aria-label={collapsed ? "Expand Capture bar" : "Collapse Capture bar"} title={collapsed ? "Expand Capture bar" : "Collapse Capture bar"} disabled={hasWarning} className={control} onClick={() => void toggleCollapsed()}>{collapsed ? <ChevronRight size={17} aria-hidden="true" /> : <ChevronLeft size={17} aria-hidden="true" />}</button>
+    <button type="button" aria-label={collapsed ? "Expand Capture bar" : "Collapse Capture bar"} title={collapsed ? "Expand Capture bar" : "Collapse Capture bar"} disabled={hasWarning} className={control} onClick={toggleCollapsed}>{collapsed ? <ChevronRight size={17} aria-hidden="true" /> : <ChevronLeft size={17} aria-hidden="true" />}</button>
     </div>
     <SourceHealthNotice status={status} onStatus={setStatus} compact />
   </div>;
